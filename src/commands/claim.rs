@@ -63,6 +63,7 @@ pub fn claim(dir: &Path, id: &str, actor: Option<&str>) -> Result<()> {
     }
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     match actor {
         Some(actor_id) => println!("Claimed '{}' for '{}'", id, actor_id),
@@ -98,6 +99,7 @@ pub fn unclaim(dir: &Path, id: &str) -> Result<()> {
     task.assigned = None;
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Unclaimed '{}'", id);
     Ok(())

@@ -48,6 +48,7 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
     let max_retries = task.max_retries;
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Reset '{}' to open for retry (attempt #{})", id, retry_count + 1);
 

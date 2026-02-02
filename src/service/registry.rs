@@ -288,7 +288,7 @@ impl AgentRegistry {
             executor: executor.to_string(),
             started_at: now.clone(),
             last_heartbeat: now,
-            status: AgentStatus::Starting,
+            status: AgentStatus::Working,
             output_file: output_file.to_string(),
         };
 
@@ -514,7 +514,7 @@ mod tests {
         assert_eq!(agent.pid, 12345);
         assert_eq!(agent.task_id, "task-1");
         assert_eq!(agent.executor, "claude");
-        assert_eq!(agent.status, AgentStatus::Starting);
+        assert_eq!(agent.status, AgentStatus::Working);
     }
 
     #[test]
@@ -866,7 +866,7 @@ mod tests {
         assert!(json.contains("\"pid\": 12345"));
         assert!(json.contains("\"task_id\": \"implement-feature\""));
         assert!(json.contains("\"executor\": \"claude\""));
-        assert!(json.contains("\"status\": \"starting\""));
+        assert!(json.contains("\"status\": \"working\""));
     }
 
     #[test]

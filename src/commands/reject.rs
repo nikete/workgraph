@@ -50,6 +50,7 @@ pub fn run(dir: &Path, task_id: &str, reason: Option<&str>, actor: Option<&str>)
     });
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Rejected task '{}' - returned to open for rework", task_id);
 

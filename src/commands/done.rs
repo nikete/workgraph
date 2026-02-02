@@ -37,6 +37,7 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
     task.completed_at = Some(Utc::now().to_rfc3339());
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Marked '{}' as done", id);
     Ok(())

@@ -257,9 +257,9 @@ OUTPUT_FILE="{output_file}"
 EXIT_CODE=$?
 
 # Check if task is still in progress (agent didn't mark it done/failed/submitted)
-TASK_STATUS=$(wg show "$TASK_ID" --json 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+TASK_STATUS=$(wg show "$TASK_ID" --json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1 | sed 's/.*"status": *"//;s/"//' || echo "unknown")
 
-if [ "$TASK_STATUS" = "in_progress" ]; then
+if [ "$TASK_STATUS" = "in-progress" ]; then
     if [ $EXIT_CODE -eq 0 ]; then
         echo "" >> "$OUTPUT_FILE"
         echo "{complete_msg}" >> "$OUTPUT_FILE"
@@ -531,9 +531,9 @@ OUTPUT_FILE="{output_file}"
 EXIT_CODE=$?
 
 # Check if task is still in progress (agent didn't mark it done/failed/submitted)
-TASK_STATUS=$(wg show "$TASK_ID" --json 2>/dev/null | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+TASK_STATUS=$(wg show "$TASK_ID" --json 2>/dev/null | grep -o '"status": *"[^"]*"' | head -1 | sed 's/.*"status": *"//;s/"//' || echo "unknown")
 
-if [ "$TASK_STATUS" = "in_progress" ]; then
+if [ "$TASK_STATUS" = "in-progress" ]; then
     if [ $EXIT_CODE -eq 0 ]; then
         echo "" >> "$OUTPUT_FILE"
         echo "{complete_msg}" >> "$OUTPUT_FILE"
@@ -852,8 +852,8 @@ mod tests {
         assert!(script.contains("TASK_ID=\"t1\""));
         assert!(script.contains("wg done \"$TASK_ID\""));
         assert!(script.contains("[wrapper] Agent exited successfully, marking task done"));
-        assert!(script.contains("TASK_STATUS=$(wg show"));
-        assert!(script.contains("if [ \"$TASK_STATUS\" = \"in_progress\" ]"));
+        assert!(script.contains("wg show \"$TASK_ID\" --json"));
+        assert!(script.contains("if [ \"$TASK_STATUS\" = \"in-progress\" ]"));
     }
 
     #[test]
@@ -912,7 +912,7 @@ mod tests {
         assert!(script.contains("TASK_STATUS=$(wg show \"$TASK_ID\" --json"));
 
         // Should only auto-complete if still in_progress
-        assert!(script.contains("if [ \"$TASK_STATUS\" = \"in_progress\" ]"));
+        assert!(script.contains("if [ \"$TASK_STATUS\" = \"in-progress\" ]"));
     }
 
     #[test]

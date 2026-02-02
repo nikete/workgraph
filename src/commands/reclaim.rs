@@ -74,6 +74,7 @@ pub fn run(dir: &Path, task_id: &str, from_actor: &str, to_actor: &str) -> Resul
     });
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!(
         "Reclaimed task '{}' from '{}' to '{}'",

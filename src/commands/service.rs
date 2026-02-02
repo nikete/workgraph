@@ -1,11 +1,20 @@
 //! Agent Service Daemon
 //!
-//! Manages the wg service daemon that coordinates agent spawning and monitoring.
+//! Manages the wg service daemon that coordinates agent spawning, monitoring,
+//! and automatic task assignment. The daemon integrates coordinator logic to
+//! periodically find ready tasks, spawn agents, and clean up finished agents.
 //!
 //! Usage:
-//!   wg service start [--port N] [--socket PATH]  # Start the service daemon
-//!   wg service stop [--force]                    # Stop the service daemon
-//!   wg service status                            # Show service status
+//!   wg service start [--max-agents N] [--executor E] [--interval S]  # Start with overrides
+//!   wg service stop [--force]                                        # Stop the service daemon
+//!   wg service status                                                # Show service + coordinator state
+//!
+//! The daemon respects coordinator config from .workgraph/config.toml:
+//!   [coordinator]
+//!   max_agents = 4       # Maximum parallel agents
+//!   poll_interval = 60   # Background safety-net poll interval (seconds)
+//!   interval = 30        # Coordinator tick interval (standalone command)
+//!   executor = "claude"  # Executor for spawned agents
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -13,11 +22,12 @@ use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
 
+use workgraph::config::Config;
 use workgraph::service::AgentRegistry;
 
 /// Default socket path (project-specific)
@@ -86,6 +96,55 @@ impl ServiceState {
     }
 }
 
+/// Path to the coordinator state file
+pub fn coordinator_state_path(dir: &Path) -> PathBuf {
+    dir.join("service").join("coordinator-state.json")
+}
+
+/// Runtime coordinator state persisted to disk for status queries
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CoordinatorState {
+    /// Whether the coordinator is enabled
+    pub enabled: bool,
+    /// Effective config: max agents
+    pub max_agents: usize,
+    /// Effective config: background poll interval seconds (safety net)
+    pub poll_interval: u64,
+    /// Effective config: executor name
+    pub executor: String,
+    /// Total coordinator ticks completed
+    pub ticks: u64,
+    /// ISO 8601 timestamp of the last tick
+    pub last_tick: Option<String>,
+    /// Number of agents alive at last tick
+    pub agents_alive: usize,
+    /// Number of tasks ready at last tick
+    pub tasks_ready: usize,
+    /// Number of agents spawned in last tick
+    pub agents_spawned: usize,
+}
+
+impl CoordinatorState {
+    pub fn load(dir: &Path) -> Option<Self> {
+        let path = coordinator_state_path(dir);
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|c| serde_json::from_str(&c).ok())
+    }
+
+    pub fn save(&self, dir: &Path) {
+        let path = coordinator_state_path(dir);
+        if let Ok(content) = serde_json::to_string_pretty(self) {
+            let _ = fs::write(&path, content);
+        }
+    }
+
+    pub fn remove(dir: &Path) {
+        let path = coordinator_state_path(dir);
+        let _ = fs::remove_file(&path);
+    }
+}
+
 /// IPC Request types
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
@@ -114,6 +173,8 @@ pub enum IpcRequest {
         #[serde(default)]
         force: bool,
     },
+    /// Notify that the graph has changed; triggers an immediate coordinator tick
+    GraphChanged,
 }
 
 /// IPC Response types
@@ -146,7 +207,7 @@ impl IpcResponse {
 
 /// Start the service daemon
 #[cfg(unix)]
-pub fn run_start(dir: &Path, socket_path: Option<&str>, _port: Option<u16>, json: bool) -> Result<()> {
+pub fn run_start(dir: &Path, socket_path: Option<&str>, _port: Option<u16>, max_agents: Option<usize>, executor: Option<&str>, interval: Option<u64>, json: bool) -> Result<()> {
     // Check if service is already running
     if let Some(state) = ServiceState::load(dir)? {
         if is_process_running(state.pid) {
@@ -185,8 +246,21 @@ pub fn run_start(dir: &Path, socket_path: Option<&str>, _port: Option<u16>, json
     let socket_str = socket.to_string_lossy().to_string();
 
     // Start daemon in background
+    let mut args = vec!["--dir".to_string(), dir_str.clone(), "service".to_string(), "daemon".to_string(), "--socket".to_string(), socket_str.clone()];
+    if let Some(n) = max_agents {
+        args.push("--max-agents".to_string());
+        args.push(n.to_string());
+    }
+    if let Some(e) = executor {
+        args.push("--executor".to_string());
+        args.push(e.to_string());
+    }
+    if let Some(i) = interval {
+        args.push("--interval".to_string());
+        args.push(i.to_string());
+    }
     let child = process::Command::new(&current_exe)
-        .args(["--dir", &dir_str, "service", "daemon", "--socket", &socket_str])
+        .args(&args)
         .stdin(process::Stdio::null())
         .stdout(process::Stdio::null())
         .stderr(process::Stdio::null())
@@ -212,29 +286,60 @@ pub fn run_start(dir: &Path, socket_path: Option<&str>, _port: Option<u16>, json
         anyhow::bail!("Daemon process exited immediately. Check logs.");
     }
 
+    // Resolve effective config for display (CLI flags override config.toml)
+    let config = Config::load(dir).unwrap_or_default();
+    let eff_max_agents = max_agents.unwrap_or(config.coordinator.max_agents);
+    let eff_poll_interval = interval.unwrap_or(config.coordinator.poll_interval);
+    let eff_executor = executor
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| config.coordinator.executor.clone());
+
     if json {
         let output = serde_json::json!({
             "status": "started",
             "pid": pid,
             "socket": socket_str,
+            "coordinator": {
+                "max_agents": eff_max_agents,
+                "poll_interval": eff_poll_interval,
+                "executor": eff_executor,
+            }
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("Service started (PID {})", pid);
         println!("Socket: {}", socket_str);
+        println!("Coordinator: max_agents={}, poll_interval={}s, executor={}",
+                 eff_max_agents, eff_poll_interval, eff_executor);
     }
 
     Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn run_start(_dir: &Path, _socket_path: Option<&str>, _port: Option<u16>, _json: bool) -> Result<()> {
+pub fn run_start(_dir: &Path, _socket_path: Option<&str>, _port: Option<u16>, _max_agents: Option<usize>, _executor: Option<&str>, _interval: Option<u64>, _json: bool) -> Result<()> {
     anyhow::bail!("Service daemon is only supported on Unix systems")
+}
+
+/// Reap zombie child processes (non-blocking).
+///
+/// The daemon spawns agent processes via `Command::spawn()`. When an agent
+/// exits (or is killed), its process becomes a zombie until the parent calls
+/// `waitpid`. This function reaps all zombies so that `is_process_alive(pid)`
+/// correctly returns `false` for dead agents.
+#[cfg(unix)]
+fn reap_zombies() {
+    loop {
+        let result = unsafe { libc::waitpid(-1, std::ptr::null_mut(), libc::WNOHANG) };
+        if result <= 0 {
+            break; // No more zombies (0) or error (-1, e.g. no children)
+        }
+    }
 }
 
 /// Run the actual daemon loop (called by forked process)
 #[cfg(unix)]
-pub fn run_daemon(dir: &Path, socket_path: &str) -> Result<()> {
+pub fn run_daemon(dir: &Path, socket_path: &str, cli_max_agents: Option<usize>, cli_executor: Option<&str>, cli_interval: Option<u64>) -> Result<()> {
     let socket = PathBuf::from(socket_path);
 
     // Ensure socket directory exists
@@ -267,11 +372,51 @@ pub fn run_daemon(dir: &Path, socket_path: &str) -> Result<()> {
     let dir = dir.to_path_buf();
     let mut running = true;
 
+    // Load coordinator config, CLI args override config values
+    let config = Config::load(&dir).unwrap_or_default();
+    let coordinator_max_agents = cli_max_agents.unwrap_or(config.coordinator.max_agents);
+    let coordinator_executor = cli_executor.map(|s| s.to_string()).unwrap_or_else(|| config.coordinator.executor.clone());
+    // The poll_interval is the slow background safety-net timer.
+    // CLI --interval overrides it; otherwise use config.coordinator.poll_interval.
+    let poll_interval = Duration::from_secs(cli_interval.unwrap_or(config.coordinator.poll_interval));
+
+    eprintln!(
+        "[service] Coordinator config: poll_interval={}s, max_agents={}, executor={}",
+        poll_interval.as_secs(), coordinator_max_agents, &coordinator_executor
+    );
+
+    // Initialize coordinator state on disk
+    let mut coord_state = CoordinatorState {
+        enabled: true,
+        max_agents: coordinator_max_agents,
+        poll_interval: poll_interval.as_secs(),
+        executor: coordinator_executor.clone(),
+        ticks: 0,
+        last_tick: None,
+        agents_alive: 0,
+        tasks_ready: 0,
+        agents_spawned: 0,
+    };
+    coord_state.save(&dir);
+
+    // Track last coordinator tick time - run immediately on start
+    let mut last_coordinator_tick = Instant::now() - poll_interval;
+
     while running {
+        // Reap zombie child processes (agents that have exited).
+        // Without this, SIGKILL'd agents remain as zombies and
+        // is_process_alive(pid) keeps returning true.
+        reap_zombies();
+
         match listener.accept() {
             Ok((stream, _)) => {
-                if let Err(e) = handle_connection(&dir, stream, &mut running) {
+                let mut wake_coordinator = false;
+                if let Err(e) = handle_connection(&dir, stream, &mut running, &mut wake_coordinator) {
                     eprintln!("Error handling connection: {}", e);
+                }
+                if wake_coordinator {
+                    // Force an immediate coordinator tick
+                    last_coordinator_tick = Instant::now() - poll_interval;
                 }
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -283,27 +428,46 @@ pub fn run_daemon(dir: &Path, socket_path: &str) -> Result<()> {
             }
         }
 
-        // Periodic maintenance
-        if let Err(e) = periodic_maintenance(&dir) {
-            eprintln!("Maintenance error: {}", e);
+        // Background safety-net tick: runs on poll_interval even without IPC events.
+        // The fast-path is GraphChanged IPC which resets last_coordinator_tick.
+        if last_coordinator_tick.elapsed() >= poll_interval {
+            last_coordinator_tick = Instant::now();
+            match super::coordinator::coordinator_tick(
+                &dir,
+                coordinator_max_agents,
+                &coordinator_executor,
+            ) {
+                Ok(result) => {
+                    coord_state.ticks += 1;
+                    coord_state.last_tick = Some(chrono::Utc::now().to_rfc3339());
+                    coord_state.agents_alive = result.agents_alive;
+                    coord_state.tasks_ready = result.tasks_ready;
+                    coord_state.agents_spawned = result.agents_spawned;
+                    coord_state.save(&dir);
+                }
+                Err(e) => {
+                    eprintln!("[service] Coordinator tick error: {}", e);
+                }
+            }
         }
     }
 
     // Cleanup
     let _ = fs::remove_file(&socket);
+    CoordinatorState::remove(&dir);
     ServiceState::remove(&dir)?;
 
     Ok(())
 }
 
 #[cfg(not(unix))]
-pub fn run_daemon(_dir: &Path, _socket_path: &str) -> Result<()> {
+pub fn run_daemon(_dir: &Path, _socket_path: &str, _max_agents: Option<usize>, _executor: Option<&str>, _interval: Option<u64>) -> Result<()> {
     anyhow::bail!("Daemon is only supported on Unix systems")
 }
 
 /// Handle a single IPC connection
 #[cfg(unix)]
-fn handle_connection(dir: &Path, stream: UnixStream, running: &mut bool) -> Result<()> {
+fn handle_connection(dir: &Path, stream: UnixStream, running: &mut bool, wake_coordinator: &mut bool) -> Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(5)))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
@@ -335,7 +499,7 @@ fn handle_connection(dir: &Path, stream: UnixStream, running: &mut bool) -> Resu
             }
         };
 
-        let response = handle_request(dir, request, running);
+        let response = handle_request(dir, request, running, wake_coordinator);
         write_response(&mut write_stream, &response)?;
 
         // Check if we should stop
@@ -356,7 +520,7 @@ fn write_response(stream: &mut UnixStream, response: &IpcResponse) -> Result<()>
 }
 
 /// Handle an IPC request
-fn handle_request(dir: &Path, request: IpcRequest, running: &mut bool) -> IpcResponse {
+fn handle_request(dir: &Path, request: IpcRequest, running: &mut bool, wake_coordinator: &mut bool) -> IpcResponse {
     match request {
         IpcRequest::Spawn { task_id, executor, timeout } => {
             handle_spawn(dir, &task_id, &executor, timeout.as_deref())
@@ -368,6 +532,13 @@ fn handle_request(dir: &Path, request: IpcRequest, running: &mut bool) -> IpcRes
         IpcRequest::Shutdown { force } => {
             *running = false;
             handle_shutdown(dir, force)
+        }
+        IpcRequest::GraphChanged => {
+            *wake_coordinator = true;
+            IpcResponse::success(serde_json::json!({
+                "status": "ok",
+                "action": "coordinator_wake_scheduled",
+            }))
         }
     }
 }
@@ -451,6 +622,9 @@ fn handle_status(dir: &Path) -> IpcResponse {
     let alive_count = registry.active_count();
     let idle_count = registry.idle_count();
 
+    // Use persisted coordinator state (reflects effective config + runtime metrics)
+    let coord = CoordinatorState::load(dir).unwrap_or_default();
+
     IpcResponse::success(serde_json::json!({
         "status": "running",
         "pid": state.pid,
@@ -460,6 +634,17 @@ fn handle_status(dir: &Path) -> IpcResponse {
             "alive": alive_count,
             "idle": idle_count,
             "total": registry.agents.len(),
+        },
+        "coordinator": {
+            "enabled": coord.enabled,
+            "max_agents": coord.max_agents,
+            "poll_interval": coord.poll_interval,
+            "executor": coord.executor,
+            "ticks": coord.ticks,
+            "last_tick": coord.last_tick,
+            "agents_alive": coord.agents_alive,
+            "tasks_ready": coord.tasks_ready,
+            "agents_spawned_last_tick": coord.agents_spawned,
         }
     }))
 }
@@ -477,31 +662,6 @@ fn handle_shutdown(dir: &Path, force: bool) -> IpcResponse {
         "status": "shutting_down",
         "force": force,
     }))
-}
-
-/// Periodic maintenance tasks
-fn periodic_maintenance(dir: &Path) -> Result<()> {
-    // Check for dead agents every iteration (daemon runs with 100ms sleep)
-    // Only actually do maintenance every ~60 seconds
-    static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-    // Run maintenance every ~600 iterations (60 seconds at 100ms sleep)
-    if count % 600 != 0 {
-        return Ok(());
-    }
-
-    // Mark dead agents (default 2 minute timeout)
-    let mut locked = AgentRegistry::load_locked(dir)?;
-    let dead_ids = locked.mark_dead_agents(120);
-    if !dead_ids.is_empty() {
-        locked.save()?;
-        for id in &dead_ids {
-            eprintln!("Marked agent {} as dead (no heartbeat)", id);
-        }
-    }
-
-    Ok(())
 }
 
 /// Stop the service daemon
@@ -616,6 +776,9 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
         })
         .unwrap_or_else(|_| "unknown".to_string());
 
+    // Load coordinator state (persisted by daemon, reflects effective config + runtime)
+    let coord = CoordinatorState::load(dir).unwrap_or_default();
+
     if json {
         let output = serde_json::json!({
             "status": "running",
@@ -627,6 +790,17 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
                 "alive": alive_count,
                 "idle": idle_count,
                 "total": registry.agents.len(),
+            },
+            "coordinator": {
+                "enabled": coord.enabled,
+                "max_agents": coord.max_agents,
+                "poll_interval": coord.poll_interval,
+                "executor": coord.executor,
+                "ticks": coord.ticks,
+                "last_tick": coord.last_tick,
+                "agents_alive": coord.agents_alive,
+                "tasks_ready": coord.tasks_ready,
+                "agents_spawned_last_tick": coord.agents_spawned,
             }
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -634,7 +808,16 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
         println!("Service: running (PID {})", state.pid);
         println!("Socket: {}", state.socket_path);
         println!("Uptime: {}", uptime);
-        println!("Agents: {} alive, {} idle", alive_count, idle_count);
+        println!("Agents: {} alive, {} idle, {} total", alive_count, idle_count, registry.agents.len());
+        println!("Coordinator: enabled, max_agents={}, poll_interval={}s, executor={}",
+                 coord.max_agents, coord.poll_interval, coord.executor);
+        if let Some(ref last) = coord.last_tick {
+            println!("  Last tick: {} (#{}, agents_alive={}/{}, tasks_ready={}, spawned={})",
+                     last, coord.ticks, coord.agents_alive, coord.max_agents,
+                     coord.tasks_ready, coord.agents_spawned);
+        } else {
+            println!("  No ticks yet");
+        }
     }
 
     Ok(())
@@ -826,6 +1009,21 @@ mod tests {
             }
             _ => panic!("Wrong request type"),
         }
+    }
+
+    #[test]
+    fn test_ipc_graph_changed_serialization() {
+        let req = IpcRequest::GraphChanged;
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"cmd\":\"graph_changed\""));
+
+        let parsed: IpcRequest = serde_json::from_str(&json).unwrap();
+        assert!(matches!(parsed, IpcRequest::GraphChanged));
+
+        // Also test parsing from raw JSON
+        let raw = r#"{"cmd":"graph_changed"}"#;
+        let parsed: IpcRequest = serde_json::from_str(raw).unwrap();
+        assert!(matches!(parsed, IpcRequest::GraphChanged));
     }
 
     #[test]

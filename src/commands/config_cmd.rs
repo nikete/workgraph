@@ -27,6 +27,7 @@ pub fn show(dir: &Path, json: bool) -> Result<()> {
         println!("[coordinator]");
         println!("  max_agents = {}", config.coordinator.max_agents);
         println!("  interval = {}", config.coordinator.interval);
+        println!("  poll_interval = {}", config.coordinator.poll_interval);
         println!("  executor = \"{}\"", config.coordinator.executor);
         println!();
         if config.project.name.is_some() || config.project.description.is_some() {
@@ -61,6 +62,7 @@ pub fn update(
     interval: Option<u64>,
     max_agents: Option<usize>,
     coordinator_interval: Option<u64>,
+    poll_interval: Option<u64>,
     coordinator_executor: Option<&str>,
 ) -> Result<()> {
     let mut config = Config::load(dir)?;
@@ -95,6 +97,12 @@ pub fn update(
     if let Some(i) = coordinator_interval {
         config.coordinator.interval = i;
         println!("Set coordinator.interval = {}", i);
+        changed = true;
+    }
+
+    if let Some(i) = poll_interval {
+        config.coordinator.poll_interval = i;
+        println!("Set coordinator.poll_interval = {}", i);
         changed = true;
     }
 
@@ -284,7 +292,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         init(temp_dir.path()).unwrap();
 
-        let result = update(temp_dir.path(), Some("opencode"), Some("gpt-4"), Some(30), None, None, None);
+        let result = update(temp_dir.path(), Some("opencode"), Some("gpt-4"), Some(30), None, None, None, None);
         assert!(result.is_ok());
 
         let config = Config::load(temp_dir.path()).unwrap();
@@ -298,12 +306,24 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         init(temp_dir.path()).unwrap();
 
-        let result = update(temp_dir.path(), None, None, None, Some(8), Some(60), Some("shell"));
+        let result = update(temp_dir.path(), None, None, None, Some(8), Some(60), None, Some("shell"));
         assert!(result.is_ok());
 
         let config = Config::load(temp_dir.path()).unwrap();
         assert_eq!(config.coordinator.max_agents, 8);
         assert_eq!(config.coordinator.interval, 60);
         assert_eq!(config.coordinator.executor, "shell");
+    }
+
+    #[test]
+    fn test_update_poll_interval() {
+        let temp_dir = TempDir::new().unwrap();
+        init(temp_dir.path()).unwrap();
+
+        let result = update(temp_dir.path(), None, None, None, None, None, Some(120), None);
+        assert!(result.is_ok());
+
+        let config = Config::load(temp_dir.path()).unwrap();
+        assert_eq!(config.coordinator.poll_interval, 120);
     }
 }

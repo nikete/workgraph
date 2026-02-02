@@ -510,7 +510,7 @@ enum Commands {
         model: Option<String>,
     },
 
-    /// Run coordinator loop to auto-spawn agents on ready tasks
+    /// [DEPRECATED] Use 'wg service start' instead. Kept for 'wg coordinator --once' debug mode.
     Coordinator {
         /// Poll interval in seconds (default: from config.toml, fallback 30)
         #[arg(long)]
@@ -524,11 +524,11 @@ enum Commands {
         #[arg(long)]
         executor: Option<String>,
 
-        /// Run once and exit (don't loop)
+        /// Run a single coordinator tick and exit (debug mode)
         #[arg(long)]
         once: bool,
 
-        /// Generate systemd user service file
+        /// [DEPRECATED] Use 'wg service install' instead
         #[arg(long)]
         install_service: bool,
     },
@@ -562,6 +562,10 @@ enum Commands {
         /// Set coordinator poll interval in seconds
         #[arg(long)]
         coordinator_interval: Option<u64>,
+
+        /// Set service daemon background poll interval in seconds (safety net)
+        #[arg(long)]
+        poll_interval: Option<u64>,
 
         /// Set coordinator executor
         #[arg(long)]
@@ -764,6 +768,18 @@ enum ServiceCommands {
         /// Unix socket path (default: /tmp/wg-{project}.sock)
         #[arg(long)]
         socket: Option<String>,
+
+        /// Maximum number of parallel agents (overrides config.toml)
+        #[arg(long)]
+        max_agents: Option<usize>,
+
+        /// Executor to use for spawned agents (overrides config.toml)
+        #[arg(long)]
+        executor: Option<String>,
+
+        /// Background poll interval in seconds (overrides config.toml coordinator.poll_interval)
+        #[arg(long)]
+        interval: Option<u64>,
     },
 
     /// Stop the agent service daemon
@@ -776,12 +792,27 @@ enum ServiceCommands {
     /// Show service status
     Status,
 
+    /// Generate a systemd user service file for the wg service daemon
+    Install,
+
     /// Run the daemon (internal, called by start)
     #[command(hide = true)]
     Daemon {
         /// Unix socket path
         #[arg(long)]
         socket: String,
+
+        /// Maximum number of parallel agents (overrides config.toml)
+        #[arg(long)]
+        max_agents: Option<usize>,
+
+        /// Executor to use for spawned agents (overrides config.toml)
+        #[arg(long)]
+        executor: Option<String>,
+
+        /// Background poll interval in seconds (overrides config.toml coordinator.poll_interval)
+        #[arg(long)]
+        interval: Option<u64>,
     },
 }
 
@@ -1068,6 +1099,7 @@ fn main() -> Result<()> {
             set_interval,
             max_agents,
             coordinator_interval,
+            poll_interval,
             coordinator_executor,
             matrix,
             homeserver,
@@ -1104,7 +1136,8 @@ fn main() -> Result<()> {
             } else if init {
                 commands::config_cmd::init(&workgraph_dir)
             } else if show || (executor.is_none() && model.is_none() && set_interval.is_none()
-                && max_agents.is_none() && coordinator_interval.is_none() && coordinator_executor.is_none()) {
+                && max_agents.is_none() && coordinator_interval.is_none() && poll_interval.is_none()
+                && coordinator_executor.is_none()) {
                 commands::config_cmd::show(&workgraph_dir, cli.json)
             } else {
                 commands::config_cmd::update(
@@ -1114,6 +1147,7 @@ fn main() -> Result<()> {
                     set_interval,
                     max_agents,
                     coordinator_interval,
+                    poll_interval,
                     coordinator_executor.as_deref(),
                 )
             }
@@ -1165,8 +1199,16 @@ fn main() -> Result<()> {
             }
         }
         Commands::Service { command } => match command {
-            ServiceCommands::Start { port, socket } => {
-                commands::service::run_start(&workgraph_dir, socket.as_deref(), port, cli.json)
+            ServiceCommands::Start { port, socket, max_agents, executor, interval } => {
+                commands::service::run_start(
+                    &workgraph_dir,
+                    socket.as_deref(),
+                    port,
+                    max_agents,
+                    executor.as_deref(),
+                    interval,
+                    cli.json,
+                )
             }
             ServiceCommands::Stop { force } => {
                 commands::service::run_stop(&workgraph_dir, force, cli.json)
@@ -1174,8 +1216,17 @@ fn main() -> Result<()> {
             ServiceCommands::Status => {
                 commands::service::run_status(&workgraph_dir, cli.json)
             }
-            ServiceCommands::Daemon { socket } => {
-                commands::service::run_daemon(&workgraph_dir, &socket)
+            ServiceCommands::Install => {
+                commands::coordinator::generate_systemd_service(&workgraph_dir)
+            }
+            ServiceCommands::Daemon { socket, max_agents, executor, interval } => {
+                commands::service::run_daemon(
+                    &workgraph_dir,
+                    &socket,
+                    max_agents,
+                    executor.as_deref(),
+                    interval,
+                )
             }
         }
         #[cfg(feature = "matrix")]

@@ -62,3 +62,9 @@ use std::path::Path;
 pub fn graph_path(dir: &Path) -> std::path::PathBuf {
     dir.join("graph.jsonl")
 }
+
+/// Best-effort notification to the service daemon that the graph has changed.
+/// Silently ignores all errors (daemon not running, socket unavailable, etc.)
+pub fn notify_graph_changed(dir: &Path) {
+    let _ = service::send_request(dir, service::IpcRequest::GraphChanged);
+}

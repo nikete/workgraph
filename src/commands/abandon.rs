@@ -31,6 +31,7 @@ pub fn run(dir: &Path, id: &str, reason: Option<&str>) -> Result<()> {
     task.failure_reason = reason.map(String::from);
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     let reason_msg = reason.map(|r| format!(" ({})", r)).unwrap_or_default();
     println!("Marked '{}' as abandoned{}", id, reason_msg);

@@ -62,9 +62,16 @@ pub struct CoordinatorConfig {
     #[serde(default = "default_max_agents")]
     pub max_agents: usize,
 
-    /// Poll interval in seconds
+    /// Poll interval in seconds (used by standalone coordinator command)
     #[serde(default = "default_coordinator_interval")]
     pub interval: u64,
+
+    /// Background poll interval in seconds for the service daemon safety net.
+    /// The daemon runs a coordinator tick on this slow interval even without
+    /// receiving any GraphChanged IPC events. Catches manual edits, lost events,
+    /// or external tools modifying the graph. Default: 60s.
+    #[serde(default = "default_poll_interval")]
+    pub poll_interval: u64,
 
     /// Executor to use for spawned agents
     #[serde(default = "default_executor")]
@@ -79,11 +86,16 @@ fn default_coordinator_interval() -> u64 {
     30
 }
 
+fn default_poll_interval() -> u64 {
+    60
+}
+
 impl Default for CoordinatorConfig {
     fn default() -> Self {
         Self {
             max_agents: default_max_agents(),
             interval: default_coordinator_interval(),
+            poll_interval: default_poll_interval(),
             executor: default_executor(),
         }
     }

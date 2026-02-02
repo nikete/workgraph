@@ -40,6 +40,7 @@ pub fn run(dir: &Path, id: &str, reason: Option<&str>) -> Result<()> {
     let max_retries = task.max_retries;
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     let reason_msg = reason.map(|r| format!(" ({})", r)).unwrap_or_default();
     println!(

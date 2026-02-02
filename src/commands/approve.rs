@@ -44,6 +44,7 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>) -> Result<()> {
     });
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Approved task '{}' - now done", task_id);
 

@@ -44,6 +44,7 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>) -> Result<()> {
     });
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Submitted task '{}' for review", task_id);
     if let Some(ref verify) = graph.get_task(task_id).and_then(|t| t.verify.clone()) {

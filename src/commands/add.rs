@@ -88,6 +88,7 @@ pub fn run(
 
     let json = serde_json::to_string(&Node::Task(task)).context("Failed to serialize task")?;
     writeln!(file, "{}", json).context("Failed to write task")?;
+    super::notify_graph_changed(dir);
 
     println!("Added task: {} ({})", title, task_id);
     Ok(())
