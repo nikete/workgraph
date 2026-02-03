@@ -1,15 +1,21 @@
-/// DAG layout engine using a simplified Sugiyama algorithm.
+/// DAG layout engine using the ascii-dag crate.
 ///
-/// Produces a layered graph layout suitable for rendering with Unicode
-/// box-drawing characters in a terminal. The algorithm:
+/// This module uses ascii-dag for the Sugiyama layout algorithm and produces
+/// a layout suitable for rendering with Unicode box-drawing characters in a
+/// terminal via ratatui.
 ///
-/// 1. Layer assignment: longest-path from sources (topological depth)
-/// 2. Crossing minimization: barycenter heuristic (2 passes)
-/// 3. Coordinate assignment: greedy left-to-right packing per layer
-/// 4. Edge routing: vertical/horizontal segments with box-drawing chars
+/// The ascii-dag crate handles:
+/// - Layer assignment (topological depth)
+/// - Crossing minimization (median heuristic)
+/// - Coordinate assignment
+/// - Edge routing (including skip-level edges via side channels)
+///
+/// We consume ascii-dag's LayoutIR and transform it into our own structs
+/// that integrate with the TUI's styling and selection logic.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
+use ascii_dag::DAG;
 use workgraph::graph::{Status, Task, WorkGraph};
 
 use super::app::TaskAgentInfo;
@@ -49,40 +55,150 @@ pub struct LayoutEdge {
     pub segments: Vec<(usize, usize)>,
 }
 
+/// A back-edge representing a cycle in the graph.
+/// Back-edges point from a descendant back to an ancestor in the DFS tree,
+/// creating a cycle. They are rendered with a distinct style (upward arrows,
+/// different color) to distinguish them from normal forward edges.
+#[derive(Debug, Clone)]
+pub struct BackEdge {
+    pub from_id: String,
+    pub to_id: String,
+    /// Segments to draw: list of (x, y) points forming a polyline going upward
+    pub segments: Vec<(usize, usize)>,
+}
+
 /// The complete layout result.
 #[derive(Debug)]
 pub struct DagLayout {
     pub nodes: Vec<LayoutNode>,
     pub edges: Vec<LayoutEdge>,
+    /// Back-edges representing cycles in the graph
+    pub back_edges: Vec<BackEdge>,
     /// Total width of the layout canvas in characters
     pub width: usize,
     /// Total height of the layout canvas in characters
     pub height: usize,
     /// Mapping from task_id to node index
     pub id_to_idx: HashMap<String, usize>,
+    /// Whether the graph contains cycles
+    pub has_cycles: bool,
 }
 
 // ── Configuration ───────────────────────────────────────────────────────
 
-/// Minimum horizontal gap between node boxes in the same layer
-const H_GAP: usize = 2;
-/// Vertical gap between layers (rows between bottom of one layer and top of next)
-const V_GAP: usize = 2;
 /// Node box height (top border + content + bottom border)
 const NODE_HEIGHT: usize = 3;
 /// Minimum node box width (including borders)
 const MIN_NODE_WIDTH: usize = 10;
 /// Maximum node box width (including borders)
 const MAX_NODE_WIDTH: usize = 40;
+/// Extra horizontal padding between nodes
+const H_PAD: usize = 2;
+/// Extra vertical padding between levels (needs room for horizontal routing + arrows)
+const V_PAD: usize = 2;
 /// Left margin
 const LEFT_MARGIN: usize = 1;
 /// Top margin
 const TOP_MARGIN: usize = 0;
+/// Extra right margin for back-edge routing
+const BACK_EDGE_MARGIN: usize = 3;
+
+// ── Cycle detection ─────────────────────────────────────────────────────
+
+/// Detect back-edges in the graph using DFS.
+///
+/// A back-edge is an edge that points from a node to one of its ancestors
+/// in the DFS tree, indicating a cycle. This function performs DFS from all
+/// roots (nodes with no incoming edges) and identifies any edges that would
+/// create cycles.
+///
+/// Returns a set of (from, to) tuples representing back-edges.
+fn detect_back_edges(node_count: usize, edges: &[(usize, usize)]) -> HashSet<(usize, usize)> {
+    // Build adjacency list: node -> list of successors
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+    let mut in_degree: Vec<usize> = vec![0; node_count];
+
+    for &(from, to) in edges {
+        if from < node_count && to < node_count {
+            adj[from].push(to);
+            in_degree[to] += 1;
+        }
+    }
+
+    // Find roots (nodes with no incoming edges)
+    let roots: Vec<usize> = (0..node_count)
+        .filter(|&n| in_degree[n] == 0)
+        .collect();
+
+    // DFS state
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        Unvisited,
+        InStack,  // Currently in the DFS recursion stack (ancestor)
+        Finished, // Completely processed
+    }
+
+    let mut state = vec![State::Unvisited; node_count];
+    let mut back_edges: HashSet<(usize, usize)> = HashSet::new();
+
+    // Iterative DFS to avoid stack overflow on deep graphs
+    fn dfs(
+        start: usize,
+        adj: &[Vec<usize>],
+        state: &mut [State],
+        back_edges: &mut HashSet<(usize, usize)>,
+    ) {
+        // Stack stores (node, iterator index into adj[node])
+        let mut stack: Vec<(usize, usize)> = vec![(start, 0)];
+        state[start] = State::InStack;
+
+        while let Some((node, idx)) = stack.pop() {
+            if idx < adj[node].len() {
+                let next = adj[node][idx];
+                // Push current node back with incremented index
+                stack.push((node, idx + 1));
+
+                match state[next] {
+                    State::InStack => {
+                        // Found a back-edge: edge to an ancestor in the DFS tree
+                        back_edges.insert((node, next));
+                    }
+                    State::Unvisited => {
+                        state[next] = State::InStack;
+                        stack.push((next, 0));
+                    }
+                    State::Finished => {
+                        // Cross-edge or forward-edge, not a cycle
+                    }
+                }
+            } else {
+                // Done with this node
+                state[node] = State::Finished;
+            }
+        }
+    }
+
+    // Start DFS from all roots
+    for root in roots {
+        if state[root] == State::Unvisited {
+            dfs(root, &adj, &mut state, &mut back_edges);
+        }
+    }
+
+    // Also handle disconnected components or cycles with no root
+    for node in 0..node_count {
+        if state[node] == State::Unvisited {
+            dfs(node, &adj, &mut state, &mut back_edges);
+        }
+    }
+
+    back_edges
+}
 
 // ── Layout computation ─────────────────────────────────────────────────
 
 impl DagLayout {
-    /// Compute a layered DAG layout from the work graph.
+    /// Compute a layered DAG layout from the work graph using ascii-dag.
     pub fn compute(
         graph: &WorkGraph,
         critical_ids: &HashSet<String>,
@@ -94,102 +210,235 @@ impl DagLayout {
             return Self {
                 nodes: Vec::new(),
                 edges: Vec::new(),
+                back_edges: Vec::new(),
                 width: 0,
                 height: 0,
                 id_to_idx: HashMap::new(),
+                has_cycles: false,
             };
         }
 
-        // Build adjacency: parent -> children (task blocks child)
-        // blocked_by[child] = parents, so children[parent] = child
-        let mut children: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut parents: HashMap<&str, Vec<&str>> = HashMap::new();
-        let mut all_ids: Vec<&str> = Vec::new();
+        // Build a mapping from task ID (String) to a numeric ID for ascii-dag
+        // and collect the edges
+        let task_ids: Vec<String> = tasks.keys().cloned().collect();
+        let id_to_num: HashMap<&str, usize> = task_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
 
+        // Build ascii-dag graph
+        // Node tuples: (numeric_id, label)
+        let nodes_for_dag: Vec<(usize, &str)> = task_ids
+            .iter()
+            .map(|id| {
+                let task = &tasks[id];
+                let num = id_to_num[id.as_str()];
+                (num, task.title.as_str())
+            })
+            .collect();
+
+        // Collect all edges: parent -> child (blocker -> blocked)
+        let mut all_edges: Vec<(usize, usize)> = Vec::new();
         for task in tasks.values() {
-            all_ids.push(&task.id);
+            let child_num = id_to_num[task.id.as_str()];
             for blocker_id in &task.blocked_by {
-                if tasks.contains_key(blocker_id) {
-                    children
-                        .entry(blocker_id.as_str())
-                        .or_default()
-                        .push(&task.id);
-                    parents
-                        .entry(task.id.as_str())
-                        .or_default()
-                        .push(blocker_id.as_str());
+                if let Some(&parent_num) = id_to_num.get(blocker_id.as_str()) {
+                    all_edges.push((parent_num, child_num));
                 }
             }
         }
 
-        // 1. Layer assignment via longest-path from sources
-        let layers = assign_layers(&all_ids, &children, &parents);
+        // Detect back-edges (cycles) using DFS
+        let back_edge_set = detect_back_edges(task_ids.len(), &all_edges);
 
-        // Group nodes by layer
-        let max_layer = layers.values().copied().max().unwrap_or(0);
-        let mut layer_groups: Vec<Vec<&str>> = vec![Vec::new(); max_layer + 1];
-        for &id in &all_ids {
-            let layer = layers.get(id).copied().unwrap_or(0);
-            layer_groups[layer].push(id);
-        }
-
-        // 2. Initial ordering: sort within each layer by status priority then title
-        for group in &mut layer_groups {
-            group.sort_by(|a, b| {
-                let ta = tasks.get(*a);
-                let tb = tasks.get(*b);
-                match (ta, tb) {
-                    (Some(a), Some(b)) => sort_key_for_status(&a.status)
-                        .cmp(&sort_key_for_status(&b.status))
-                        .then(a.title.cmp(&b.title)),
-                    _ => a.cmp(b),
-                }
-            });
-        }
-
-        // 3. Crossing minimization via barycenter heuristic
-        minimize_crossings(&mut layer_groups, &children, &parents);
-
-        // 4. Compute node widths (based on title + status indicator)
-        let node_widths: HashMap<&str, usize> = all_ids
+        // Filter out back-edges before passing to ascii-dag
+        let edges_for_dag: Vec<(usize, usize)> = all_edges
             .iter()
-            .map(|&id| {
-                let task = &tasks[id];
-                let indicator = status_indicator_str(&task.status);
-                // Box content: " indicator title "
-                let content_width = indicator.len() + 1 + task.title.len() + 2;
-                // Add 2 for box borders (│ on each side)
+            .filter(|e| !back_edge_set.contains(e))
+            .copied()
+            .collect();
+
+        let has_cycles = !back_edge_set.is_empty();
+
+        // Build the DAG and compute layout (now guaranteed acyclic)
+        let dag = DAG::from_edges(&nodes_for_dag, &edges_for_dag);
+        let ir = dag.compute_layout();
+
+        // Transform ascii-dag's IR into our LayoutNode/LayoutEdge structs
+        // ascii-dag uses 1-line-per-node by default; we need to expand to 3-line boxes
+        // and compute our own widths based on title length.
+
+        // First pass: compute node widths and map numeric IDs back to task IDs
+        let num_to_id: HashMap<usize, &str> = id_to_num
+            .iter()
+            .map(|(&id, &num)| (num, id))
+            .collect();
+
+        // Collect node info from ascii-dag IR
+        let mut node_infos: Vec<(usize, &str, usize, usize, usize)> = Vec::new(); // (num_id, task_id, level, x, width)
+        for node in ir.nodes() {
+            let task_id = num_to_id.get(&node.id).copied().unwrap_or("");
+            node_infos.push((node.id, task_id, node.level, node.x, node.width));
+        }
+
+        // Compute our custom widths based on title + status indicator
+        let node_widths: HashMap<usize, usize> = node_infos
+            .iter()
+            .map(|&(num_id, task_id, _, _, _)| {
+                let task = tasks.get(task_id);
+                let title = task.map(|t| t.title.as_str()).unwrap_or("");
+                let indicator = status_indicator_str(
+                    &task.map(|t| t.status.clone()).unwrap_or(Status::Open),
+                );
+                // Box content: " indicator title " + 2 for borders
+                let content_width = indicator.len() + 1 + title.len() + 2;
                 let w = (content_width + 2).max(MIN_NODE_WIDTH).min(MAX_NODE_WIDTH);
-                (id, w)
+                (num_id, w)
             })
             .collect();
 
-        // 5. Coordinate assignment
-        let (positioned_nodes, total_width, total_height) = assign_coordinates(
-            &layer_groups,
-            &node_widths,
-            &tasks,
-            critical_ids,
-            agent_map,
-            &layers,
-        );
+        // Group nodes by level and compute positions
+        let level_count = ir.level_count();
+        let mut level_nodes: Vec<Vec<(usize, &str)>> = vec![Vec::new(); level_count];
+        for &(num_id, task_id, level, _, _) in &node_infos {
+            if level < level_count {
+                level_nodes[level].push((num_id, task_id));
+            }
+        }
+
+        // Sort nodes within each level by their ascii-dag x position for consistency
+        let node_x_map: HashMap<usize, usize> = node_infos
+            .iter()
+            .map(|&(num_id, _, _, x, _)| (num_id, x))
+            .collect();
+        for level in &mut level_nodes {
+            level.sort_by_key(|(num_id, _)| node_x_map.get(num_id).copied().unwrap_or(0));
+        }
+
+        // Assign x coordinates: pack nodes left-to-right within each level
+        let mut node_positions: HashMap<usize, (usize, usize, usize, usize)> = HashMap::new(); // num_id -> (x, y, w, h)
+        let mut max_width: usize = 0;
+        let mut y = TOP_MARGIN;
+
+        for level in level_nodes.iter() {
+            let mut x = LEFT_MARGIN;
+            for &(num_id, _) in level.iter() {
+                let w = node_widths.get(&num_id).copied().unwrap_or(MIN_NODE_WIDTH);
+                node_positions.insert(num_id, (x, y, w, NODE_HEIGHT));
+                x += w + H_PAD;
+            }
+            max_width = max_width.max(x);
+            y += NODE_HEIGHT + V_PAD;
+        }
+
+        let total_height = if y > V_PAD { y - V_PAD } else { y };
+
+        // Build LayoutNode structs
+        let mut layout_nodes: Vec<LayoutNode> = Vec::new();
+        for (level_idx, level) in level_nodes.iter().enumerate() {
+            for (order, &(num_id, task_id)) in level.iter().enumerate() {
+                let (x, y, w, h) = node_positions.get(&num_id).copied().unwrap_or((0, 0, MIN_NODE_WIDTH, NODE_HEIGHT));
+                let task = tasks.get(task_id);
+                let (agent_count, agent_ids) = agent_map
+                    .get(task_id)
+                    .map(|info| (info.count, info.agent_ids.clone()))
+                    .unwrap_or((0, Vec::new()));
+
+                layout_nodes.push(LayoutNode {
+                    task_id: task_id.to_string(),
+                    title: task.map(|t| t.title.clone()).unwrap_or_default(),
+                    status: task.map(|t| t.status.clone()).unwrap_or(Status::Open),
+                    assigned: task.and_then(|t| t.assigned.clone()),
+                    critical: critical_ids.contains(task_id),
+                    active_agent_count: agent_count,
+                    active_agent_ids: agent_ids,
+                    layer: level_idx,
+                    order,
+                    x,
+                    y,
+                    w,
+                    h,
+                });
+            }
+        }
 
         // Build id_to_idx map
-        let id_to_idx: HashMap<String, usize> = positioned_nodes
+        let id_to_idx: HashMap<String, usize> = layout_nodes
             .iter()
             .enumerate()
             .map(|(i, n)| (n.task_id.clone(), i))
             .collect();
 
-        // 6. Route edges
-        let edges = route_edges(&positioned_nodes, &id_to_idx, &tasks);
+        // Build edges with routing segments
+        let mut layout_edges: Vec<LayoutEdge> = Vec::new();
+        for edge in ir.edges() {
+            let from_task_id = num_to_id.get(&edge.from_id).copied().unwrap_or("");
+            let to_task_id = num_to_id.get(&edge.to_id).copied().unwrap_or("");
+
+            if from_task_id.is_empty() || to_task_id.is_empty() {
+                continue;
+            }
+
+            // Get node positions for routing
+            let from_idx = id_to_idx.get(from_task_id);
+            let to_idx = id_to_idx.get(to_task_id);
+
+            let (from_node, to_node) = match (from_idx, to_idx) {
+                (Some(&fi), Some(&ti)) => (&layout_nodes[fi], &layout_nodes[ti]),
+                _ => continue,
+            };
+
+            // Route edge: from center-bottom of parent to center-top of child
+            let from_x = from_node.x + from_node.w / 2;
+            let from_y = from_node.y + from_node.h - 1; // bottom border
+            let to_x = to_node.x + to_node.w / 2;
+            let to_y = to_node.y; // top border
+
+            let mut segments = Vec::new();
+            segments.push((from_x, from_y));
+
+            if from_x == to_x {
+                // Straight vertical
+                segments.push((to_x, to_y));
+            } else {
+                // L-shaped or corner routing
+                // Place horizontal segment in the gap just below the parent node
+                let mid_y = from_y + 1;
+                segments.push((from_x, mid_y));
+                segments.push((to_x, mid_y));
+                segments.push((to_x, to_y));
+            }
+
+            layout_edges.push(LayoutEdge {
+                from_id: from_task_id.to_string(),
+                to_id: to_task_id.to_string(),
+                segments,
+            });
+        }
+
+        // Build back-edges for cycles (will be routed later in reroute_edges)
+        let layout_back_edges: Vec<BackEdge> = back_edge_set
+            .iter()
+            .filter_map(|&(from_num, to_num)| {
+                let from_id = num_to_id.get(&from_num).copied()?;
+                let to_id = num_to_id.get(&to_num).copied()?;
+                Some(BackEdge {
+                    from_id: from_id.to_string(),
+                    to_id: to_id.to_string(),
+                    segments: Vec::new(), // Will be routed in reroute_edges
+                })
+            })
+            .collect();
 
         Self {
-            nodes: positioned_nodes,
-            edges,
-            width: total_width,
+            nodes: layout_nodes,
+            edges: layout_edges,
+            back_edges: layout_back_edges,
+            width: max_width + LEFT_MARGIN,
             height: total_height,
             id_to_idx,
+            has_cycles,
         }
     }
 
@@ -201,257 +450,115 @@ impl DagLayout {
     }
 }
 
-// ── Layer assignment (longest path from sources) ────────────────────────
+// ── Centering helper ────────────────────────────────────────────────────
 
-fn assign_layers<'a>(
-    all_ids: &[&'a str],
-    children: &HashMap<&str, Vec<&'a str>>,
-    parents: &HashMap<&str, Vec<&'a str>>,
-) -> HashMap<&'a str, usize> {
-    let mut layers: HashMap<&str, usize> = HashMap::new();
-    let mut in_degree: HashMap<&str, usize> = HashMap::new();
-
-    for &id in all_ids {
-        let deg = parents.get(id).map(|p| p.len()).unwrap_or(0);
-        in_degree.insert(id, deg);
-    }
-
-    // BFS from sources (nodes with in_degree 0)
-    let mut queue: VecDeque<&str> = VecDeque::new();
-    for &id in all_ids {
-        if in_degree[id] == 0 {
-            queue.push_back(id);
-            layers.insert(id, 0);
-        }
-    }
-
-    while let Some(node) = queue.pop_front() {
-        let node_layer = layers[node];
-        if let Some(kids) = children.get(node) {
-            for &kid in kids {
-                // Assign max depth (longest path)
-                let new_layer = node_layer + 1;
-                let current = layers.entry(kid).or_insert(0);
-                if new_layer > *current {
-                    *current = new_layer;
-                }
-                // Decrement in-degree; add to queue when all parents processed
-                let deg = in_degree.get_mut(kid).unwrap();
-                *deg = deg.saturating_sub(1);
-                if *deg == 0 {
-                    queue.push_back(kid);
-                }
-            }
-        }
-    }
-
-    // Handle any unvisited nodes (cycles) - assign to layer 0
-    for &id in all_ids {
-        layers.entry(id).or_insert(0);
-    }
-
-    layers
-}
-
-// ── Crossing minimization (barycenter heuristic) ────────────────────────
-
-fn minimize_crossings<'a>(
-    layer_groups: &mut [Vec<&'a str>],
-    children: &HashMap<&str, Vec<&'a str>>,
-    parents: &HashMap<&str, Vec<&'a str>>,
-) {
-    if layer_groups.len() <= 1 {
+/// After initial layout, center each layer horizontally relative to the widest layer.
+pub fn center_layers(layout: &mut DagLayout) {
+    if layout.nodes.is_empty() {
         return;
     }
 
-    // Build position lookup for each layer
-    let mut positions: Vec<HashMap<&str, usize>> = layer_groups
+    // Group nodes by layer
+    let max_layer = layout.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
+    let mut layer_extents: Vec<(usize, usize)> = vec![(usize::MAX, 0); max_layer + 1];
+
+    for node in &layout.nodes {
+        let layer = node.layer;
+        layer_extents[layer].0 = layer_extents[layer].0.min(node.x);
+        layer_extents[layer].1 = layer_extents[layer].1.max(node.x + node.w);
+    }
+
+    // Find widest layer
+    let max_width = layer_extents
         .iter()
-        .map(|group| {
-            group
-                .iter()
-                .enumerate()
-                .map(|(i, &id)| (id, i))
-                .collect()
-        })
-        .collect();
+        .filter(|(min, _)| *min != usize::MAX)
+        .map(|(min, max)| max - min)
+        .max()
+        .unwrap_or(0);
 
-    // Forward pass: order each layer based on parents in previous layer
-    for layer_idx in 1..layer_groups.len() {
-        let prev_positions = &positions[layer_idx - 1];
-        let mut barycenters: Vec<(&str, f64)> = layer_groups[layer_idx]
-            .iter()
-            .map(|&id| {
-                let bc = if let Some(pars) = parents.get(id) {
-                    let parent_positions: Vec<f64> = pars
-                        .iter()
-                        .filter_map(|&p| prev_positions.get(p).map(|&pos| pos as f64))
-                        .collect();
-                    if parent_positions.is_empty() {
-                        f64::MAX
-                    } else {
-                        parent_positions.iter().sum::<f64>() / parent_positions.len() as f64
-                    }
-                } else {
-                    f64::MAX
-                };
-                (id, bc)
-            })
-            .collect();
-
-        barycenters.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        layer_groups[layer_idx] = barycenters.into_iter().map(|(id, _)| id).collect();
-
-        // Update positions for this layer
-        positions[layer_idx] = layer_groups[layer_idx]
-            .iter()
-            .enumerate()
-            .map(|(i, &id)| (id, i))
-            .collect();
-    }
-
-    // Backward pass: order each layer based on children in next layer
-    for layer_idx in (0..layer_groups.len() - 1).rev() {
-        let next_positions = &positions[layer_idx + 1];
-        let mut barycenters: Vec<(&str, f64)> = layer_groups[layer_idx]
-            .iter()
-            .map(|&id| {
-                let bc = if let Some(kids) = children.get(id) {
-                    let child_positions: Vec<f64> = kids
-                        .iter()
-                        .filter_map(|&c| next_positions.get(c).map(|&pos| pos as f64))
-                        .collect();
-                    if child_positions.is_empty() {
-                        f64::MAX
-                    } else {
-                        child_positions.iter().sum::<f64>() / child_positions.len() as f64
-                    }
-                } else {
-                    f64::MAX
-                };
-                (id, bc)
-            })
-            .collect();
-
-        barycenters.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        layer_groups[layer_idx] = barycenters.into_iter().map(|(id, _)| id).collect();
-
-        positions[layer_idx] = layer_groups[layer_idx]
-            .iter()
-            .enumerate()
-            .map(|(i, &id)| (id, i))
-            .collect();
-    }
-}
-
-// ── Coordinate assignment ───────────────────────────────────────────────
-
-fn assign_coordinates(
-    layer_groups: &[Vec<&str>],
-    node_widths: &HashMap<&str, usize>,
-    tasks: &HashMap<String, &Task>,
-    critical_ids: &HashSet<String>,
-    agent_map: &HashMap<String, TaskAgentInfo>,
-    layers: &HashMap<&str, usize>,
-) -> (Vec<LayoutNode>, usize, usize) {
-    let mut nodes = Vec::new();
-    let mut total_width: usize = 0;
-    let mut y = TOP_MARGIN;
-
-    for (layer_idx, group) in layer_groups.iter().enumerate() {
-        if group.is_empty() {
+    // Center each layer
+    for node in &mut layout.nodes {
+        let layer = node.layer;
+        let (min_x, max_x) = layer_extents[layer];
+        if min_x == usize::MAX {
             continue;
         }
-
-        // Compute total width of this layer
-        let layer_width: usize = group
-            .iter()
-            .map(|&id| node_widths.get(id).copied().unwrap_or(MIN_NODE_WIDTH))
-            .sum::<usize>()
-            + H_GAP * group.len().saturating_sub(1)
-            + LEFT_MARGIN;
-
-        total_width = total_width.max(layer_width + LEFT_MARGIN);
-
-        let mut x = LEFT_MARGIN;
-        for (order, &id) in group.iter().enumerate() {
-            let task = &tasks[id];
-            let w = node_widths.get(id).copied().unwrap_or(MIN_NODE_WIDTH);
-            let (agent_count, agent_ids) = agent_map
-                .get(id)
-                .map(|info| (info.count, info.agent_ids.clone()))
-                .unwrap_or((0, Vec::new()));
-
-            nodes.push(LayoutNode {
-                task_id: id.to_string(),
-                title: task.title.clone(),
-                status: task.status.clone(),
-                assigned: task.assigned.clone(),
-                critical: critical_ids.contains(id),
-                active_agent_count: agent_count,
-                active_agent_ids: agent_ids,
-                layer: layers.get(id).copied().unwrap_or(layer_idx),
-                order,
-                x,
-                y,
-                w,
-                h: NODE_HEIGHT,
-            });
-
-            x += w + H_GAP;
-        }
-
-        y += NODE_HEIGHT + V_GAP;
+        let layer_width = max_x - min_x;
+        let offset = (max_width - layer_width) / 2;
+        // Shift relative to the current layer's minimum x
+        node.x = node.x - min_x + offset + LEFT_MARGIN;
     }
 
-    let total_height = if y > V_GAP { y - V_GAP } else { y };
-    (nodes, total_width, total_height)
+    // Recompute total width, adding extra margin for back-edge routing if cycles exist
+    let extra_margin = if layout.has_cycles { BACK_EDGE_MARGIN } else { 0 };
+    layout.width = layout
+        .nodes
+        .iter()
+        .map(|n| n.x + n.w)
+        .max()
+        .unwrap_or(0)
+        + LEFT_MARGIN
+        + extra_margin;
+
+    // Rebuild id_to_idx after potential reordering
+    layout.id_to_idx = layout
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.task_id.clone(), i))
+        .collect();
 }
 
-// ── Edge routing ────────────────────────────────────────────────────────
+/// Re-route all edges based on current node positions.
+///
+/// Edge routing strategy (matching ascii-dag's clean output):
+/// 1. Vertical down from parent's bottom border center
+/// 2. Horizontal routing in the middle of the gap between layers
+/// 3. Vertical down to child's top border center
+///
+/// The arrow is placed on the last vertical segment, just above the child node.
+pub fn reroute_edges(layout: &mut DagLayout, graph: &WorkGraph) {
+    let tasks: HashMap<String, &Task> = graph.tasks().map(|t| (t.id.clone(), t)).collect();
 
-fn route_edges(
-    nodes: &[LayoutNode],
-    id_to_idx: &HashMap<String, usize>,
-    tasks: &HashMap<String, &Task>,
-) -> Vec<LayoutEdge> {
-    let mut edges = Vec::new();
+    let mut new_edges: Vec<LayoutEdge> = Vec::new();
 
-    for node in nodes {
+    for node in &layout.nodes {
         let task = match tasks.get(&node.task_id) {
             Some(t) => t,
             None => continue,
         };
 
         for blocker_id in &task.blocked_by {
-            let parent_idx = match id_to_idx.get(blocker_id) {
+            let parent_idx = match layout.id_to_idx.get(blocker_id) {
                 Some(&i) => i,
                 None => continue,
             };
-            let parent = &nodes[parent_idx];
 
-            // Route from bottom-center of parent to top-center of child
+            let parent = &layout.nodes[parent_idx];
+            let child = node;
+
             let from_x = parent.x + parent.w / 2;
-            let from_y = parent.y + parent.h - 1; // bottom border row
-
-            let to_x = node.x + node.w / 2;
-            let to_y = node.y; // top border row
+            let from_y = parent.y + parent.h - 1; // bottom border
+            let to_x = child.x + child.w / 2;
+            let to_y = child.y; // top border
 
             let mut segments = Vec::new();
             segments.push((from_x, from_y));
 
-            // If not vertically aligned, route through a midpoint
-            if from_x != to_x {
-                let mid_y = from_y + (to_y - from_y) / 2;
-                segments.push((from_x, mid_y));
-                segments.push((to_x, mid_y));
+            if from_x == to_x {
+                // Straight vertical - just go down
+                segments.push((to_x, to_y));
+            } else {
+                // Route with horizontal jog at the top of the gap between layers
+                // Gap is from (from_y + 1) to (to_y - 1)
+                // Put horizontal routing at the top to leave room for arrows below
+                let gap_top = from_y + 1;
+                segments.push((from_x, gap_top));
+                segments.push((to_x, gap_top));
+                segments.push((to_x, to_y));
             }
 
-            segments.push((to_x, to_y));
-
-            edges.push(LayoutEdge {
+            new_edges.push(LayoutEdge {
                 from_id: blocker_id.clone(),
                 to_id: node.task_id.clone(),
                 segments,
@@ -459,7 +566,56 @@ fn route_edges(
         }
     }
 
-    edges
+    layout.edges = new_edges;
+
+    // Route back-edges (cycles) - these go upward along the right side
+    if !layout.back_edges.is_empty() {
+        let max_x = layout
+            .nodes
+            .iter()
+            .map(|n| n.x + n.w)
+            .max()
+            .unwrap_or(0);
+
+        // Route each back-edge along the right margin going upward
+        let mut new_back_edges: Vec<BackEdge> = Vec::new();
+        for (i, back_edge) in layout.back_edges.iter().enumerate() {
+            let from_idx = layout.id_to_idx.get(&back_edge.from_id);
+            let to_idx = layout.id_to_idx.get(&back_edge.to_id);
+
+            let (from_node, to_node) = match (from_idx, to_idx) {
+                (Some(&fi), Some(&ti)) => (&layout.nodes[fi], &layout.nodes[ti]),
+                _ => continue,
+            };
+
+            // Back-edge goes from bottom of 'from' node upward to top of 'to' node
+            // Route along the right side of the layout
+            let route_x = max_x + 1 + i; // Offset each back-edge slightly for multiple cycles
+
+            // Start from bottom-right of the source node
+            let from_x = from_node.x + from_node.w - 1;
+            let from_y = from_node.y + from_node.h - 1;
+
+            // End at top-right of the target node
+            let to_x = to_node.x + to_node.w - 1;
+            let to_y = to_node.y;
+
+            // Route: right from source -> up along margin -> left to target
+            let mut segments = Vec::new();
+            segments.push((from_x, from_y));           // Start at source
+            segments.push((route_x, from_y));           // Go right to margin
+            segments.push((route_x, to_y));             // Go up along margin
+            segments.push((to_x, to_y));                // Go left to target
+
+            new_back_edges.push(BackEdge {
+                from_id: back_edge.from_id.clone(),
+                to_id: back_edge.to_id.clone(),
+                segments,
+            });
+        }
+
+        layout.back_edges = new_back_edges;
+    }
 }
 
 // ── Rendering to a character buffer ─────────────────────────────────────
@@ -490,6 +646,10 @@ pub enum CellStyle {
     Edge,
     /// Edge arrow
     Arrow,
+    /// Back-edge line (cycle - goes upward)
+    BackEdge,
+    /// Back-edge arrow (upward pointing)
+    BackEdgeArrow,
 }
 
 impl Default for Cell {
@@ -502,6 +662,10 @@ impl Default for Cell {
 }
 
 /// Render the DAG layout into a 2D character buffer.
+///
+/// Strategy: use a connectivity grid. For each cell in the inter-layer gap,
+/// track which directions (up/down/left/right) have edge connections. Then
+/// resolve the correct box-drawing character from the connectivity.
 pub fn render_to_buffer(layout: &DagLayout) -> Vec<Vec<Cell>> {
     if layout.width == 0 || layout.height == 0 {
         return Vec::new();
@@ -511,17 +675,308 @@ pub fn render_to_buffer(layout: &DagLayout) -> Vec<Vec<Cell>> {
     let height = layout.height + 1;
     let mut buf: Vec<Vec<Cell>> = vec![vec![Cell::default(); width]; height];
 
-    // Draw edges first (so nodes are drawn on top)
+    // Build a connectivity grid: for each cell, track connected directions
+    // We'll paint edges into this grid, then resolve characters.
+    let mut conn: Vec<Vec<u8>> = vec![vec![0u8; width]; height];
+    // Bit flags: UP=1, DOWN=2, LEFT=4, RIGHT=8
+    const UP: u8 = 1;
+    const DOWN: u8 = 2;
+    const LEFT: u8 = 4;
+    const RIGHT: u8 = 8;
+
+    // Track which cells are arrow targets
+    let mut arrow_cells: HashSet<(usize, usize)> = HashSet::new();
+
+    // Process each edge: paint connectivity into the grid
     for edge in &layout.edges {
-        draw_edge(&mut buf, &edge.segments, width, height);
+        let segs = &edge.segments;
+        if segs.len() < 2 {
+            continue;
+        }
+
+        for i in 0..segs.len() - 1 {
+            let (x1, y1) = segs[i];
+            let (x2, y2) = segs[i + 1];
+
+            if x1 == x2 {
+                // Vertical segment
+                let min_y = y1.min(y2);
+                let max_y = y1.max(y2);
+                for cy in min_y..=max_y {
+                    if cy < height && x1 < width {
+                        if cy > min_y { conn[cy][x1] |= UP; }
+                        if cy < max_y { conn[cy][x1] |= DOWN; }
+                    }
+                }
+            } else if y1 == y2 {
+                // Horizontal segment
+                let min_x = x1.min(x2);
+                let max_x = x1.max(x2);
+                for cx in min_x..=max_x {
+                    if y1 < height && cx < width {
+                        if cx > min_x { conn[y1][cx] |= LEFT; }
+                        if cx < max_x { conn[y1][cx] |= RIGHT; }
+                    }
+                }
+            }
+        }
+
+        // Mark arrow at the second-to-last point (on the vertical segment leading to target)
+        // This places the arrow BELOW the horizontal routing, not overlapping with it.
+        // For straight vertical edges, this is one row above the target.
+        // For L-shaped edges, this is on the vertical segment going down to the target.
+        if segs.len() >= 2 {
+            // Get the last segment
+            let (tx, ty) = segs[segs.len() - 1];
+            // Arrow goes on the cell just above the target node's top border
+            if ty > 0 {
+                let arrow_y = ty - 1;
+                if arrow_y < height && tx < width {
+                    arrow_cells.insert((tx, arrow_y));
+                    // The arrow cell connects up from above and down to node
+                    conn[arrow_y][tx] |= UP;
+                }
+            }
+        }
+
+        // Mark connectivity from the parent's bottom border down to the first edge cell
+        if let Some(&(fx, fy)) = segs.first() {
+            // fy is the parent's bottom border row; the edge starts just below
+            if fy < height && fx < width {
+                // The border cell gets DOWN connectivity
+                conn[fy][fx] |= DOWN;
+                // The cell below gets UP connectivity
+                if fy + 1 < height {
+                    conn[fy + 1][fx] |= UP;
+                }
+            }
+        }
+
+        // Mark connectivity from the last edge cell down to the target's top border
+        if let Some(&(tx, ty)) = segs.last() {
+            // ty is the target's top border row
+            if ty < height && tx < width {
+                conn[ty][tx] |= UP;
+                if ty > 0 {
+                    conn[ty - 1][tx] |= DOWN;
+                }
+            }
+        }
     }
 
-    // Draw nodes
+    // Draw nodes (without edge integration first)
     for node in &layout.nodes {
         draw_node(&mut buf, node, width, height);
     }
 
+    // Now draw edges using the connectivity grid, but only in cells that aren't node content
+    for y in 0..height {
+        for x in 0..width {
+            let c = conn[y][x];
+            if c == 0 {
+                continue; // no edge connectivity
+            }
+
+            let existing = &buf[y][x];
+
+            // Handle arrow cells
+            if arrow_cells.contains(&(x, y)) {
+                if existing.style == CellStyle::Empty || existing.style == CellStyle::Edge {
+                    buf[y][x] = Cell { ch: '▼', style: CellStyle::Arrow };
+                }
+                continue;
+            }
+
+            // If this cell is on a node border, merge edge connectivity into the border char
+            if existing.style == CellStyle::Border {
+                let new_ch = merge_border_with_edge(existing.ch, c);
+                buf[y][x] = Cell { ch: new_ch, style: CellStyle::Border };
+                continue;
+            }
+
+            // Skip node content cells
+            if existing.style == CellStyle::NodeText
+                || existing.style == CellStyle::ActiveAgent
+                || existing.style == CellStyle::Critical
+                || existing.style == CellStyle::Dimmed
+            {
+                continue;
+            }
+
+            // Empty/edge cell: resolve box-drawing char from connectivity
+            let ch = connectivity_to_char(c);
+            if ch != ' ' {
+                buf[y][x] = Cell { ch, style: CellStyle::Edge };
+            }
+        }
+    }
+
+    // Draw back-edges (cycles) with distinct styling
+    // Back-edges are rendered with dashed lines and upward arrows in magenta
+    for back_edge in &layout.back_edges {
+        let segs = &back_edge.segments;
+        if segs.len() < 2 {
+            continue;
+        }
+
+        // Draw each segment of the back-edge
+        for i in 0..segs.len() - 1 {
+            let (x1, y1) = segs[i];
+            let (x2, y2) = segs[i + 1];
+
+            if x1 == x2 {
+                // Vertical segment (going up or down)
+                let min_y = y1.min(y2);
+                let max_y = y1.max(y2);
+                let going_up = y2 < y1;
+
+                for cy in min_y..=max_y {
+                    if cy < height && x1 < width {
+                        // Use dashed vertical line for back-edges
+                        let ch = if going_up { '╎' } else { '╎' };
+                        // Don't overwrite node content
+                        let existing = &buf[cy][x1];
+                        if existing.style == CellStyle::Empty
+                            || existing.style == CellStyle::Edge
+                            || existing.style == CellStyle::BackEdge
+                        {
+                            buf[cy][x1] = Cell { ch, style: CellStyle::BackEdge };
+                        }
+                    }
+                }
+            } else if y1 == y2 {
+                // Horizontal segment
+                let min_x = x1.min(x2);
+                let max_x = x1.max(x2);
+
+                for cx in min_x..=max_x {
+                    if y1 < height && cx < width {
+                        // Use dashed horizontal line for back-edges
+                        let existing = &buf[y1][cx];
+                        if existing.style == CellStyle::Empty
+                            || existing.style == CellStyle::Edge
+                            || existing.style == CellStyle::BackEdge
+                        {
+                            buf[y1][cx] = Cell { ch: '╌', style: CellStyle::BackEdge };
+                        }
+                    }
+                }
+            }
+        }
+
+        // Draw corners at segment joints
+        for i in 1..segs.len() - 1 {
+            let (x, y) = segs[i];
+            if y < height && x < width {
+                let (px, py) = segs[i - 1];
+                let (nx, ny) = segs[i + 1];
+
+                // Determine corner type based on direction changes
+                let from_left = px < x;
+                let from_right = px > x;
+                let from_above = py < y;
+                let from_below = py > y;
+                let to_left = nx < x;
+                let to_right = nx > x;
+                let to_above = ny < y;
+                let to_below = ny > y;
+
+                let corner_ch = if (from_left || to_left) && (from_above || to_above) {
+                    '┘' // coming from left, going up OR coming from above, going left
+                } else if (from_right || to_right) && (from_above || to_above) {
+                    '└' // coming from right, going up
+                } else if (from_left || to_left) && (from_below || to_below) {
+                    '┐' // coming from left, going down
+                } else if (from_right || to_right) && (from_below || to_below) {
+                    '┌' // coming from right, going down
+                } else {
+                    '+'
+                };
+
+                buf[y][x] = Cell { ch: corner_ch, style: CellStyle::BackEdge };
+            }
+        }
+
+        // Draw upward arrow at the target (last segment end)
+        if let Some(&(tx, ty)) = segs.last() {
+            // Place arrow just to the right of the target node's top border
+            if ty < height && tx < width {
+                // The arrow should point to the left (toward the node)
+                buf[ty][tx] = Cell { ch: '◀', style: CellStyle::BackEdgeArrow };
+            }
+        }
+    }
+
     buf
+}
+
+/// Merge edge connectivity flags into a node border character.
+/// E.g., '─' on bottom border + DOWN connectivity = '┬'
+fn merge_border_with_edge(border_ch: char, edge_conn: u8) -> char {
+    const UP: u8 = 1;
+    const DOWN: u8 = 2;
+
+    match border_ch {
+        '─' => {
+            if edge_conn & DOWN != 0 && edge_conn & UP != 0 { '┼' }
+            else if edge_conn & DOWN != 0 { '┬' }
+            else if edge_conn & UP != 0 { '┴' }
+            else { '─' }
+        }
+        '┌' => {
+            if edge_conn & UP != 0 { '├' }
+            else { '┌' }
+        }
+        '┐' => {
+            if edge_conn & UP != 0 { '┤' }
+            else { '┐' }
+        }
+        '└' => {
+            if edge_conn & DOWN != 0 { '├' }
+            else { '└' }
+        }
+        '┘' => {
+            if edge_conn & DOWN != 0 { '┤' }
+            else { '┘' }
+        }
+        '┬' => {
+            if edge_conn & UP != 0 { '┼' }
+            else { '┬' }
+        }
+        '┴' => {
+            if edge_conn & DOWN != 0 { '┼' }
+            else { '┴' }
+        }
+        other => other,
+    }
+}
+
+/// Convert connectivity flags to the appropriate box-drawing character.
+fn connectivity_to_char(c: u8) -> char {
+    const UP: u8 = 1;
+    const DOWN: u8 = 2;
+    const LEFT: u8 = 4;
+    const RIGHT: u8 = 8;
+
+    match c {
+        0 => ' ',
+        x if x == UP | DOWN | LEFT | RIGHT => '┼',
+        x if x == UP | DOWN | LEFT => '┤',
+        x if x == UP | DOWN | RIGHT => '├',
+        x if x == UP | DOWN => '│',
+        x if x == UP | LEFT | RIGHT => '┴',
+        x if x == UP | LEFT => '┘',
+        x if x == UP | RIGHT => '└',
+        x if x == UP => '│',
+        x if x == DOWN | LEFT | RIGHT => '┬',
+        x if x == DOWN | LEFT => '┐',
+        x if x == DOWN | RIGHT => '┌',
+        x if x == DOWN => '│',
+        x if x == LEFT | RIGHT => '─',
+        x if x == LEFT => '─',
+        x if x == RIGHT => '─',
+        _ => ' ',
+    }
 }
 
 fn draw_node(buf: &mut [Vec<Cell>], node: &LayoutNode, buf_width: usize, buf_height: usize) {
@@ -587,106 +1042,9 @@ fn draw_node(buf: &mut [Vec<Cell>], node: &LayoutNode, buf_width: usize, buf_hei
     set_cell(buf, x + w - 1, bottom_y, '┘', CellStyle::Border);
 }
 
-fn draw_edge(buf: &mut [Vec<Cell>], segments: &[(usize, usize)], buf_width: usize, buf_height: usize) {
-    if segments.len() < 2 {
-        return;
-    }
-
-    for i in 0..segments.len() - 1 {
-        let (x1, y1) = segments[i];
-        let (x2, y2) = segments[i + 1];
-
-        if x1 == x2 {
-            // Vertical segment
-            let min_y = y1.min(y2);
-            let max_y = y1.max(y2);
-            for cy in min_y..=max_y {
-                if cy < buf_height && x1 < buf_width {
-                    let existing = buf[cy][x1].ch;
-                    let ch = match existing {
-                        '─' | '┼' => '┼',
-                        '┐' | '┘' | '┌' | '└' | '│' | '├' | '┤' | '┬' | '┴' => existing,
-                        _ => '│',
-                    };
-                    set_cell_if_empty_or_edge(buf, x1, cy, ch, CellStyle::Edge);
-                }
-            }
-        } else if y1 == y2 {
-            // Horizontal segment
-            let min_x = x1.min(x2);
-            let max_x = x1.max(x2);
-            for cx in min_x..=max_x {
-                if y1 < buf_height && cx < buf_width {
-                    let existing = buf[y1][cx].ch;
-                    let ch = match existing {
-                        '│' | '┼' => '┼',
-                        '┐' | '┘' | '┌' | '└' | '├' | '┤' | '┬' | '┴' => existing,
-                        _ => '─',
-                    };
-                    set_cell_if_empty_or_edge(buf, cx, y1, ch, CellStyle::Edge);
-                }
-            }
-        }
-
-        // Draw corners at segment junctions
-        if i + 1 < segments.len() - 1 {
-            let (nx, ny) = segments[i + 1];
-            if i + 2 < segments.len() {
-                let (nnx, _nny) = segments[i + 2];
-                // We're at a corner point (x2, y2) between two segments
-                let corner = if x1 == x2 && y2 == ny && nx != x2 {
-                    // Vertical then horizontal
-                    if y1 < y2 {
-                        // Going down then...
-                        if nnx > x2 { '└' } else { '┘' }
-                    } else {
-                        // Going up then...
-                        if nnx > x2 { '┌' } else { '┐' }
-                    }
-                } else if y1 == y2 && x2 == nx && ny != y2 {
-                    // Horizontal then vertical
-                    if x1 < x2 {
-                        // Going right then...
-                        if ny > y2 { '┐' } else { '┘' }
-                    } else {
-                        // Going left then...
-                        if ny > y2 { '┌' } else { '└' }
-                    }
-                } else {
-                    continue;
-                };
-
-                if x2 < buf_width && y2 < buf_height {
-                    set_cell_if_empty_or_edge(buf, x2, y2, corner, CellStyle::Edge);
-                }
-            }
-        }
-    }
-
-    // Draw arrow at the end (▼ pointing into the target node)
-    if let Some(&(x, y)) = segments.last() {
-        if y > 0 && y - 1 < buf_height && x < buf_width {
-            // Place arrow one row above the target node top border
-            let arrow_y = y.saturating_sub(1);
-            if buf[arrow_y][x].style == CellStyle::Empty || buf[arrow_y][x].style == CellStyle::Edge {
-                set_cell(buf, x, arrow_y, '▼', CellStyle::Arrow);
-            }
-        }
-    }
-}
-
 fn set_cell(buf: &mut [Vec<Cell>], x: usize, y: usize, ch: char, style: CellStyle) {
     if y < buf.len() && x < buf[0].len() {
         buf[y][x] = Cell { ch, style };
-    }
-}
-
-fn set_cell_if_empty_or_edge(buf: &mut [Vec<Cell>], x: usize, y: usize, ch: char, style: CellStyle) {
-    if y < buf.len() && x < buf[0].len() {
-        let existing = &buf[y][x];
-        if existing.style == CellStyle::Empty || existing.style == CellStyle::Edge {
-            buf[y][x] = Cell { ch, style };
-        }
     }
 }
 
@@ -702,81 +1060,285 @@ fn status_indicator_str(status: &Status) -> &'static str {
     }
 }
 
-fn sort_key_for_status(status: &Status) -> u8 {
-    match status {
-        Status::InProgress => 0,
-        Status::Open => 1,
-        Status::PendingReview => 2,
-        Status::Failed => 3,
-        Status::Blocked => 4,
-        Status::Done => 5,
-        Status::Abandoned => 6,
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use workgraph::graph::{Node, Status, Task, WorkGraph};
 
-// ── Centering helper ────────────────────────────────────────────────────
-
-/// After initial layout, center each layer horizontally relative to the widest layer.
-pub fn center_layers(layout: &mut DagLayout) {
-    if layout.nodes.is_empty() {
-        return;
-    }
-
-    // Group nodes by layer
-    let max_layer = layout.nodes.iter().map(|n| n.layer).max().unwrap_or(0);
-    let mut layer_extents: Vec<(usize, usize)> = vec![(usize::MAX, 0); max_layer + 1];
-
-    for node in &layout.nodes {
-        let layer = node.layer;
-        layer_extents[layer].0 = layer_extents[layer].0.min(node.x);
-        layer_extents[layer].1 = layer_extents[layer].1.max(node.x + node.w);
-    }
-
-    // Find widest layer
-    let max_width = layer_extents
-        .iter()
-        .filter(|(min, _)| *min != usize::MAX)
-        .map(|(min, max)| max - min)
-        .max()
-        .unwrap_or(0);
-
-    // Center each layer
-    for node in &mut layout.nodes {
-        let layer = node.layer;
-        let (min_x, max_x) = layer_extents[layer];
-        if min_x == usize::MAX {
-            continue;
+    fn make_task(id: &str, title: &str, blocked_by: Vec<&str>) -> Task {
+        Task {
+            id: id.to_string(),
+            title: title.to_string(),
+            description: None,
+            status: Status::Open,
+            assigned: None,
+            estimate: None,
+            blocks: Vec::new(),
+            blocked_by: blocked_by.into_iter().map(|s| s.to_string()).collect(),
+            requires: Vec::new(),
+            tags: Vec::new(),
+            skills: Vec::new(),
+            inputs: Vec::new(),
+            deliverables: Vec::new(),
+            artifacts: Vec::new(),
+            exec: None,
+            not_before: None,
+            log: Vec::new(),
+            failure_reason: None,
+            model: None,
+            verify: None,
+            retry_count: 0,
+            max_retries: None,
+            created_at: None,
+            started_at: None,
+            completed_at: None,
         }
-        let layer_width = max_x - min_x;
-        let offset = (max_width - layer_width) / 2;
-        // Shift relative to the current layer's minimum x
-        node.x = node.x - min_x + offset + LEFT_MARGIN;
     }
 
-    // Recompute total width
-    layout.width = layout
-        .nodes
-        .iter()
-        .map(|n| n.x + n.w)
-        .max()
-        .unwrap_or(0)
-        + LEFT_MARGIN;
+    fn add_task(graph: &mut WorkGraph, task: Task) {
+        graph.add_node(Node::Task(task));
+    }
 
-    // Re-route edges after centering
-    let tasks_map: HashMap<String, ()> = layout.nodes.iter().map(|n| (n.task_id.clone(), ())).collect();
-    let _ = tasks_map; // We'll rebuild edges below
+    #[test]
+    fn test_dag_layout_simple_chain() {
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("a", "Task A", vec![]));
+        add_task(&mut graph, make_task("b", "Task B", vec!["a"]));
+        add_task(&mut graph, make_task("c", "Task C", vec!["b"]));
 
-    // Rebuild id_to_idx after potential reordering
-    layout.id_to_idx = layout
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.task_id.clone(), i))
-        .collect();
-}
+        let critical = HashSet::new();
+        let agents = HashMap::new();
 
-/// Re-route all edges based on current node positions.
-pub fn reroute_edges(layout: &mut DagLayout, graph: &WorkGraph) {
-    let tasks: HashMap<String, &Task> = graph.tasks().map(|t| (t.id.clone(), t)).collect();
-    layout.edges = route_edges(&layout.nodes, &layout.id_to_idx, &tasks);
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        assert_eq!(layout.nodes.len(), 3);
+        assert!(layout.width > 0);
+        assert!(layout.height > 0);
+
+        // Verify layers: a=0, b=1, c=2
+        let a = layout.find_node("a").unwrap();
+        let b = layout.find_node("b").unwrap();
+        let c = layout.find_node("c").unwrap();
+        assert_eq!(a.layer, 0);
+        assert_eq!(b.layer, 1);
+        assert_eq!(c.layer, 2);
+
+        // a should be above b, b above c
+        assert!(a.y < b.y);
+        assert!(b.y < c.y);
+
+        // Verify edges exist
+        assert_eq!(layout.edges.len(), 2);
+
+        // Verify render doesn't panic
+        let buf = render_to_buffer(&layout);
+        assert!(!buf.is_empty());
+
+        // Print the rendered DAG for visual inspection
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Simple chain DAG ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_diamond() {
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("root", "Root", vec![]));
+        add_task(&mut graph, make_task("left", "Left", vec!["root"]));
+        add_task(&mut graph, make_task("right", "Right", vec!["root"]));
+        add_task(&mut graph, make_task("merge", "Merge", vec!["left", "right"]));
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        assert_eq!(layout.nodes.len(), 4);
+
+        // root=layer 0, left/right=layer 1, merge=layer 2
+        let root = layout.find_node("root").unwrap();
+        let left = layout.find_node("left").unwrap();
+        let right = layout.find_node("right").unwrap();
+        let merge = layout.find_node("merge").unwrap();
+        assert_eq!(root.layer, 0);
+        assert_eq!(left.layer, 1);
+        assert_eq!(right.layer, 1);
+        assert_eq!(merge.layer, 2);
+
+        // left and right should be at the same y
+        assert_eq!(left.y, right.y);
+        // left and right should have different x positions
+        assert_ne!(left.x, right.x);
+
+        // Edges: root->left, root->right, left->merge, right->merge = 4
+        assert_eq!(layout.edges.len(), 4);
+
+        let buf = render_to_buffer(&layout);
+        assert!(!buf.is_empty());
+
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Diamond DAG ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_empty_graph() {
+        let graph = WorkGraph::new();
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let layout = DagLayout::compute(&graph, &critical, &agents);
+        assert_eq!(layout.nodes.len(), 0);
+        assert_eq!(layout.edges.len(), 0);
+        assert_eq!(layout.width, 0);
+        assert_eq!(layout.height, 0);
+
+        let buf = render_to_buffer(&layout);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn test_dag_layout_single_node() {
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("solo", "Solo Task", vec![]));
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        assert_eq!(layout.nodes.len(), 1);
+        assert_eq!(layout.edges.len(), 0);
+
+        let buf = render_to_buffer(&layout);
+        assert!(!buf.is_empty());
+
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Single node ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_wide_fan_out() {
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("top", "Top Node", vec![]));
+        add_task(&mut graph, make_task("c1", "Child 1", vec!["top"]));
+        add_task(&mut graph, make_task("c2", "Child 2", vec!["top"]));
+        add_task(&mut graph, make_task("c3", "Child 3", vec!["top"]));
+        add_task(&mut graph, make_task("c4", "Child 4", vec!["top"]));
+        add_task(&mut graph, make_task("bottom", "Bottom", vec!["c1", "c2", "c3", "c4"]));
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        assert_eq!(layout.nodes.len(), 6);
+        // 4 from top->c*, 4 from c*->bottom = 8
+        assert_eq!(layout.edges.len(), 8);
+
+        let buf = render_to_buffer(&layout);
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Wide fan-out ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_multi_level_dag() {
+        // Topology from task description:
+        // scaffold -> panel, agent, live-data
+        // panel -> graph-exp
+        // agent -> graph-exp, (skip to keybinding)
+        // live-data -> agent-stream
+        // graph-exp -> keybinding
+        // agent-stream -> keybinding
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("scaffold", "scaffold-ratatui", vec![]));
+        add_task(&mut graph, make_task("panel", "panel", vec!["scaffold"]));
+        add_task(&mut graph, make_task("agent", "agent", vec!["scaffold"]));
+        add_task(&mut graph, make_task("live-data", "live-data", vec!["scaffold"]));
+        add_task(&mut graph, make_task("graph-exp", "graph-exp", vec!["panel", "agent"]));
+        add_task(&mut graph, make_task("agent-stream", "agent-stream", vec!["live-data"]));
+        add_task(&mut graph, make_task("keybinding", "tui-keybinding", vec!["graph-exp", "agent", "agent-stream"]));
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        assert_eq!(layout.nodes.len(), 7);
+
+        let buf = render_to_buffer(&layout);
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Multi-level DAG ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_skip_layer_edge() {
+        // A -> B -> D, A -> C -> D, A -> D (skip-layer edge)
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("a", "Task A", vec![]));
+        add_task(&mut graph, make_task("b", "Task B", vec!["a"]));
+        add_task(&mut graph, make_task("c", "Task C", vec!["a"]));
+        add_task(&mut graph, make_task("d", "Task D", vec!["a", "b", "c"]));
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        let buf = render_to_buffer(&layout);
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Skip-layer edge ---\n{}\n---", text);
+    }
 }

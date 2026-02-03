@@ -1351,7 +1351,7 @@ impl App {
         match self.view {
             View::Dashboard => "q=quit ?=help Tab=switch j/k=nav Enter=drill-in g=graph r=refresh",
             View::LogView => "q=quit ?=help Esc=back j/k=scroll PgUp/PgDn g=top G=bottom",
-            View::GraphExplorer => "q=quit ?=help Esc=back j/k=nav h/l=fold Enter=details r=refresh",
+            View::GraphExplorer => "q=quit ?=help Esc=back d=toggle view j/k=nav Enter=details r=refresh",
         }
     }
 

@@ -20,7 +20,7 @@ use ratatui::{
 };
 
 use self::app::{App, GraphViewMode, Panel, View};
-use self::dag_layout::{CellStyle, DagLayout};
+use self::dag_layout::{render_to_buffer, CellStyle};
 use workgraph::graph::Status;
 use workgraph::AgentStatus;
 
@@ -430,6 +430,20 @@ fn draw_log_view(frame: &mut Frame, app: &mut App) {
 
 /// Draw the graph explorer view
 fn draw_graph_explorer(frame: &mut Frame, app: &mut App) {
+    let view_mode = app
+        .graph_explorer
+        .as_ref()
+        .map(|e| e.view_mode)
+        .unwrap_or(GraphViewMode::Tree);
+
+    match view_mode {
+        GraphViewMode::Tree => draw_graph_tree_view(frame, app),
+        GraphViewMode::Dag => draw_graph_dag_view(frame, app),
+    }
+}
+
+/// Draw the tree view of the graph explorer
+fn draw_graph_tree_view(frame: &mut Frame, app: &mut App) {
     let explorer = match app.graph_explorer {
         Some(ref e) => e,
         None => return,
@@ -447,7 +461,7 @@ fn draw_graph_explorer(frame: &mut Frame, app: &mut App) {
         .split(size);
 
     let block = Block::default()
-        .title(" Graph Explorer ")
+        .title(" Graph Explorer [Tree] ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
 
@@ -590,11 +604,11 @@ fn draw_graph_explorer(frame: &mut Frame, app: &mut App) {
     };
     let help_bar = Paragraph::new(Line::from(vec![
         Span::styled(
-            " Graph Explorer ",
+            " Tree View ",
             Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            format!(" q=quit ?=help Esc=back j/k=nav h/l=fold Enter=details r=refresh{} ", agent_hint),
+            format!(" q=quit ?=help Esc=back d=DAG j/k=nav h/l=fold Enter=details r=refresh{} ", agent_hint),
             Style::default().fg(Color::DarkGray),
         ),
     ]));
@@ -603,6 +617,212 @@ fn draw_graph_explorer(frame: &mut Frame, app: &mut App) {
     // Draw detail overlay if active
     if explorer.show_detail {
         draw_graph_detail_overlay(frame, explorer);
+    }
+}
+
+/// Draw the DAG view of the graph explorer with box-drawing characters
+fn draw_graph_dag_view(frame: &mut Frame, app: &mut App) {
+    // Ensure viewport scrolling is up to date
+    let size = frame.area();
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(3),    // DAG content
+            Constraint::Length(1), // help bar
+        ])
+        .split(size);
+
+    let block = Block::default()
+        .title(" Graph Explorer [DAG] ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+
+    let inner = block.inner(layout[0]);
+
+    // Ensure the selected node is visible before rendering
+    if let Some(ref mut explorer) = app.graph_explorer {
+        explorer.dag_ensure_visible(inner.width, inner.height);
+    }
+
+    let explorer = match app.graph_explorer {
+        Some(ref e) => e,
+        None => return,
+    };
+
+    let dag = match &explorer.dag_layout {
+        Some(d) => d,
+        None => {
+            let content = Paragraph::new(vec![
+                Line::from(""),
+                Line::from("  No tasks found."),
+                Line::from("  Load a graph.jsonl into .workgraph/"),
+            ])
+            .block(block);
+            frame.render_widget(content, layout[0]);
+            draw_dag_help_bar(frame, explorer, layout[1]);
+            return;
+        }
+    };
+
+    if dag.nodes.is_empty() {
+        let content = Paragraph::new(vec![
+            Line::from(""),
+            Line::from("  No tasks found."),
+        ])
+        .block(block);
+        frame.render_widget(content, layout[0]);
+        draw_dag_help_bar(frame, explorer, layout[1]);
+        return;
+    }
+
+    // Render the DAG layout to a character buffer
+    let char_buf = render_to_buffer(dag);
+    let selected_node = dag.nodes.get(explorer.dag_selected);
+
+    let vw = inner.width as usize;
+    let vh = inner.height as usize;
+    let sx = explorer.dag_scroll_x;
+    let sy = explorer.dag_scroll_y;
+
+    // Build lines of styled spans from the character buffer
+    let mut lines: Vec<Line> = Vec::with_capacity(vh);
+
+    for vy in 0..vh {
+        let buf_y = sy + vy;
+        if buf_y >= char_buf.len() {
+            lines.push(Line::from(""));
+            continue;
+        }
+
+        let row = &char_buf[buf_y];
+        let mut spans: Vec<Span> = Vec::new();
+        let mut current_text = String::new();
+        let mut current_style: Option<Style> = None;
+
+        for vx in 0..vw {
+            let buf_x = sx + vx;
+            let (ch, cell_style) = if buf_x < row.len() {
+                (row[buf_x].ch, row[buf_x].style)
+            } else {
+                (' ', CellStyle::Empty)
+            };
+
+            // Check if this cell is part of the selected node's box
+            let is_selected = selected_node.map_or(false, |n| {
+                buf_x >= n.x && buf_x < n.x + n.w && buf_y >= n.y && buf_y < n.y + n.h
+            });
+
+            let style = if is_selected {
+                // Highlighted selection: bright background
+                match cell_style {
+                    CellStyle::Border => Style::default()
+                        .fg(Color::Cyan)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                    _ => Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                }
+            } else {
+                cell_style_to_ratatui(cell_style)
+            };
+
+            // Batch consecutive chars with the same style into one Span
+            if Some(style) == current_style {
+                current_text.push(ch);
+            } else {
+                if let Some(s) = current_style {
+                    spans.push(Span::styled(std::mem::take(&mut current_text), s));
+                }
+                current_text.push(ch);
+                current_style = Some(style);
+            }
+        }
+
+        // Flush remaining text
+        if let Some(s) = current_style {
+            if !current_text.is_empty() {
+                spans.push(Span::styled(current_text, s));
+            }
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    let paragraph = Paragraph::new(lines).block(block);
+    frame.render_widget(paragraph, layout[0]);
+
+    // Help bar
+    draw_dag_help_bar(frame, explorer, layout[1]);
+
+    // Draw detail overlay if active
+    if explorer.show_detail {
+        draw_graph_detail_overlay(frame, explorer);
+    }
+}
+
+/// Draw the help bar for the DAG view
+fn draw_dag_help_bar(frame: &mut Frame, explorer: &app::GraphExplorer, area: Rect) {
+    let has_active = explorer.agent_active_indices.len();
+    let agent_hint = if has_active > 0 {
+        format!(" a=next agent({})", has_active)
+    } else {
+        String::new()
+    };
+
+    let node_info = explorer
+        .dag_layout
+        .as_ref()
+        .and_then(|l| l.nodes.get(explorer.dag_selected))
+        .map(|n| format!(" [{}]", n.task_id))
+        .unwrap_or_default();
+
+    let help_bar = Paragraph::new(Line::from(vec![
+        Span::styled(
+            " DAG View ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            node_info,
+            Style::default().fg(Color::White),
+        ),
+        Span::styled(
+            format!(
+                " q=quit ?=help Esc=back d=tree j/k=nav h/l=scroll Enter=details r=refresh{} ",
+                agent_hint
+            ),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ]));
+    frame.render_widget(help_bar, area);
+}
+
+/// Convert a DAG CellStyle to a ratatui Style
+fn cell_style_to_ratatui(cell_style: CellStyle) -> Style {
+    match cell_style {
+        CellStyle::Empty => Style::default(),
+        CellStyle::Border => Style::default().fg(Color::DarkGray),
+        CellStyle::NodeText => Style::default().fg(Color::White),
+        CellStyle::ActiveAgent => Style::default()
+            .fg(Color::LightGreen)
+            .add_modifier(Modifier::BOLD),
+        CellStyle::Critical => Style::default()
+            .fg(Color::LightRed)
+            .add_modifier(Modifier::BOLD),
+        CellStyle::Dimmed => Style::default().fg(Color::DarkGray),
+        CellStyle::Edge => Style::default().fg(Color::Blue),
+        CellStyle::Arrow => Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD),
+        CellStyle::BackEdge => Style::default()
+            .fg(Color::Magenta),
+        CellStyle::BackEdgeArrow => Style::default()
+            .fg(Color::Magenta)
+            .add_modifier(Modifier::BOLD),
     }
 }
 
@@ -1136,8 +1356,9 @@ fn draw_help_overlay(frame: &mut Frame, current_view: &View) {
         binding("r", "Refresh data"),
         blank(),
         heading("Graph Explorer"),
+        binding("d", "Toggle Tree / DAG view"),
         binding("j / k", "Navigate up / down"),
-        binding("h / l", "Collapse / expand subtree"),
+        binding("h / l", "Collapse/expand (tree) or scroll (DAG)"),
         binding("Enter", "View details or agent log"),
         binding("a", "Cycle to next active agent"),
         binding("r", "Refresh graph"),
