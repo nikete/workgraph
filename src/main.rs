@@ -520,28 +520,6 @@ enum Commands {
         model: Option<String>,
     },
 
-    /// [DEPRECATED] Use 'wg service start' instead. Kept for 'wg coordinator --once' debug mode.
-    Coordinator {
-        /// Poll interval in seconds (default: from config.toml, fallback 30)
-        #[arg(long)]
-        interval: Option<u64>,
-
-        /// Maximum number of parallel agents (default: from config.toml, fallback 4)
-        #[arg(long)]
-        max_agents: Option<usize>,
-
-        /// Executor to use for spawned agents (default: from config.toml, fallback claude)
-        #[arg(long)]
-        executor: Option<String>,
-
-        /// Run a single coordinator tick and exit (debug mode)
-        #[arg(long)]
-        once: bool,
-
-        /// [DEPRECATED] Use 'wg service install' instead
-        #[arg(long)]
-        install_service: bool,
-    },
 
     /// View or modify project configuration
     Config {
@@ -869,6 +847,21 @@ enum ServiceCommands {
     /// Generate a systemd user service file for the wg service daemon
     Install,
 
+    /// Run a single coordinator tick and exit (debug mode)
+    Tick {
+        /// Maximum number of parallel agents (overrides config.toml)
+        #[arg(long)]
+        max_agents: Option<usize>,
+
+        /// Executor to use for spawned agents (overrides config.toml)
+        #[arg(long)]
+        executor: Option<String>,
+
+        /// Model to use for spawned agents (overrides config.toml)
+        #[arg(long)]
+        model: Option<String>,
+    },
+
     /// Run the daemon (internal, called by start)
     #[command(hide = true)]
     Daemon {
@@ -1122,7 +1115,6 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Exec { .. } => "exec",
         Commands::Agent { .. } => "agent",
         Commands::Spawn { .. } => "spawn",
-        Commands::Coordinator { .. } => "coordinator",
         Commands::Config { .. } => "config",
         Commands::DeadAgents { .. } => "dead-agents",
         Commands::Agents { .. } => "agents",
@@ -1384,13 +1376,6 @@ fn main() -> Result<()> {
             timeout,
             model,
         } => commands::spawn::run(&workgraph_dir, &task, &executor, timeout.as_deref(), model.as_deref(), cli.json),
-        Commands::Coordinator {
-            interval,
-            max_agents,
-            executor,
-            once,
-            install_service,
-        } => commands::coordinator::run(&workgraph_dir, interval, max_agents, executor.as_deref(), once, install_service),
         Commands::Config {
             show,
             init,
@@ -1528,7 +1513,10 @@ fn main() -> Result<()> {
                 )
             }
             ServiceCommands::Install => {
-                commands::coordinator::generate_systemd_service(&workgraph_dir)
+                commands::service::generate_systemd_service(&workgraph_dir)
+            }
+            ServiceCommands::Tick { max_agents, executor, model } => {
+                commands::service::run_tick(&workgraph_dir, max_agents, executor.as_deref(), model.as_deref())
             }
             ServiceCommands::Daemon { socket, max_agents, executor, interval, model } => {
                 commands::service::run_daemon(

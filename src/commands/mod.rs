@@ -18,7 +18,6 @@ pub mod cost;
 pub mod resource;
 pub mod actor;
 pub mod coordinate;
-pub mod coordinator;
 pub mod plan;
 pub mod reschedule;
 pub mod impact;

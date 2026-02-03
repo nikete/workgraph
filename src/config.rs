@@ -105,10 +105,6 @@ pub struct CoordinatorConfig {
     /// Overrides agent.model when set. Can be further overridden by CLI --model.
     #[serde(default)]
     pub model: Option<String>,
-
-    /// Enable Matrix notifications for task completion
-    #[serde(default)]
-    pub notify_matrix: bool,
 }
 
 fn default_max_agents() -> usize {
@@ -131,7 +127,6 @@ impl Default for CoordinatorConfig {
             poll_interval: default_poll_interval(),
             executor: default_executor(),
             model: None,
-            notify_matrix: false,
         }
     }
 }
