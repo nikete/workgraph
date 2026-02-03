@@ -372,15 +372,10 @@ enum Commands {
         command: ActorCommands,
     },
 
-    /// List and find skills across tasks
-    Skills {
-        /// Show skills for a specific task
-        #[arg(long)]
-        task: Option<String>,
-
-        /// Find tasks requiring a specific skill
-        #[arg(long)]
-        find: Option<String>,
+    /// Manage skills (Claude Code skill installation, task skill queries)
+    Skill {
+        #[command(subcommand)]
+        command: SkillCommands,
     },
 
     /// Find actors capable of performing a task
@@ -766,6 +761,27 @@ enum ActorCommands {
 }
 
 #[derive(Subcommand)]
+enum SkillCommands {
+    /// List all skills used across tasks
+    List,
+
+    /// Show skills for a specific task
+    Task {
+        /// Task ID
+        id: String,
+    },
+
+    /// Find tasks requiring a specific skill
+    Find {
+        /// Skill name to search for
+        skill: String,
+    },
+
+    /// Install the wg Claude Code skill to ~/.claude/skills/wg/
+    Install,
+}
+
+#[derive(Subcommand)]
 enum ServiceCommands {
     /// Start the agent service daemon
     Start {
@@ -1045,14 +1061,11 @@ fn main() -> Result<()> {
             ),
             ActorCommands::List => commands::actor::run_list(&workgraph_dir, cli.json),
         },
-        Commands::Skills { task, find } => {
-            if let Some(task_id) = task {
-                commands::skills::run_task(&workgraph_dir, &task_id, cli.json)
-            } else if let Some(skill) = find {
-                commands::skills::run_find(&workgraph_dir, &skill, cli.json)
-            } else {
-                commands::skills::run_list(&workgraph_dir, cli.json)
-            }
+        Commands::Skill { command } => match command {
+            SkillCommands::List => commands::skills::run_list(&workgraph_dir, cli.json),
+            SkillCommands::Task { id } => commands::skills::run_task(&workgraph_dir, &id, cli.json),
+            SkillCommands::Find { skill } => commands::skills::run_find(&workgraph_dir, &skill, cli.json),
+            SkillCommands::Install => commands::skills::run_install(),
         }
         Commands::Match { task } => commands::match_cmd::run(&workgraph_dir, &task, cli.json),
         Commands::Heartbeat {

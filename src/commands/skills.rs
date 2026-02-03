@@ -6,6 +6,9 @@ use workgraph::parser::load_graph;
 
 use super::graph_path;
 
+/// Embedded SKILL.md content - baked into binary at compile time
+const SKILL_CONTENT: &str = include_str!("../../.claude/skills/wg/SKILL.md");
+
 /// JSON output for skill listing
 #[derive(Debug, Serialize)]
 struct SkillSummary {
@@ -137,6 +140,25 @@ pub fn run_find(dir: &Path, skill: &str, json: bool) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Install the wg Claude Code skill to ~/.claude/skills/wg/
+pub fn run_install() -> Result<()> {
+    let home = std::env::var("HOME").context("HOME environment variable not set")?;
+    let skill_dir = std::path::PathBuf::from(&home)
+        .join(".claude")
+        .join("skills")
+        .join("wg");
+
+    std::fs::create_dir_all(&skill_dir)
+        .with_context(|| format!("Failed to create directory: {}", skill_dir.display()))?;
+
+    let skill_path = skill_dir.join("SKILL.md");
+    std::fs::write(&skill_path, SKILL_CONTENT)
+        .with_context(|| format!("Failed to write skill file: {}", skill_path.display()))?;
+
+    println!("Installed wg skill to: {}", skill_path.display());
     Ok(())
 }
 
