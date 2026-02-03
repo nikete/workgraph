@@ -52,6 +52,8 @@ pub mod dead_agents;
 pub mod agents;
 pub mod kill;
 pub mod service;
+pub mod quickstart;
+pub mod status;
 #[cfg(feature = "matrix")]
 pub mod notify;
 #[cfg(feature = "matrix")]

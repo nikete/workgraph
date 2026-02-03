@@ -215,7 +215,7 @@ heartbeat_timeout = 5  # minutes before agent is considered dead (default: 5)
 Set config via CLI:
 ```bash
 wg config --max-agents 8
-wg config --set-model sonnet
+wg config --model sonnet
 wg config --poll-interval 120
 wg config --executor shell
 ```
@@ -271,7 +271,7 @@ wg add "Complex design" --model opus
 wg spawn my-task --executor claude --model haiku
 
 # Set coordinator default for all auto-spawned agents
-wg config --set-model sonnet
+wg config --model sonnet
 wg service reload
 ```
 
@@ -334,6 +334,7 @@ wg tui [--refresh-rate 2000]  # default: 2000ms
 | `g` | Graph explorer (dashboard) / jump to top (log viewer) |
 | `G` | Jump to bottom (log viewer, enables auto-scroll) |
 | `h`/`l` or `←`/`→` | Collapse/expand (graph explorer) |
+| `d` | Toggle tree/DAG view (graph explorer) |
 | `a` | Cycle to next active-agent task (graph explorer) |
 | `r` | Refresh |
 | `PageDown`/`PageUp` | Scroll half viewport (log viewer) |

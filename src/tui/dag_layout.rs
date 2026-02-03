@@ -520,6 +520,13 @@ pub fn center_layers(layout: &mut DagLayout) {
 pub fn reroute_edges(layout: &mut DagLayout, graph: &WorkGraph) {
     let tasks: HashMap<String, &Task> = graph.tasks().map(|t| (t.id.clone(), t)).collect();
 
+    // Build a set of back-edge (from, to) pairs to skip when routing normal edges
+    let back_edge_set: HashSet<(String, String)> = layout
+        .back_edges
+        .iter()
+        .map(|be| (be.from_id.clone(), be.to_id.clone()))
+        .collect();
+
     let mut new_edges: Vec<LayoutEdge> = Vec::new();
 
     for node in &layout.nodes {
@@ -529,6 +536,11 @@ pub fn reroute_edges(layout: &mut DagLayout, graph: &WorkGraph) {
         };
 
         for blocker_id in &task.blocked_by {
+            // Skip if this edge is a back-edge (cycle)
+            if back_edge_set.contains(&(blocker_id.clone(), node.task_id.clone())) {
+                continue;
+            }
+
             let parent_idx = match layout.id_to_idx.get(blocker_id) {
                 Some(&i) => i,
                 None => continue,
@@ -1340,5 +1352,164 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         eprintln!("--- Skip-layer edge ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_simple_cycle() {
+        // Test a simple cycle: review -> revise -> review
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("review", "Review", vec!["revise"])); // review depends on revise
+        add_task(&mut graph, make_task("revise", "Revise", vec!["review"])); // revise depends on review (CYCLE!)
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        // Should detect the cycle
+        assert!(layout.has_cycles, "Should detect cycle in review <-> revise");
+        assert_eq!(layout.back_edges.len(), 1, "Should have exactly one back-edge");
+
+        // Both nodes should still be laid out
+        assert_eq!(layout.nodes.len(), 2);
+
+        // Edges should be split: one normal edge, one back-edge
+        assert_eq!(layout.edges.len(), 1, "Should have one normal edge");
+
+        let buf = render_to_buffer(&layout);
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Simple cycle (review <-> revise) ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_chain_with_back_edge() {
+        // Test a chain with a back-edge: a -> b -> c -> a
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("a", "Task A", vec!["c"])); // a depends on c (back-edge)
+        add_task(&mut graph, make_task("b", "Task B", vec!["a"])); // b depends on a
+        add_task(&mut graph, make_task("c", "Task C", vec!["b"])); // c depends on b
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        // Should detect the cycle
+        assert!(layout.has_cycles, "Should detect cycle in a -> b -> c -> a");
+        assert_eq!(layout.back_edges.len(), 1, "Should have exactly one back-edge");
+
+        // All nodes should be laid out
+        assert_eq!(layout.nodes.len(), 3);
+
+        // Should have 2 normal edges (a->b, b->c) and 1 back-edge (c->a)
+        assert_eq!(layout.edges.len(), 2, "Should have two normal edges");
+
+        let buf = render_to_buffer(&layout);
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Chain with back-edge (a -> b -> c -> a) ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_multiple_cycles() {
+        // Test multiple cycles in the same graph
+        // Cycle 1: a <-> b
+        // Cycle 2: c <-> d
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("a", "Task A", vec!["b"]));
+        add_task(&mut graph, make_task("b", "Task B", vec!["a"]));
+        add_task(&mut graph, make_task("c", "Task C", vec!["d"]));
+        add_task(&mut graph, make_task("d", "Task D", vec!["c"]));
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        // Should detect both cycles
+        assert!(layout.has_cycles, "Should detect cycles");
+        assert_eq!(layout.back_edges.len(), 2, "Should have two back-edges");
+
+        // All nodes should be laid out
+        assert_eq!(layout.nodes.len(), 4);
+
+        let buf = render_to_buffer(&layout);
+        let text: String = buf
+            .iter()
+            .map(|row| {
+                let line: String = row.iter().map(|c| c.ch).collect();
+                line.trim_end().to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("--- Multiple cycles ---\n{}\n---", text);
+    }
+
+    #[test]
+    fn test_dag_layout_acyclic_graph_no_back_edges() {
+        // Verify that acyclic graphs have no back-edges
+        let mut graph = WorkGraph::new();
+        add_task(&mut graph, make_task("root", "Root", vec![]));
+        add_task(&mut graph, make_task("left", "Left", vec!["root"]));
+        add_task(&mut graph, make_task("right", "Right", vec!["root"]));
+        add_task(&mut graph, make_task("merge", "Merge", vec!["left", "right"]));
+
+        let critical = HashSet::new();
+        let agents = HashMap::new();
+
+        let mut layout = DagLayout::compute(&graph, &critical, &agents);
+        center_layers(&mut layout);
+        reroute_edges(&mut layout, &graph);
+
+        // Should NOT detect any cycles
+        assert!(!layout.has_cycles, "Acyclic graph should have no cycles");
+        assert_eq!(layout.back_edges.len(), 0, "Should have no back-edges");
+
+        // All 4 edges should be normal edges
+        assert_eq!(layout.edges.len(), 4, "Should have four normal edges");
+    }
+
+    #[test]
+    fn test_detect_back_edges_function() {
+        // Direct test of the detect_back_edges function
+
+        // Simple cycle: 0 -> 1 -> 0
+        let edges = vec![(0, 1), (1, 0)];
+        let back_edges = detect_back_edges(2, &edges);
+        assert_eq!(back_edges.len(), 1, "Should detect one back-edge in simple cycle");
+
+        // Chain with back-edge: 0 -> 1 -> 2 -> 0
+        let edges = vec![(0, 1), (1, 2), (2, 0)];
+        let back_edges = detect_back_edges(3, &edges);
+        assert_eq!(back_edges.len(), 1, "Should detect one back-edge in chain cycle");
+
+        // Acyclic diamond: 0 -> 1, 0 -> 2, 1 -> 3, 2 -> 3
+        let edges = vec![(0, 1), (0, 2), (1, 3), (2, 3)];
+        let back_edges = detect_back_edges(4, &edges);
+        assert_eq!(back_edges.len(), 0, "Should detect no back-edges in acyclic graph");
+
+        // Self-loop: 0 -> 0
+        let edges = vec![(0, 0)];
+        let back_edges = detect_back_edges(1, &edges);
+        assert_eq!(back_edges.len(), 1, "Should detect self-loop as back-edge");
     }
 }

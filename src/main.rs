@@ -661,6 +661,12 @@ enum Commands {
         refresh_rate: u64,
     },
 
+    /// Print a concise cheat sheet for agent onboarding
+    Quickstart,
+
+    /// Quick one-screen status overview
+    Status,
+
     /// Send task notification to Matrix room
     #[cfg(feature = "matrix")]
     Notify {
@@ -1297,6 +1303,8 @@ fn main() -> Result<()> {
             }
         }
         Commands::Tui { refresh_rate } => tui::run(workgraph_dir, refresh_rate),
+        Commands::Quickstart => commands::quickstart::run(cli.json),
+        Commands::Status => commands::status::run(&workgraph_dir, cli.json),
         #[cfg(feature = "matrix")]
         Commands::Notify { task, room, message } => {
             commands::notify::run(&workgraph_dir, &task, room.as_deref(), message.as_deref(), cli.json)

@@ -1,6 +1,6 @@
 # Workgraph
 
-Use workgraph for task management.
+Use workgraph for task management. Run `wg quickstart` for a quick command reference.
 
 ## Development
 

@@ -264,7 +264,7 @@ Set config values with:
 
 ```bash
 wg config --max-agents 8
-wg config --set-model sonnet
+wg config --model sonnet
 wg config --poll-interval 120
 wg config --executor shell
 ```
@@ -343,7 +343,7 @@ wg add "Complex design" --model opus
 wg spawn my-task --executor claude --model haiku
 
 # Set coordinator default (applies to all auto-spawned agents)
-wg config --set-model sonnet
+wg config --model sonnet
 wg service reload
 ```
 
@@ -391,6 +391,7 @@ The TUI has three views:
 |-----|--------|
 | `j` / `k` or `↑` / `↓` | Navigate up / down |
 | `h` / `l` or `←` / `→` | Collapse / expand subtree |
+| `d` | Toggle between tree and DAG view |
 | `Enter` | View task details or jump to agent log |
 | `a` | Cycle to next task with active agents |
 | `r` | Refresh graph |

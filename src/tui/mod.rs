@@ -778,7 +778,20 @@ fn draw_dag_help_bar(frame: &mut Frame, explorer: &app::GraphExplorer, area: Rec
         .map(|n| format!(" [{}]", n.task_id))
         .unwrap_or_default();
 
-    let help_bar = Paragraph::new(Line::from(vec![
+    // Check if graph has cycles
+    let has_cycles = explorer
+        .dag_layout
+        .as_ref()
+        .map(|l| l.has_cycles)
+        .unwrap_or(false);
+
+    let cycle_count = explorer
+        .dag_layout
+        .as_ref()
+        .map(|l| l.back_edges.len())
+        .unwrap_or(0);
+
+    let mut spans = vec![
         Span::styled(
             " DAG View ",
             Style::default()
@@ -786,18 +799,31 @@ fn draw_dag_help_bar(frame: &mut Frame, explorer: &app::GraphExplorer, area: Rec
                 .bg(Color::Cyan)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            node_info,
-            Style::default().fg(Color::White),
+    ];
+
+    // Show cycle indicator if cycles exist
+    if has_cycles {
+        spans.push(Span::styled(
+            format!(" ⟳{} ", cycle_count),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    spans.push(Span::styled(
+        node_info,
+        Style::default().fg(Color::White),
+    ));
+    spans.push(Span::styled(
+        format!(
+            " q=quit ?=help Esc=back d=tree j/k=nav h/l=scroll Enter=details r=refresh{} ",
+            agent_hint
         ),
-        Span::styled(
-            format!(
-                " q=quit ?=help Esc=back d=tree j/k=nav h/l=scroll Enter=details r=refresh{} ",
-                agent_hint
-            ),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ]));
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let help_bar = Paragraph::new(Line::from(spans));
     frame.render_widget(help_bar, area);
 }
 
