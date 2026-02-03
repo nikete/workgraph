@@ -216,6 +216,220 @@ wg agent --actor claude
 
 The agent waits for your work to complete before touching dependent tasks.
 
+## Service
+
+The service daemon automates agent spawning and lifecycle management. Start it once and it continuously picks up ready tasks, spawns agents, and cleans up dead ones.
+
+### Quick start
+
+```bash
+wg service start
+```
+
+That's it. The daemon watches your task graph and auto-spawns agents on ready tasks (up to `max_agents` in parallel). When a task completes and unblocks new ones, the daemon picks those up too.
+
+Monitor what's happening:
+
+```bash
+wg service status    # daemon info, agent summary, coordinator state
+wg agents            # list all agents
+wg tui               # interactive dashboard
+```
+
+Stop the daemon when you're done:
+
+```bash
+wg service stop              # stop daemon (agents keep running)
+wg service stop --kill-agents  # stop daemon and all agents
+```
+
+### Configuration
+
+The service reads from `.workgraph/config.toml`:
+
+```toml
+[coordinator]
+max_agents = 4         # max parallel agents (default: 4)
+poll_interval = 60     # seconds between coordinator ticks (default: 60)
+executor = "claude"    # executor for spawned agents (default: "claude")
+model = "opus-4-5"    # model override for all spawned agents (optional)
+
+[agent]
+executor = "claude"
+model = "opus-4-5"
+heartbeat_timeout = 5  # minutes before agent is considered dead (default: 5)
+```
+
+Set config values with:
+
+```bash
+wg config --max-agents 8
+wg config --set-model sonnet
+wg config --poll-interval 120
+wg config --executor shell
+```
+
+CLI flags on `wg service start` override config.toml:
+
+```bash
+wg service start --max-agents 8 --executor shell --interval 120 --model haiku
+```
+
+### Managing the service
+
+| Command | What it does |
+|---------|-------------|
+| `wg service start` | Start the background daemon |
+| `wg service stop` | Stop daemon (agents continue independently) |
+| `wg service stop --kill-agents` | Stop daemon and kill all running agents |
+| `wg service stop --force` | Immediately SIGKILL the daemon |
+| `wg service status` | Show daemon PID, uptime, agent summary, coordinator state |
+| `wg service reload` | Re-read config.toml without restarting |
+| `wg service install` | Generate a systemd user service file |
+
+Reload lets you change settings at runtime:
+
+```bash
+wg service reload                              # re-read config.toml
+wg service reload --max-agents 8 --model haiku # apply specific overrides
+```
+
+### Agent management
+
+List and filter agents:
+
+```bash
+wg agents              # all agents
+wg agents --alive      # running agents only
+wg agents --dead       # dead agents only
+wg agents --working    # actively working on a task
+wg agents --idle       # waiting for work
+wg agents --json       # JSON output for scripting
+```
+
+Kill agents:
+
+```bash
+wg kill agent-7          # graceful: SIGTERM → wait → SIGKILL
+wg kill agent-7 --force  # immediate SIGKILL
+wg kill --all            # kill all running agents
+```
+
+Killing an agent automatically unclaims its task so another agent can pick it up.
+
+**Dead agent detection:** Agents send heartbeats while working. If an agent's process exits or its heartbeat goes stale (default: 5 minutes), the coordinator marks it dead and unclaims its task. You can also check manually:
+
+```bash
+wg dead-agents --check     # check for dead agents (read-only)
+wg dead-agents --cleanup   # mark dead and unclaim their tasks
+wg dead-agents --remove    # remove dead agents from registry
+```
+
+### Model selection
+
+Models are selected in priority order:
+
+1. `--model` flag on `wg spawn` (highest priority)
+2. Task's `--model` property (set at creation)
+3. Coordinator config (`coordinator.model` in config.toml)
+4. Agent config default (`agent.model` in config.toml)
+
+```bash
+# Set model per-task
+wg add "Simple fix" --model haiku
+wg add "Complex design" --model opus
+
+# Override at spawn time
+wg spawn my-task --executor claude --model haiku
+
+# Set coordinator default (applies to all auto-spawned agents)
+wg config --set-model sonnet
+wg service reload
+```
+
+**Cost tips:** Use **haiku** for simple formatting/linting, **sonnet** for typical coding, **opus** for complex reasoning and architecture.
+
+### The TUI
+
+Launch the interactive terminal dashboard:
+
+```bash
+wg tui [--refresh-rate 2000]  # default: 2000ms refresh
+```
+
+The TUI has three views:
+
+**Dashboard** — split-pane showing tasks (left) and agents (right) with status bars.
+
+**Graph Explorer** — tree view of the dependency DAG with task status and active agent indicators.
+
+**Log Viewer** — real-time tailing of agent output with auto-scroll.
+
+#### Keybindings
+
+**Global:**
+
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `?` | Show help overlay |
+| `Esc` | Back / close overlay |
+
+**Dashboard:**
+
+| Key | Action |
+|-----|--------|
+| `Tab` / `Shift+Tab` | Switch panel (Tasks ↔ Agents) |
+| `j` / `k` or `↑` / `↓` | Scroll up / down |
+| `Enter` | Drill into selected item |
+| `g` | Open graph explorer |
+| `r` | Refresh data |
+
+**Graph Explorer:**
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` or `↑` / `↓` | Navigate up / down |
+| `h` / `l` or `←` / `→` | Collapse / expand subtree |
+| `Enter` | View task details or jump to agent log |
+| `a` | Cycle to next task with active agents |
+| `r` | Refresh graph |
+
+**Log Viewer:**
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` or `↑` / `↓` | Scroll one line |
+| `PageDown` / `PageUp` | Scroll half viewport |
+| `g` | Jump to top (disable auto-scroll) |
+| `G` | Jump to bottom (enable auto-scroll) |
+
+### Troubleshooting
+
+**Daemon logs:** Check `.workgraph/service/daemon.log` for errors. The daemon logs with timestamps and rotates at 10 MB (keeps one backup at `daemon.log.1`).
+
+```bash
+# Recent errors are also shown in status
+wg service status
+```
+
+**Common issues:**
+
+- **"Socket already exists"** — A previous daemon didn't clean up. Check if it's still running with `wg service status`, then `wg service stop` or manually remove the stale socket.
+- **Agents not spawning** — Check `wg service status` for coordinator state. Verify `max_agents` isn't already reached with `wg agents --alive`. Ensure there are tasks in `wg ready`.
+- **Agent marked dead prematurely** — Increase `heartbeat_timeout` in config.toml if agents do long-running work without heartbeating.
+- **Config changes not taking effect** — Run `wg service reload` after editing `config.toml`. CLI flag overrides on `wg service start` take precedence over the file.
+- **Daemon won't start** — Check if another daemon is already running. Look at `.workgraph/service/state.json` for stale PID info.
+
+**State files:** The service stores runtime state in `.workgraph/service/`:
+
+| File | Purpose |
+|------|---------|
+| `state.json` | Daemon PID, socket path, start time |
+| `daemon.log` | Persistent daemon logs |
+| `coordinator-state.json` | Effective config and runtime metrics |
+| `registry.json` | Agent registry (IDs, PIDs, tasks, status) |
+
 ## The recommended flow
 
 For most projects:

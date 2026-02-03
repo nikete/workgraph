@@ -1,4 +1,5 @@
 pub mod app;
+pub mod dag_layout;
 
 use std::io;
 use std::path::PathBuf;
@@ -18,7 +19,8 @@ use ratatui::{
     DefaultTerminal, Frame,
 };
 
-use self::app::{App, Panel, View};
+use self::app::{App, GraphViewMode, Panel, View};
+use self::dag_layout::{CellStyle, DagLayout};
 use workgraph::graph::Status;
 use workgraph::AgentStatus;
 
@@ -133,41 +135,80 @@ fn handle_graph_key(app: &mut App, code: KeyCode) {
         return;
     }
 
+    // Check view mode for mode-specific keybindings
+    let view_mode = app
+        .graph_explorer
+        .as_ref()
+        .map(|e| e.view_mode)
+        .unwrap_or(GraphViewMode::Tree);
+
     match code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Esc => app.close_graph_explorer(),
+        KeyCode::Char('d') => {
+            // Toggle between tree and DAG view modes
+            if let Some(ref mut explorer) = app.graph_explorer {
+                explorer.toggle_view_mode();
+            }
+        }
         KeyCode::Up | KeyCode::Char('k') => {
             if let Some(ref mut explorer) = app.graph_explorer {
-                explorer.scroll_up();
+                match view_mode {
+                    GraphViewMode::Tree => explorer.scroll_up(),
+                    GraphViewMode::Dag => explorer.dag_select_prev(),
+                }
             }
         }
         KeyCode::Down | KeyCode::Char('j') => {
             if let Some(ref mut explorer) = app.graph_explorer {
-                explorer.scroll_down();
+                match view_mode {
+                    GraphViewMode::Tree => explorer.scroll_down(),
+                    GraphViewMode::Dag => explorer.dag_select_next(),
+                }
             }
         }
         KeyCode::Left | KeyCode::Char('h') => {
             if let Some(ref mut explorer) = app.graph_explorer {
-                explorer.collapse();
+                match view_mode {
+                    GraphViewMode::Tree => {
+                        explorer.collapse();
+                        // refresh after collapse
+                    }
+                    GraphViewMode::Dag => explorer.dag_scroll_left(),
+                }
             }
-            app.refresh_graph_explorer();
+            if view_mode == GraphViewMode::Tree {
+                app.refresh_graph_explorer();
+            }
         }
         KeyCode::Right | KeyCode::Char('l') => {
             if let Some(ref mut explorer) = app.graph_explorer {
-                explorer.expand();
+                match view_mode {
+                    GraphViewMode::Tree => {
+                        explorer.expand();
+                    }
+                    GraphViewMode::Dag => explorer.dag_scroll_right(),
+                }
             }
-            app.refresh_graph_explorer();
+            if view_mode == GraphViewMode::Tree {
+                app.refresh_graph_explorer();
+            }
         }
         KeyCode::Enter => {
             // If the selected task has an active agent, jump to its log viewer
-            let agent_id = app.graph_explorer.as_ref()
+            let agent_id = app
+                .graph_explorer
+                .as_ref()
                 .and_then(|e| e.selected_task_first_agent());
             if let Some(agent_id) = agent_id {
                 app.open_log_viewer_for_agent(&agent_id);
             } else {
                 let wg_dir = app.workgraph_dir.clone();
                 if let Some(ref mut explorer) = app.graph_explorer {
-                    explorer.toggle_detail(&wg_dir);
+                    match view_mode {
+                        GraphViewMode::Tree => explorer.toggle_detail(&wg_dir),
+                        GraphViewMode::Dag => explorer.dag_toggle_detail(&wg_dir),
+                    }
                 }
             }
         }

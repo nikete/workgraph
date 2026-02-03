@@ -8,6 +8,8 @@ use workgraph::graph::{Status, Task, WorkGraph};
 use workgraph::parser::load_graph;
 use workgraph::{AgentEntry, AgentRegistry, AgentStatus};
 
+use super::dag_layout::DagLayout;
+
 /// How long a recently-changed item stays highlighted (seconds)
 const HIGHLIGHT_DURATION: Duration = Duration::from_secs(3);
 
@@ -257,6 +259,15 @@ pub struct TaskAgentInfo {
     pub count: usize,
 }
 
+/// Which display mode the graph explorer is using
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphViewMode {
+    /// Indented tree list (original)
+    Tree,
+    /// Visual DAG layout with boxes and edges
+    Dag,
+}
+
 /// State for the graph explorer view
 pub struct GraphExplorer {
     /// Flattened rows for display
@@ -275,6 +286,16 @@ pub struct GraphExplorer {
     pub agent_map: HashMap<String, TaskAgentInfo>,
     /// Indices of rows that have active agents (for 'a' cycling)
     pub agent_active_indices: Vec<usize>,
+    /// Current view mode (tree or DAG)
+    pub view_mode: GraphViewMode,
+    /// Cached DAG layout (computed on rebuild when in DAG mode)
+    pub dag_layout: Option<DagLayout>,
+    /// Selected node index in DAG mode
+    pub dag_selected: usize,
+    /// Horizontal scroll offset for DAG view
+    pub dag_scroll_x: usize,
+    /// Vertical scroll offset for DAG view
+    pub dag_scroll_y: usize,
 }
 
 impl GraphExplorer {
@@ -288,6 +309,11 @@ impl GraphExplorer {
             detail_task: None,
             agent_map: HashMap::new(),
             agent_active_indices: Vec::new(),
+            view_mode: GraphViewMode::Tree,
+            dag_layout: None,
+            dag_selected: 0,
+            dag_scroll_x: 0,
+            dag_scroll_y: 0,
         };
         explorer.rebuild(workgraph_dir);
         explorer
@@ -323,6 +349,7 @@ impl GraphExplorer {
             Ok(g) => g,
             Err(_) => {
                 self.rows.clear();
+                self.dag_layout = None;
                 return;
             }
         };
@@ -346,11 +373,33 @@ impl GraphExplorer {
         }
 
         // Update agent map and compute active indices for 'a' cycling
-        self.agent_map = agent_map;
+        self.agent_map = agent_map.clone();
         self.agent_active_indices = self.rows.iter().enumerate()
             .filter(|(_, r)| r.active_agent_count > 0 && r.back_ref.is_none())
             .map(|(i, _)| i)
             .collect();
+
+        // Always compute DAG layout so it's ready when user switches modes
+        let mut dag = DagLayout::compute(&graph, &critical_ids, &agent_map);
+        super::dag_layout::center_layers(&mut dag);
+        super::dag_layout::reroute_edges(&mut dag, &graph);
+
+        // Preserve DAG selection by task ID
+        let prev_dag_id = self.dag_layout.as_ref().and_then(|l| {
+            l.nodes.get(self.dag_selected).map(|n| n.task_id.clone())
+        });
+        if let Some(ref id) = prev_dag_id {
+            if let Some(&idx) = dag.id_to_idx.get(id) {
+                self.dag_selected = idx;
+            }
+        }
+        if !dag.nodes.is_empty() {
+            self.dag_selected = self.dag_selected.min(dag.nodes.len() - 1);
+        } else {
+            self.dag_selected = 0;
+        }
+
+        self.dag_layout = Some(dag);
     }
 
     pub fn scroll_up(&mut self) {
@@ -424,11 +473,108 @@ impl GraphExplorer {
 
     /// Get the first active agent ID for the currently selected task
     pub fn selected_task_first_agent(&self) -> Option<String> {
-        let row = self.rows.get(self.selected)?;
-        if row.active_agent_count > 0 {
-            row.active_agent_ids.first().cloned()
-        } else {
-            None
+        match self.view_mode {
+            GraphViewMode::Tree => {
+                let row = self.rows.get(self.selected)?;
+                if row.active_agent_count > 0 {
+                    row.active_agent_ids.first().cloned()
+                } else {
+                    None
+                }
+            }
+            GraphViewMode::Dag => {
+                let layout = self.dag_layout.as_ref()?;
+                let node = layout.nodes.get(self.dag_selected)?;
+                if node.active_agent_count > 0 {
+                    node.active_agent_ids.first().cloned()
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Toggle between tree and DAG view modes
+    pub fn toggle_view_mode(&mut self) {
+        self.view_mode = match self.view_mode {
+            GraphViewMode::Tree => GraphViewMode::Dag,
+            GraphViewMode::Dag => GraphViewMode::Tree,
+        };
+    }
+
+    /// DAG mode: move selection to the next node
+    pub fn dag_select_next(&mut self) {
+        if let Some(ref layout) = self.dag_layout {
+            if !layout.nodes.is_empty() {
+                self.dag_selected = (self.dag_selected + 1).min(layout.nodes.len() - 1);
+            }
+        }
+    }
+
+    /// DAG mode: move selection to the previous node
+    pub fn dag_select_prev(&mut self) {
+        self.dag_selected = self.dag_selected.saturating_sub(1);
+    }
+
+    /// DAG mode: scroll view left
+    pub fn dag_scroll_left(&mut self) {
+        self.dag_scroll_x = self.dag_scroll_x.saturating_sub(4);
+    }
+
+    /// DAG mode: scroll view right
+    pub fn dag_scroll_right(&mut self) {
+        self.dag_scroll_x += 4;
+    }
+
+    /// DAG mode: get the selected task ID
+    pub fn dag_selected_task_id(&self) -> Option<&str> {
+        self.dag_layout
+            .as_ref()
+            .and_then(|l| l.nodes.get(self.dag_selected))
+            .map(|n| n.task_id.as_str())
+    }
+
+    /// DAG mode: toggle detail overlay for the selected task
+    pub fn dag_toggle_detail(&mut self, workgraph_dir: &std::path::Path) {
+        if self.show_detail {
+            self.show_detail = false;
+            self.detail_task = None;
+            self.detail_scroll = 0;
+            return;
+        }
+        if let Some(task_id) = self.dag_selected_task_id().map(|s| s.to_string()) {
+            let graph_path = workgraph_dir.join("graph.jsonl");
+            if let Ok(graph) = load_graph(&graph_path) {
+                if let Some(task) = graph.get_task(&task_id) {
+                    self.detail_task = Some(task.clone());
+                    self.show_detail = true;
+                    self.detail_scroll = 0;
+                }
+            }
+        }
+    }
+
+    /// DAG mode: ensure the selected node is visible in the viewport
+    pub fn dag_ensure_visible(&mut self, viewport_width: u16, viewport_height: u16) {
+        if let Some(ref layout) = self.dag_layout {
+            if let Some(node) = layout.nodes.get(self.dag_selected) {
+                let vw = viewport_width as usize;
+                let vh = viewport_height as usize;
+
+                // Horizontal: ensure node is visible
+                if node.x < self.dag_scroll_x {
+                    self.dag_scroll_x = node.x.saturating_sub(2);
+                } else if node.x + node.w > self.dag_scroll_x + vw {
+                    self.dag_scroll_x = (node.x + node.w).saturating_sub(vw) + 2;
+                }
+
+                // Vertical: ensure node is visible
+                if node.y < self.dag_scroll_y {
+                    self.dag_scroll_y = node.y.saturating_sub(1);
+                } else if node.y + node.h > self.dag_scroll_y + vh {
+                    self.dag_scroll_y = (node.y + node.h).saturating_sub(vh) + 1;
+                }
+            }
         }
     }
 }

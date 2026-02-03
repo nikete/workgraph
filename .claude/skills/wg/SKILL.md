@@ -165,114 +165,178 @@ If multiple agents are working:
 
 ## Agent Service
 
-Automated agent spawning and management for parallel task execution.
+The service daemon is the recommended way to run multi-agent workflows. It combines agent spawning, lifecycle management, and the coordinator into a single background process.
 
-### When to use spawn vs manual claim
+### Quick start
 
-Use `wg spawn` when:
+```bash
+wg service start     # start daemon — auto-spawns agents on ready tasks
+wg agents            # see what's running
+wg tui               # interactive dashboard
+wg service stop      # stop daemon when done
+```
+
+The daemon watches your task graph and automatically:
+1. Spawns agents on ready tasks (up to `max_agents`)
+2. Detects dead agents (process exit or stale heartbeat)
+3. Unclaims dead agents' tasks so others can pick them up
+4. Spawns new agents when tasks become unblocked
+
+### When to use the service vs manual claim
+
+Use `wg service start` when:
 - Running multiple agents in parallel
-- Need automatic output capture
-- Want heartbeat monitoring and dead agent detection
-- Automating a coordinator pattern
+- Want automatic task pickup as work becomes ready
+- Need heartbeat monitoring and dead agent detection
+- Hands-off operation of a task graph
 
 Use manual `wg claim` when:
 - Working interactively on a single task
+- Testing or debugging a specific task
 - Don't need process management
-- Testing or debugging
 
-### Spawning agents
+### Configuration
+
+The service reads from `.workgraph/config.toml`:
+
+```toml
+[coordinator]
+max_agents = 4         # max parallel agents (default: 4)
+poll_interval = 60     # seconds between coordinator ticks (default: 60)
+executor = "claude"    # executor for spawned agents (default: "claude")
+model = "opus-4-5"    # model override for all spawned agents (optional)
+
+[agent]
+executor = "claude"
+model = "opus-4-5"
+heartbeat_timeout = 5  # minutes before agent is considered dead (default: 5)
+```
+
+Set config via CLI:
+```bash
+wg config --max-agents 8
+wg config --set-model sonnet
+wg config --poll-interval 120
+wg config --executor shell
+```
+
+CLI flags on `wg service start` override config.toml:
+```bash
+wg service start --max-agents 8 --executor shell --interval 120 --model haiku
+```
+
+### Managing the service
+
+```bash
+wg service start              # start background daemon
+wg service stop               # stop daemon (agents continue independently)
+wg service stop --kill-agents # stop daemon and kill all agents
+wg service stop --force       # SIGKILL daemon immediately
+wg service status             # PID, uptime, agent summary, coordinator state
+wg service reload             # re-read config.toml without restart
+wg service reload --max-agents 8 --model haiku  # apply specific overrides
+wg service install            # generate systemd user service file
+```
+
+### Spawning agents manually
+
+You can also spawn agents for specific tasks directly:
 
 ```bash
 wg spawn <task-id> --executor <name> [--timeout <duration>] [--model <model>]
 ```
 
-Spawns an agent process to work on a task:
-1. Claims the task (fails if already claimed)
-2. Loads executor config from `.workgraph/executors/<name>.toml`
-3. Starts the executor process with task context
-4. Registers agent in the registry
-5. Returns immediately (doesn't wait for completion)
+This claims the task, starts the executor process, registers the agent, and returns immediately.
 
 ```bash
 wg spawn implement-feature --executor claude
-# Spawned agent-7 for task 'implement-feature'
-#   Executor: claude
-#   PID: 54321
-#   Output: .workgraph/agents/agent-7/output.log
-
-# With model override:
 wg spawn simple-task --executor claude --model haiku
 ```
 
-### Model selection for cost optimization
+### Model selection
 
-Use `--model` to select haiku (fast/cheap), sonnet (balanced), or opus (most capable):
+Models are selected in priority order (highest first):
+
+1. `--model` flag on `wg spawn`
+2. Task's `--model` property (set at creation with `wg add`)
+3. Coordinator config (`coordinator.model` in config.toml)
+4. Agent config default (`agent.model` in config.toml)
 
 ```bash
-# Set model when creating task (becomes default for that task)
-wg add "Simple formatting fix" --model haiku
-wg add "Complex architecture design" --model opus
+# Set per-task model at creation
+wg add "Simple fix" --model haiku
+wg add "Complex design" --model opus
 
 # Override at spawn time
 wg spawn my-task --executor claude --model haiku
+
+# Set coordinator default for all auto-spawned agents
+wg config --set-model sonnet
+wg service reload
 ```
 
-Model priority: `--model` flag > task's model > executor default
+**Cost tips:** Use **haiku** for simple formatting/linting, **sonnet** for typical coding, **opus** for complex reasoning and architecture.
 
-**Cost optimization tips:**
-- Use **haiku** for simple tasks: formatting, linting, file updates
-- Use **sonnet** for typical coding tasks
-- Use **opus** for complex reasoning, proofs, architecture decisions
-
-### Monitoring agents
+### Agent management
 
 ```bash
-wg agents                # List all agents
-wg agents --alive        # Only running agents
-wg agents --dead         # Only dead agents
-wg agents --working      # Actively working
-wg agents --idle         # Idle agents
-wg agents --json         # JSON for scripting
+wg agents              # list all agents
+wg agents --alive      # running only
+wg agents --dead       # dead only
+wg agents --working    # actively working on a task
+wg agents --idle       # waiting for work
+wg agents --json       # JSON for scripting
 ```
 
-Output shows agent ID, task, executor, PID, uptime, and status.
-
-### Terminating agents
-
+Kill agents:
 ```bash
-wg kill <agent-id>       # Graceful (SIGTERM, wait, SIGKILL)
-wg kill <agent-id> --force  # Immediate SIGKILL
-wg kill --all            # Kill all running agents
+wg kill <agent-id>         # graceful: SIGTERM → wait → SIGKILL
+wg kill <agent-id> --force # immediate SIGKILL
+wg kill --all              # kill all running agents
 ```
 
 Killing an agent automatically unclaims its task.
 
 ### Dead agent detection
 
-Agents send heartbeats. When heartbeats stop, agents are marked dead.
+Agents send heartbeats while working. The service daemon automatically detects dead agents (process exited or heartbeat stale) and unclaims their tasks. You can also check manually:
 
 ```bash
-wg dead-agents --check              # Check for dead agents (read-only)
-wg dead-agents --cleanup            # Mark dead and unclaim their tasks
-wg dead-agents --remove             # Remove dead agents from registry
-wg dead-agents --threshold 10       # Custom timeout in minutes
+wg dead-agents --check        # check for dead agents (read-only)
+wg dead-agents --cleanup      # mark dead and unclaim their tasks
+wg dead-agents --remove       # remove dead agents from registry
+wg dead-agents --threshold 10 # custom timeout in minutes
 ```
 
-### Service daemon
+### The TUI
 
-Optional background daemon for centralized agent management:
+Interactive terminal dashboard for monitoring:
 
 ```bash
-wg service start         # Start daemon
-wg service stop          # Stop daemon
-wg service stop --force  # Stop and kill all agents
-wg service status        # Show daemon status and agent summary
+wg tui [--refresh-rate 2000]  # default: 2000ms
 ```
 
-The daemon:
-- Accepts spawn requests via Unix socket
-- Monitors agent health periodically
-- Automatically detects dead agents
+**Views:**
+- **Dashboard** — tasks (left panel) and agents (right panel) with status bars
+- **Graph Explorer** — dependency DAG tree with task status and agent indicators
+- **Log Viewer** — real-time agent output with auto-scroll
+
+**Keybindings:**
+
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `?` | Help overlay |
+| `Esc` | Back / close |
+| `Tab` / `Shift+Tab` | Switch panel |
+| `j`/`k` or `↑`/`↓` | Navigate |
+| `Enter` | Drill into item |
+| `g` | Graph explorer (dashboard) / jump to top (log viewer) |
+| `G` | Jump to bottom (log viewer, enables auto-scroll) |
+| `h`/`l` or `←`/`→` | Collapse/expand (graph explorer) |
+| `a` | Cycle to next active-agent task (graph explorer) |
+| `r` | Refresh |
+| `PageDown`/`PageUp` | Scroll half viewport (log viewer) |
 
 ### Executor configuration
 
@@ -296,51 +360,53 @@ When done: wg done {{task_id}}
 """
 ```
 
-**Shell executor** (`shell.toml`) - uses task's `exec` field:
+**Shell executor** (`shell.toml`) — uses task's `exec` field:
 ```toml
 [executor]
 type = "shell"
 command = "bash"
 ```
 
-### Coordinator
+### Troubleshooting
 
-Automate parallel task execution with `wg coordinator`:
+**Daemon logs:** `.workgraph/service/daemon.log` (rotates at 10 MB, keeps one backup).
 
 ```bash
-wg coordinator                    # Run continuous loop
-wg coordinator --once             # Spawn once and exit
-wg coordinator --max-agents 3     # Limit parallel agents
-wg coordinator --interval 10      # Check every 10 seconds
-wg coordinator --install-service  # Generate systemd service
+wg service status  # shows recent errors
 ```
 
-The coordinator:
-1. Detects finished agents (checks if process exited)
-2. Cleans up completed agents from registry
-3. Spawns new agents for ready tasks (up to max)
-4. Repeats on interval until all tasks done
+**Common issues:**
+- **Agents not spawning** — check `wg service status` for coordinator state; ensure `max_agents` isn't reached (`wg agents --alive`); ensure tasks exist in `wg ready`
+- **Agent marked dead prematurely** — increase `heartbeat_timeout` in config.toml
+- **Config changes not taking effect** — run `wg service reload` after editing config.toml
+- **Stale socket** — if daemon didn't clean up, check `wg service status` then `wg service stop` or remove the socket manually
 
-**Example session:**
+**State files** in `.workgraph/service/`:
+
+| File | Purpose |
+|------|---------|
+| `state.json` | Daemon PID, socket path, start time |
+| `daemon.log` | Persistent daemon logs |
+| `coordinator-state.json` | Effective config and runtime metrics |
+| `registry.json` | Agent registry |
+
+### Example workflow
+
 ```bash
-# Add some tasks
+# Set up tasks
 wg add "Task A" --model haiku
 wg add "Task B" --model haiku
 wg add "Task C" --blocked-by task-a --model haiku
 
-# Run coordinator (spawns A and B in parallel, then C when A done)
-wg coordinator --max-agents 2
-```
+# Start service (spawns A and B in parallel, then C when A completes)
+wg service start --max-agents 2
 
-**Configure defaults** in `.workgraph/config.toml`:
-```toml
-[coordinator]
-interval = 30        # seconds between checks
-max_agents = 4       # max parallel agents
-executor = "claude"  # default executor
-```
+# Monitor
+wg tui
 
-Or set via CLI: `wg config --max-agents 3 --interval 15`
+# When done
+wg service stop
+```
 
 ## All commands
 
@@ -382,11 +448,13 @@ wg config            # view/set config
 wg spawn <id>        # spawn agent for task
 wg agents            # list running agents
 wg kill <agent-id>   # terminate agent
-wg coordinator       # auto-spawn agents on ready tasks
 wg service start     # start service daemon
 wg service stop      # stop service daemon
 wg service status    # daemon status
+wg service reload    # reload config
+wg service install   # generate systemd service
 wg dead-agents       # dead agent detection
+wg tui               # interactive dashboard
 ```
 
 All commands support `--json` for structured output.
