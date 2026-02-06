@@ -2,7 +2,8 @@
 
 Use workgraph for task management.
 
-**Run `wg quickstart` at the start of each session.**
+**At the start of each session, run `wg quickstart` in your terminal to orient yourself.**
+Use `wg service start` to dispatch work — do not manually claim tasks.
 
 ## Development
 
