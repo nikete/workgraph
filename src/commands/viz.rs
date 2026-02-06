@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::collections::{HashMap, HashSet};
+use std::io::IsTerminal;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use workgraph::graph::{Status, WorkGraph};
@@ -12,6 +13,7 @@ use super::graph_path;
 pub enum OutputFormat {
     Dot,
     Mermaid,
+    Ascii,
 }
 
 impl std::str::FromStr for OutputFormat {
@@ -21,7 +23,11 @@ impl std::str::FromStr for OutputFormat {
         match s.to_lowercase().as_str() {
             "dot" => Ok(OutputFormat::Dot),
             "mermaid" => Ok(OutputFormat::Mermaid),
-            _ => Err(format!("Unknown format: {}. Use 'dot' or 'mermaid'.", s)),
+            "ascii" | "dag" => Ok(OutputFormat::Ascii),
+            _ => Err(format!(
+                "Unknown format: {}. Use 'dot', 'mermaid', or 'ascii'.",
+                s
+            )),
         }
     }
 }
@@ -98,6 +104,9 @@ pub fn run(dir: &Path, options: VizOptions) -> Result<()> {
         OutputFormat::Dot => generate_dot(&graph, &tasks_to_show, &task_ids, &critical_path_set),
         OutputFormat::Mermaid => {
             generate_mermaid(&graph, &tasks_to_show, &task_ids, &critical_path_set)
+        }
+        OutputFormat::Ascii => {
+            generate_ascii(&graph, &tasks_to_show, &task_ids)
         }
     };
 
@@ -466,6 +475,213 @@ fn render_dot(dot_content: &str, output_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Generate an ASCII DAG visualization that shows the dependency graph
+/// using Unicode box-drawing characters, designed to fit in a terminal.
+///
+/// Layout strategy:
+/// - Each edge is rendered as a line: source ──→ target
+/// - Multiple sources merging into one target use merge brackets (┐├└)
+/// - Independent tasks are labeled (independent)
+/// - Sources are left-padded to align merge brackets at a common column
+/// - Color coding by status via ANSI escape codes
+fn generate_ascii(
+    _graph: &WorkGraph,
+    tasks: &[&workgraph::graph::Task],
+    task_ids: &HashSet<&str>,
+) -> String {
+    if tasks.is_empty() {
+        return String::from("(no tasks to display)");
+    }
+
+    // Build adjacency within the active set
+    let mut forward: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut reverse: HashMap<&str, Vec<&str>> = HashMap::new();
+    for task in tasks {
+        for blocker in &task.blocked_by {
+            if task_ids.contains(blocker.as_str()) {
+                forward
+                    .entry(blocker.as_str())
+                    .or_default()
+                    .push(task.id.as_str());
+                reverse
+                    .entry(task.id.as_str())
+                    .or_default()
+                    .push(blocker.as_str());
+            }
+        }
+    }
+
+    // Task lookup
+    let task_map: HashMap<&str, &workgraph::graph::Task> =
+        tasks.iter().map(|t| (t.id.as_str(), *t)).collect();
+
+    let is_independent = |id: &str| -> bool {
+        let has_children = forward.get(id).map(|v| !v.is_empty()).unwrap_or(false);
+        let has_parents = reverse.get(id).map(|v| !v.is_empty()).unwrap_or(false);
+        !has_children && !has_parents
+    };
+
+    // Color helpers
+    let use_color = std::io::stdout().is_terminal();
+
+    let status_color = |status: &Status| -> &str {
+        if !use_color {
+            return "";
+        }
+        match status {
+            Status::Done => "\x1b[32m",          // green
+            Status::InProgress => "\x1b[33m",    // yellow
+            Status::Open => "\x1b[37m",          // white
+            Status::Blocked => "\x1b[90m",       // gray
+            Status::Failed => "\x1b[31m",        // red
+            Status::Abandoned => "\x1b[90m",     // gray
+            Status::PendingReview => "\x1b[36m", // cyan
+        }
+    };
+    let reset = if use_color { "\x1b[0m" } else { "" };
+
+    let colored_id = |id: &str| -> String {
+        let task = task_map.get(id);
+        let color = task.map(|t| status_color(&t.status)).unwrap_or("");
+        format!("{}{}{}", color, id, reset)
+    };
+
+    // Build target -> sorted sources mapping
+    let mut target_sources: HashMap<&str, Vec<&str>> = HashMap::new();
+    for task in tasks {
+        for blocker in &task.blocked_by {
+            if task_ids.contains(blocker.as_str()) {
+                target_sources
+                    .entry(task.id.as_str())
+                    .or_default()
+                    .push(blocker.as_str());
+            }
+        }
+    }
+    for sources in target_sources.values_mut() {
+        sources.sort();
+    }
+
+    // Compute topological depth for ordering output
+    let mut depth: HashMap<&str, usize> = HashMap::new();
+    let mut queue = std::collections::VecDeque::new();
+    for task in tasks {
+        if task
+            .blocked_by
+            .iter()
+            .all(|b| !task_ids.contains(b.as_str()))
+        {
+            depth.insert(task.id.as_str(), 0);
+            queue.push_back(task.id.as_str());
+        }
+    }
+    for task in tasks {
+        if !depth.contains_key(task.id.as_str()) {
+            depth.insert(task.id.as_str(), 0);
+            queue.push_back(task.id.as_str());
+        }
+    }
+    while let Some(node) = queue.pop_front() {
+        let d = depth[node];
+        if let Some(children) = forward.get(node) {
+            for &child in children {
+                let new_depth = d + 1;
+                let entry = depth.entry(child).or_insert(0);
+                if new_depth > *entry {
+                    *entry = new_depth;
+                    queue.push_back(child);
+                }
+            }
+        }
+    }
+
+    // Sort bundles by target depth then target name
+    let mut bundles: Vec<(&str, Vec<&str>)> = target_sources
+        .iter()
+        .map(|(&target, sources)| (target, sources.clone()))
+        .collect();
+    bundles.sort_by_key(|(target, _)| {
+        (
+            depth.get(target).copied().unwrap_or(0),
+            target.to_string(),
+        )
+    });
+
+    let mut lines: Vec<String> = Vec::new();
+
+    // Track which source IDs have been rendered on a *previous line* for the
+    // same target group. Within a merge group, if a source was already shown
+    // on an earlier line of this same group, blank it. Between groups, always
+    // re-show the source name.
+    for (target, sources) in &bundles {
+        if sources.len() == 1 {
+            // Simple edge: source ──→ target
+            let source = sources[0];
+            lines.push(format!(
+                "{} ──→ {}",
+                colored_id(source),
+                colored_id(target)
+            ));
+        } else {
+            // Merge bracket: multiple sources converge on one target
+            //
+            // source-a ───┐
+            // source-b ───┼──→ target
+            // source-c ───┘
+            //
+            // All source names are right-padded to the same width so
+            // the bracket characters align vertically.
+
+            let max_src_len = sources.iter().map(|s| s.len()).max().unwrap_or(0);
+            let mid = sources.len() / 2;
+
+            for (i, source) in sources.iter().enumerate() {
+                let task = task_map.get(source);
+                let color = task.map(|t| status_color(&t.status)).unwrap_or("");
+                let pad = max_src_len - source.len();
+                let src_label =
+                    format!("{}{}{}{}", color, source, reset, " ".repeat(pad));
+
+                let bracket = if sources.len() == 2 {
+                    if i == 0 {
+                        "┐"
+                    } else {
+                        "┘"
+                    }
+                } else if i == 0 {
+                    "┐"
+                } else if i == sources.len() - 1 {
+                    "┘"
+                } else {
+                    "┤"
+                };
+
+                let suffix = if i == mid {
+                    format!("──→ {}", colored_id(target))
+                } else {
+                    String::new()
+                };
+
+                lines.push(format!("{} ──{}{}", src_label, bracket, suffix));
+            }
+        }
+    }
+
+    // Render independent tasks (no edges in active set)
+    let mut independents: Vec<&str> = tasks
+        .iter()
+        .filter(|t| is_independent(t.id.as_str()))
+        .map(|t| t.id.as_str())
+        .collect();
+    independents.sort();
+
+    for id in independents {
+        lines.push(format!("{} ── (independent)", colored_id(id)));
+    }
+
+    lines.join("\n")
+}
+
 /// Format hours nicely (no decimals if whole number)
 fn format_hours(hours: f64) -> String {
     if hours.fract() == 0.0 {
@@ -507,6 +723,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            identity: None,
         }
     }
 
@@ -540,6 +757,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            identity: None,
         }
     }
 
@@ -687,5 +905,107 @@ mod tests {
         assert_eq!(format_hours(8.0), "8");
         assert_eq!(format_hours(8.5), "8.5");
         assert_eq!(format_hours(8.25), "8.2");
+    }
+
+    #[test]
+    fn test_format_output_parsing_ascii() {
+        assert_eq!(
+            "ascii".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Ascii
+        );
+        assert_eq!(
+            "dag".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Ascii
+        );
+        assert_eq!(
+            "ASCII".parse::<OutputFormat>().unwrap(),
+            OutputFormat::Ascii
+        );
+    }
+
+    #[test]
+    fn test_generate_ascii_empty() {
+        let graph = WorkGraph::new();
+        let tasks: Vec<&workgraph::graph::Task> = vec![];
+        let task_ids: HashSet<&str> = HashSet::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids);
+        assert_eq!(result, "(no tasks to display)");
+    }
+
+    #[test]
+    fn test_generate_ascii_simple_edge() {
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("src", "Source task");
+        let mut t2 = make_task("tgt", "Target task");
+        t2.blocked_by = vec!["src".to_string()];
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let result = generate_ascii(&graph, &tasks, &task_ids);
+
+        assert!(result.contains("src"));
+        assert!(result.contains("tgt"));
+        assert!(result.contains("──→"));
+    }
+
+    #[test]
+    fn test_generate_ascii_merge() {
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("a", "Task A");
+        let t2 = make_task("b", "Task B");
+        let mut t3 = make_task("c", "Merge Task");
+        t3.blocked_by = vec!["a".to_string(), "b".to_string()];
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let result = generate_ascii(&graph, &tasks, &task_ids);
+
+        // Should have merge bracket characters
+        assert!(result.contains('┐'));
+        assert!(result.contains('┘'));
+        assert!(result.contains("──→"));
+        assert!(result.contains('c'));
+    }
+
+    #[test]
+    fn test_generate_ascii_independent() {
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("solo", "Solo task");
+        graph.add_node(Node::Task(t1));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let result = generate_ascii(&graph, &tasks, &task_ids);
+
+        assert!(result.contains("solo"));
+        assert!(result.contains("(independent)"));
+    }
+
+    #[test]
+    fn test_generate_ascii_three_way_merge() {
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("x", "Task X");
+        let t2 = make_task("y", "Task Y");
+        let t3 = make_task("z", "Task Z");
+        let mut t4 = make_task("m", "Merge");
+        t4.blocked_by = vec!["x".to_string(), "y".to_string(), "z".to_string()];
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+        graph.add_node(Node::Task(t4));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let result = generate_ascii(&graph, &tasks, &task_ids);
+
+        // Should have merge bracket with ┐ ┤ ┘
+        assert!(result.contains('┐'));
+        assert!(result.contains('┤'));
+        assert!(result.contains('┘'));
     }
 }

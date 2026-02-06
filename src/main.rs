@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -365,13 +365,24 @@ enum Commands {
         #[arg(long)]
         critical_path: bool,
 
-        /// Output format (dot, mermaid)
+        /// Output format (dot, mermaid, ascii)
         #[arg(long, default_value = "dot")]
         format: String,
 
         /// Render directly to file (requires dot installed)
         #[arg(long, short)]
         output: Option<String>,
+    },
+
+    /// Show ASCII DAG of the dependency graph
+    Dag {
+        /// Include done tasks (default: only open tasks)
+        #[arg(long)]
+        all: bool,
+
+        /// Filter by status (open, in-progress, done, blocked)
+        #[arg(long)]
+        status: Option<String>,
     },
 
     /// Manage resources
@@ -390,6 +401,49 @@ enum Commands {
     Skill {
         #[command(subcommand)]
         command: SkillCommands,
+    },
+
+    /// Manage the agency (roles + motivations)
+    Agency {
+        #[command(subcommand)]
+        command: AgencyCommands,
+    },
+
+    /// Manage agency roles (what an agent does)
+    Role {
+        #[command(subcommand)]
+        command: RoleCommands,
+    },
+
+    /// Manage agency motivations (why an agent acts)
+    Motivation {
+        #[command(subcommand)]
+        command: MotivationCommands,
+    },
+
+    /// Alias for 'motivation'
+    #[command(hide = true)]
+    Mot {
+        #[command(subcommand)]
+        command: MotivationCommands,
+    },
+
+    /// Assign an agent identity (role + motivation) to a task
+    Assign {
+        /// Task ID to assign identity to
+        task: String,
+
+        /// Role ID to assign
+        #[arg(long)]
+        role: Option<String>,
+
+        /// Motivation ID to assign
+        #[arg(long)]
+        motivation: Option<String>,
+
+        /// Clear the identity assignment from the task
+        #[arg(long)]
+        clear: bool,
     },
 
     /// Find actors capable of performing a task
@@ -521,6 +575,39 @@ enum Commands {
     },
 
 
+    /// Trigger evaluation of a completed task
+    Evaluate {
+        /// Task ID to evaluate
+        task: String,
+
+        /// Model to use for the evaluator (overrides config and task defaults)
+        #[arg(long)]
+        evaluator_model: Option<String>,
+
+        /// Show what would be evaluated without spawning the evaluator agent
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Trigger an evolution cycle on agency roles and motivations
+    Evolve {
+        /// Show proposed changes without applying them
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Evolution strategy: mutation, crossover, gap-analysis, retirement, motivation-tuning, all (default: all)
+        #[arg(long)]
+        strategy: Option<String>,
+
+        /// Maximum number of operations to apply
+        #[arg(long)]
+        budget: Option<u32>,
+
+        /// Model to use for the evolver agent
+        #[arg(long)]
+        model: Option<String>,
+    },
+
     /// View or modify project configuration
     Config {
         /// Show current configuration
@@ -582,6 +669,38 @@ enum Commands {
         /// Set Matrix default room
         #[arg(long)]
         room: Option<String>,
+
+        /// Enable/disable automatic evaluation on task completion
+        #[arg(long)]
+        auto_evaluate: Option<bool>,
+
+        /// Enable/disable automatic identity assignment when spawning agents
+        #[arg(long)]
+        auto_assign: Option<bool>,
+
+        /// Set UCB exploration parameter C (default 1.4)
+        #[arg(long)]
+        exploration_factor: Option<f64>,
+
+        /// Set minimum evaluations before retirement (default 10)
+        #[arg(long)]
+        min_evals_for_retirement: Option<u32>,
+
+        /// Set average score threshold for retirement (default 0.3)
+        #[arg(long)]
+        retirement_threshold: Option<f64>,
+
+        /// Set model for evaluator agents
+        #[arg(long)]
+        evaluator_model: Option<String>,
+
+        /// Set evolver agent role ID (must be paired with --evolver-motivation)
+        #[arg(long)]
+        evolver_role: Option<String>,
+
+        /// Set evolver agent motivation ID (must be paired with --evolver-role)
+        #[arg(long)]
+        evolver_motivation: Option<String>,
     },
 
     /// Detect and clean up dead agents
@@ -777,6 +896,115 @@ enum SkillCommands {
 
     /// Install the wg Claude Code skill to ~/.claude/skills/wg/
     Install,
+}
+
+#[derive(Subcommand)]
+enum AgencyCommands {
+    /// Seed agency with starter roles and motivations
+    Init,
+
+    /// Show agency performance analytics
+    Stats {
+        /// Minimum evaluations to consider a pair "explored" (default: 3)
+        #[arg(long, default_value = "3")]
+        min_evals: u32,
+    },
+}
+
+#[derive(Subcommand)]
+enum RoleCommands {
+    /// Create a new role
+    Add {
+        /// Role name
+        name: String,
+
+        /// Desired outcome for this role
+        #[arg(long)]
+        outcome: String,
+
+        /// Skills (name, name:file:///path, name:https://url, name:inline:content)
+        #[arg(long)]
+        skill: Vec<String>,
+
+        /// Role description
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+    },
+
+    /// List all roles
+    List,
+
+    /// Show full role details
+    Show {
+        /// Role ID
+        id: String,
+    },
+
+    /// Open role YAML in EDITOR for manual editing
+    Edit {
+        /// Role ID
+        id: String,
+    },
+
+    /// Remove a role
+    Rm {
+        /// Role ID
+        id: String,
+    },
+
+    /// Show evolutionary lineage/ancestry tree for a role
+    Lineage {
+        /// Role ID
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum MotivationCommands {
+    /// Create a new motivation
+    Add {
+        /// Motivation name
+        name: String,
+
+        /// Acceptable tradeoffs (can be repeated)
+        #[arg(long)]
+        accept: Vec<String>,
+
+        /// Unacceptable tradeoffs (can be repeated)
+        #[arg(long)]
+        reject: Vec<String>,
+
+        /// Motivation description
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+    },
+
+    /// List all motivations
+    List,
+
+    /// Show full motivation details
+    Show {
+        /// Motivation ID
+        id: String,
+    },
+
+    /// Open motivation YAML in EDITOR for manual editing
+    Edit {
+        /// Motivation ID
+        id: String,
+    },
+
+    /// Remove a motivation
+    Rm {
+        /// Motivation ID
+        id: String,
+    },
+
+    /// Show evolutionary lineage/ancestry tree for a motivation
+    Lineage {
+        /// Motivation ID
+        id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1103,9 +1331,15 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Show { .. } => "show",
         Commands::Log { .. } => "log",
         Commands::Viz { .. } => "viz",
+        Commands::Dag { .. } => "dag",
         Commands::Resource { .. } => "resource",
         Commands::Actor { .. } => "actor",
         Commands::Skill { .. } => "skill",
+        Commands::Agency { .. } => "agency",
+        Commands::Role { .. } => "role",
+        Commands::Motivation { .. } => "motivation",
+        Commands::Mot { .. } => "motivation",
+        Commands::Assign { .. } => "assign",
         Commands::Match { .. } => "match",
         Commands::Heartbeat { .. } => "heartbeat",
         Commands::Artifact { .. } => "artifact",
@@ -1115,6 +1349,8 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Exec { .. } => "exec",
         Commands::Agent { .. } => "agent",
         Commands::Spawn { .. } => "spawn",
+        Commands::Evaluate { .. } => "evaluate",
+        Commands::Evolve { .. } => "evolve",
         Commands::Config { .. } => "config",
         Commands::DeadAgents { .. } => "dead-agents",
         Commands::Agents { .. } => "agents",
@@ -1254,6 +1490,16 @@ fn main() -> Result<()> {
             };
             commands::viz::run(&workgraph_dir, options)
         }
+        Commands::Dag { all, status } => {
+            let options = commands::viz::VizOptions {
+                all,
+                status,
+                critical_path: false,
+                format: commands::viz::OutputFormat::Ascii,
+                output: None,
+            };
+            commands::viz::run(&workgraph_dir, options)
+        }
         Commands::Resource { command } => match command {
             ResourceCommands::Add {
                 id,
@@ -1303,6 +1549,45 @@ fn main() -> Result<()> {
             SkillCommands::Task { id } => commands::skills::run_task(&workgraph_dir, &id, cli.json),
             SkillCommands::Find { skill } => commands::skills::run_find(&workgraph_dir, &skill, cli.json),
             SkillCommands::Install => commands::skills::run_install(),
+        }
+        Commands::Agency { command } => match command {
+            AgencyCommands::Init => {
+                let agency_dir = workgraph_dir.join("agency");
+                let (roles, motivations) = workgraph::agency::seed_starters(&agency_dir)
+                    .context("Failed to seed agency starters")?;
+                if roles == 0 && motivations == 0 {
+                    println!("Agency already initialized (all starters present).");
+                } else {
+                    println!("Seeded agency with {} roles and {} motivations.", roles, motivations);
+                }
+                Ok(())
+            }
+            AgencyCommands::Stats { min_evals } => {
+                commands::agency_stats::run(&workgraph_dir, cli.json, min_evals)
+            }
+        },
+        Commands::Role { command } => match command {
+            RoleCommands::Add { name, outcome, skill, description } => {
+                commands::role::run_add(&workgraph_dir, &name, &outcome, &skill, description.as_deref())
+            }
+            RoleCommands::List => commands::role::run_list(&workgraph_dir, cli.json),
+            RoleCommands::Show { id } => commands::role::run_show(&workgraph_dir, &id, cli.json),
+            RoleCommands::Edit { id } => commands::role::run_edit(&workgraph_dir, &id),
+            RoleCommands::Rm { id } => commands::role::run_rm(&workgraph_dir, &id),
+            RoleCommands::Lineage { id } => commands::role::run_lineage(&workgraph_dir, &id, cli.json),
+        },
+        Commands::Motivation { command } | Commands::Mot { command } => match command {
+            MotivationCommands::Add { name, accept, reject, description } => {
+                commands::motivation::run_add(&workgraph_dir, &name, &accept, &reject, description.as_deref())
+            }
+            MotivationCommands::List => commands::motivation::run_list(&workgraph_dir, cli.json),
+            MotivationCommands::Show { id } => commands::motivation::run_show(&workgraph_dir, &id, cli.json),
+            MotivationCommands::Edit { id } => commands::motivation::run_edit(&workgraph_dir, &id),
+            MotivationCommands::Rm { id } => commands::motivation::run_rm(&workgraph_dir, &id),
+            MotivationCommands::Lineage { id } => commands::motivation::run_lineage(&workgraph_dir, &id, cli.json),
+        },
+        Commands::Assign { task, role, motivation, clear } => {
+            commands::assign::run(&workgraph_dir, &task, role.as_deref(), motivation.as_deref(), clear)
         }
         Commands::Match { task } => commands::match_cmd::run(&workgraph_dir, &task, cli.json),
         Commands::Heartbeat {
@@ -1376,6 +1661,17 @@ fn main() -> Result<()> {
             timeout,
             model,
         } => commands::spawn::run(&workgraph_dir, &task, &executor, timeout.as_deref(), model.as_deref(), cli.json),
+        Commands::Evaluate {
+            task,
+            evaluator_model,
+            dry_run,
+        } => commands::evaluate::run(&workgraph_dir, &task, evaluator_model.as_deref(), dry_run, cli.json),
+        Commands::Evolve {
+            dry_run,
+            strategy,
+            budget,
+            model,
+        } => commands::evolve::run(&workgraph_dir, dry_run, strategy.as_deref(), budget, model.as_deref(), cli.json),
         Commands::Config {
             show,
             init,
@@ -1392,6 +1688,14 @@ fn main() -> Result<()> {
             password,
             access_token,
             room,
+            auto_evaluate,
+            auto_assign,
+            exploration_factor,
+            min_evals_for_retirement,
+            retirement_threshold,
+            evaluator_model,
+            evolver_role,
+            evolver_motivation,
         } => {
             // Handle Matrix configuration
             if matrix
@@ -1422,7 +1726,11 @@ fn main() -> Result<()> {
                 commands::config_cmd::init(&workgraph_dir)
             } else if show || (executor.is_none() && model.is_none() && set_interval.is_none()
                 && max_agents.is_none() && coordinator_interval.is_none() && poll_interval.is_none()
-                && coordinator_executor.is_none()) {
+                && coordinator_executor.is_none()
+                && auto_evaluate.is_none() && auto_assign.is_none()
+                && exploration_factor.is_none() && min_evals_for_retirement.is_none()
+                && retirement_threshold.is_none() && evaluator_model.is_none()
+                && evolver_role.is_none() && evolver_motivation.is_none()) {
                 commands::config_cmd::show(&workgraph_dir, cli.json)
             } else {
                 commands::config_cmd::update(
@@ -1434,6 +1742,14 @@ fn main() -> Result<()> {
                     coordinator_interval,
                     poll_interval,
                     coordinator_executor.as_deref(),
+                    auto_evaluate,
+                    auto_assign,
+                    exploration_factor,
+                    min_evals_for_retirement,
+                    retirement_threshold,
+                    evaluator_model.as_deref(),
+                    evolver_role.as_deref(),
+                    evolver_motivation.as_deref(),
                 )
             }
         }
