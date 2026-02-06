@@ -479,10 +479,9 @@ fn render_dot(dot_content: &str, output_path: &str) -> Result<()> {
 /// using Unicode box-drawing characters, designed to fit in a terminal.
 ///
 /// Layout strategy:
-/// - Each edge is rendered as a line: source ──→ target
-/// - Multiple sources merging into one target use merge brackets (┐├└)
+/// - Groups edges by target and renders merge brackets (┐├┘) for multi-source merges
+/// - After each target, continues the chain horizontally: source ──→ target ──→ next ──→ ...
 /// - Independent tasks are labeled (independent)
-/// - Sources are left-padded to align merge brackets at a common column
 /// - Color coding by status via ANSI escape codes
 fn generate_ascii(
     _graph: &WorkGraph,
@@ -509,6 +508,13 @@ fn generate_ascii(
                     .push(blocker.as_str());
             }
         }
+    }
+    // Sort adjacency lists for deterministic output
+    for v in forward.values_mut() {
+        v.sort();
+    }
+    for v in reverse.values_mut() {
+        v.sort();
     }
 
     // Task lookup
@@ -595,6 +601,41 @@ fn generate_ascii(
         }
     }
 
+    // Build a chain continuation from a node: greedily follow the
+    // single-child path as long as the child has exactly one parent.
+    // Returns a string like " ──→ child ──→ grandchild"
+    let build_chain_suffix = |start: &str, rendered: &HashSet<&str>| -> (String, String) {
+        let mut suffix_colored = String::new();
+        let mut suffix_plain = String::new();
+        let mut current = start;
+        loop {
+            let children = forward.get(current);
+            if children.is_none() {
+                break;
+            }
+            let children = children.unwrap();
+            // Find a child that:
+            // 1. Has exactly one parent (so the chain is clean, no merge)
+            // 2. Hasn't been rendered yet
+            let single_child = children.iter().find(|&&c| {
+                !rendered.contains(c)
+                    && reverse
+                        .get(c)
+                        .map(|p| p.len() == 1)
+                        .unwrap_or(true)
+            });
+            match single_child {
+                Some(&child) => {
+                    suffix_colored.push_str(&format!(" ──→ {}", colored_id(child)));
+                    suffix_plain.push_str(&format!(" ──→ {}", child));
+                    current = child;
+                }
+                None => break,
+            }
+        }
+        (suffix_colored, suffix_plain)
+    };
+
     // Sort bundles by target depth then target name
     let mut bundles: Vec<(&str, Vec<&str>)> = target_sources
         .iter()
@@ -608,25 +649,62 @@ fn generate_ascii(
     });
 
     let mut lines: Vec<String> = Vec::new();
+    let mut rendered: HashSet<&str> = HashSet::new();
 
-    // Track which source IDs have been rendered on a *previous line* for the
-    // same target group. Within a merge group, if a source was already shown
-    // on an earlier line of this same group, blank it. Between groups, always
-    // re-show the source name.
     for (target, sources) in &bundles {
+        // Skip if this target was already rendered as part of a chain continuation
+        if rendered.contains(target) {
+            continue;
+        }
+
+        // Build chain continuation from the target
+        rendered.insert(target);
+        let (chain_suffix_colored, chain_suffix_plain) = build_chain_suffix(target, &rendered);
+        // Mark chain nodes as rendered
+        {
+            let mut current = *target;
+            loop {
+                let children = forward.get(current);
+                if children.is_none() {
+                    break;
+                }
+                let children = children.unwrap();
+                let single_child = children.iter().find(|&&c| {
+                    !rendered.contains(c)
+                        && reverse
+                            .get(c)
+                            .map(|p| p.len() == 1)
+                            .unwrap_or(true)
+                });
+                match single_child {
+                    Some(&child) => {
+                        rendered.insert(child);
+                        current = child;
+                    }
+                    None => break,
+                }
+            }
+        }
+
+        // Mark sources as rendered (they appear as labels in this bundle)
+        for source in sources {
+            rendered.insert(source);
+        }
+
         if sources.len() == 1 {
-            // Simple edge: source ──→ target
+            // Simple edge: source ──→ target ──→ chain...
             let source = sources[0];
             lines.push(format!(
-                "{} ──→ {}",
+                "{} ──→ {}{}",
                 colored_id(source),
-                colored_id(target)
+                colored_id(target),
+                chain_suffix_colored,
             ));
         } else {
             // Merge bracket: multiple sources converge on one target
             //
             // source-a ───┐
-            // source-b ───┼──→ target
+            // source-b ───┼──→ target ──→ chain...
             // source-c ───┘
             //
             // All source names are right-padded to the same width so
@@ -657,7 +735,7 @@ fn generate_ascii(
                 };
 
                 let suffix = if i == mid {
-                    format!("──→ {}", colored_id(target))
+                    format!("──→ {}{}", colored_id(target), chain_suffix_colored)
                 } else {
                     String::new()
                 };
