@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::path::Path;
+use workgraph::agency::capture_task_output;
 use workgraph::graph::Status;
 use workgraph::parser::{load_graph, save_graph};
 
@@ -54,6 +55,20 @@ pub fn run(dir: &Path, id: &str, reason: Option<&str>) -> Result<()> {
             println!("  Warning: Max retries ({}) reached. Consider abandoning or increasing limit.", max);
         } else {
             println!("  Retries remaining: {}", max - retry_count);
+        }
+    }
+
+    // Capture task output (git diff, artifacts, log) for evaluation.
+    // Failed tasks are also evaluated when auto_evaluate is enabled — there is
+    // useful signal in what kinds of tasks cause which agents to fail.
+    if let Some(task) = graph.get_task(id) {
+        match capture_task_output(dir, task) {
+            Ok(output_dir) => {
+                eprintln!("Output captured to {}", output_dir.display());
+            }
+            Err(e) => {
+                eprintln!("Warning: output capture failed: {}", e);
+            }
         }
     }
 

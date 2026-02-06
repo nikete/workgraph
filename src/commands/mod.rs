@@ -45,14 +45,21 @@ pub mod next;
 pub mod trajectory;
 pub mod exec;
 pub mod agent;
+pub mod agent_crud;
 pub mod config_cmd;
 pub mod spawn;
+pub mod evaluate;
+pub mod agency_stats;
 pub mod dead_agents;
 pub mod agents;
 pub mod kill;
 pub mod service;
 pub mod quickstart;
 pub mod status;
+pub mod role;
+pub mod motivation;
+pub mod assign;
+pub mod evolve;
 #[cfg(any(feature = "matrix", feature = "matrix-lite"))]
 pub mod notify;
 #[cfg(any(feature = "matrix", feature = "matrix-lite"))]

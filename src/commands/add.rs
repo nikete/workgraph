@@ -77,6 +77,7 @@ pub fn run(
         failure_reason: None,
         model: model.map(String::from),
         verify: verify.map(String::from),
+        agent: None,
     };
 
     // Append to file

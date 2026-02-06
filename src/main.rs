@@ -428,20 +428,15 @@ enum Commands {
         command: MotivationCommands,
     },
 
-    /// Assign an agent identity (role + motivation) to a task
+    /// Assign an agent to a task
     Assign {
-        /// Task ID to assign identity to
+        /// Task ID to assign agent to
         task: String,
 
-        /// Role ID to assign
-        #[arg(long)]
-        role: Option<String>,
+        /// Agent hash (or prefix) to assign
+        agent_hash: Option<String>,
 
-        /// Motivation ID to assign
-        #[arg(long)]
-        motivation: Option<String>,
-
-        /// Clear the identity assignment from the task
+        /// Clear the agent assignment from the task
         #[arg(long)]
         clear: bool,
     },
@@ -533,27 +528,10 @@ enum Commands {
         clear: bool,
     },
 
-    /// Run autonomous agent loop (wake/check/work/sleep cycle)
+    /// Manage agents (role+motivation pairings) and run agent loops
     Agent {
-        /// Actor ID for this agent
-        #[arg(long)]
-        actor: String,
-
-        /// Run only one iteration then exit
-        #[arg(long)]
-        once: bool,
-
-        /// Seconds to sleep between iterations (default from config, fallback: 10)
-        #[arg(long)]
-        interval: Option<u64>,
-
-        /// Maximum number of tasks to complete before stopping
-        #[arg(long)]
-        max_tasks: Option<u32>,
-
-        /// Reset agent state (discard saved statistics and task history)
-        #[arg(long)]
-        reset_state: bool,
+        #[command(subcommand)]
+        command: AgentCommands,
     },
 
     /// Spawn an agent to work on a specific task
@@ -678,29 +656,25 @@ enum Commands {
         #[arg(long)]
         auto_assign: Option<bool>,
 
-        /// Set UCB exploration parameter C (default 1.4)
-        #[arg(long)]
-        exploration_factor: Option<f64>,
-
-        /// Set minimum evaluations before retirement (default 10)
-        #[arg(long)]
-        min_evals_for_retirement: Option<u32>,
-
-        /// Set average score threshold for retirement (default 0.3)
-        #[arg(long)]
-        retirement_threshold: Option<f64>,
-
         /// Set model for evaluator agents
         #[arg(long)]
         evaluator_model: Option<String>,
 
-        /// Set evolver agent role ID (must be paired with --evolver-motivation)
+        /// Set assigner agent (content-hash)
         #[arg(long)]
-        evolver_role: Option<String>,
+        assigner_agent: Option<String>,
 
-        /// Set evolver agent motivation ID (must be paired with --evolver-role)
+        /// Set evaluator agent (content-hash)
         #[arg(long)]
-        evolver_motivation: Option<String>,
+        evaluator_agent: Option<String>,
+
+        /// Set evolver agent (content-hash)
+        #[arg(long)]
+        evolver_agent: Option<String>,
+
+        /// Set retention heuristics (prose policy for evolver)
+        #[arg(long)]
+        retention_heuristics: Option<String>,
     },
 
     /// Detect and clean up dead agents
@@ -1004,6 +978,73 @@ enum MotivationCommands {
     Lineage {
         /// Motivation ID
         id: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentCommands {
+    /// Create a new agent (role + motivation pairing)
+    Create {
+        /// Agent name
+        name: String,
+
+        /// Role ID (or prefix)
+        #[arg(long)]
+        role: String,
+
+        /// Motivation ID (or prefix)
+        #[arg(long)]
+        motivation: String,
+    },
+
+    /// List all agents
+    List,
+
+    /// Show full agent details including resolved role/motivation
+    Show {
+        /// Agent ID (or prefix)
+        id: String,
+    },
+
+    /// Remove an agent
+    Rm {
+        /// Agent ID (or prefix)
+        id: String,
+    },
+
+    /// Show ancestry (lineage of constituent role and motivation)
+    Lineage {
+        /// Agent ID (or prefix)
+        id: String,
+    },
+
+    /// Show evaluation history for an agent
+    Performance {
+        /// Agent ID (or prefix)
+        id: String,
+    },
+
+    /// Run autonomous agent loop (wake/check/work/sleep cycle)
+    Run {
+        /// Actor ID for this agent
+        #[arg(long)]
+        actor: String,
+
+        /// Run only one iteration then exit
+        #[arg(long)]
+        once: bool,
+
+        /// Seconds to sleep between iterations (default from config, fallback: 10)
+        #[arg(long)]
+        interval: Option<u64>,
+
+        /// Maximum number of tasks to complete before stopping
+        #[arg(long)]
+        max_tasks: Option<u32>,
+
+        /// Reset agent state (discard saved statistics and task history)
+        #[arg(long)]
+        reset_state: bool,
     },
 }
 
@@ -1586,8 +1627,8 @@ fn main() -> Result<()> {
             MotivationCommands::Rm { id } => commands::motivation::run_rm(&workgraph_dir, &id),
             MotivationCommands::Lineage { id } => commands::motivation::run_lineage(&workgraph_dir, &id, cli.json),
         },
-        Commands::Assign { task, role, motivation, clear } => {
-            commands::assign::run(&workgraph_dir, &task, role.as_deref(), motivation.as_deref(), clear)
+        Commands::Assign { task, agent_hash, clear } => {
+            commands::assign::run(&workgraph_dir, &task, agent_hash.as_deref(), clear)
         }
         Commands::Match { task } => commands::match_cmd::run(&workgraph_dir, &task, cli.json),
         Commands::Heartbeat {
@@ -1648,13 +1689,23 @@ fn main() -> Result<()> {
                 commands::exec::run(&workgraph_dir, &task, actor.as_deref(), dry_run)
             }
         }
-        Commands::Agent {
-            actor,
-            once,
-            interval,
-            max_tasks,
-            reset_state,
-        } => commands::agent::run(&workgraph_dir, &actor, once, interval, max_tasks, reset_state, cli.json),
+        Commands::Agent { command } => match command {
+            AgentCommands::Create { name, role, motivation } => {
+                commands::agent_crud::run_create(&workgraph_dir, &name, &role, &motivation)
+            }
+            AgentCommands::List => commands::agent_crud::run_list(&workgraph_dir, cli.json),
+            AgentCommands::Show { id } => commands::agent_crud::run_show(&workgraph_dir, &id, cli.json),
+            AgentCommands::Rm { id } => commands::agent_crud::run_rm(&workgraph_dir, &id),
+            AgentCommands::Lineage { id } => commands::agent_crud::run_lineage(&workgraph_dir, &id, cli.json),
+            AgentCommands::Performance { id } => commands::agent_crud::run_performance(&workgraph_dir, &id, cli.json),
+            AgentCommands::Run {
+                actor,
+                once,
+                interval,
+                max_tasks,
+                reset_state,
+            } => commands::agent::run(&workgraph_dir, &actor, once, interval, max_tasks, reset_state, cli.json),
+        },
         Commands::Spawn {
             task,
             executor,
@@ -1690,12 +1741,11 @@ fn main() -> Result<()> {
             room,
             auto_evaluate,
             auto_assign,
-            exploration_factor,
-            min_evals_for_retirement,
-            retirement_threshold,
             evaluator_model,
-            evolver_role,
-            evolver_motivation,
+            assigner_agent,
+            evaluator_agent,
+            evolver_agent,
+            retention_heuristics,
         } => {
             // Handle Matrix configuration
             if matrix
@@ -1728,9 +1778,9 @@ fn main() -> Result<()> {
                 && max_agents.is_none() && coordinator_interval.is_none() && poll_interval.is_none()
                 && coordinator_executor.is_none()
                 && auto_evaluate.is_none() && auto_assign.is_none()
-                && exploration_factor.is_none() && min_evals_for_retirement.is_none()
-                && retirement_threshold.is_none() && evaluator_model.is_none()
-                && evolver_role.is_none() && evolver_motivation.is_none()) {
+                && evaluator_model.is_none()
+                && assigner_agent.is_none() && evaluator_agent.is_none()
+                && evolver_agent.is_none() && retention_heuristics.is_none()) {
                 commands::config_cmd::show(&workgraph_dir, cli.json)
             } else {
                 commands::config_cmd::update(
@@ -1744,12 +1794,11 @@ fn main() -> Result<()> {
                     coordinator_executor.as_deref(),
                     auto_evaluate,
                     auto_assign,
-                    exploration_factor,
-                    min_evals_for_retirement,
-                    retirement_threshold,
                     evaluator_model.as_deref(),
-                    evolver_role.as_deref(),
-                    evolver_motivation.as_deref(),
+                    assigner_agent.as_deref(),
+                    evaluator_agent.as_deref(),
+                    evolver_agent.as_deref(),
+                    retention_heuristics.as_deref(),
                 )
             }
         }

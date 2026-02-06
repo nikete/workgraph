@@ -30,8 +30,9 @@ use std::os::unix::net::{UnixListener, UnixStream};
 
 use chrono::Utc;
 
+use workgraph::agency;
 use workgraph::config::Config;
-use workgraph::graph::{LogEntry, Status};
+use workgraph::graph::{LogEntry, Node, Status, Task};
 use workgraph::parser::{load_graph, save_graph};
 use workgraph::query::ready_tasks;
 use workgraph::service::registry::{AgentEntry, AgentRegistry, AgentStatus};
@@ -324,7 +325,6 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
     // Get ready tasks
     let graph = load_graph(&graph_path).context("Failed to load graph")?;
     let ready = ready_tasks(&graph);
-    let tasks_ready = ready.len();
     let slots_available = max_agents.saturating_sub(alive_count);
 
     if ready.is_empty() {
@@ -337,6 +337,243 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
         }
         return Ok(TickResult { agents_alive: alive_count, tasks_ready: 0, agents_spawned: 0 });
     }
+
+    // Auto-assign: build assignment subgraph for unassigned ready tasks.
+    //
+    // Per the agency design (§4, §10), when auto_assign is enabled and a ready
+    // task has no agent field, the coordinator creates a blocking assignment task
+    // `assign-{task-id}` BEFORE spawning any agents.  The assigner agent is then
+    // spawned on the assignment task, inspects the agency via wg CLI, and calls
+    // `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
+    if config.agency.auto_assign {
+        let mut mutable_graph = load_graph(&graph_path)
+            .context("Failed to reload graph for auto-assign subgraph")?;
+        let mut graph_modified = false;
+
+        for ready_task in &ready {
+            // Skip tasks that already have an agent or are already claimed
+            if ready_task.agent.is_some() || ready_task.assigned.is_some() {
+                continue;
+            }
+
+            let assign_task_id = format!("assign-{}", ready_task.id);
+
+            // Skip if assignment task already exists (idempotent)
+            if mutable_graph.get_task(&assign_task_id).is_some() {
+                continue;
+            }
+
+            // Build description for the assigner with the original task's context
+            let mut desc = format!(
+                "Assign an agent to task '{}'.\n\n## Original Task\n**Title:** {}\n",
+                ready_task.id, ready_task.title,
+            );
+            if let Some(ref d) = ready_task.description {
+                desc.push_str(&format!("**Description:** {}\n", d));
+            }
+            if !ready_task.skills.is_empty() {
+                desc.push_str(&format!("**Skills:** {}\n", ready_task.skills.join(", ")));
+            }
+            desc.push_str(&format!(
+                "\n## Instructions\n\
+                 Inspect the agency with `wg agent list`, `wg role list`, etc.\n\
+                 Choose the best agent for this task, then run:\n\
+                 ```\n\
+                 wg assign {} <agent-hash>\n\
+                 wg done {}\n\
+                 ```",
+                ready_task.id, assign_task_id,
+            ));
+
+            // Create the assignment task (blocks the original)
+            let assign_task = Task {
+                id: assign_task_id.clone(),
+                title: format!("Assign agent for: {}", ready_task.title),
+                description: Some(desc),
+                status: Status::Open,
+                assigned: None,
+                estimate: None,
+                blocks: vec![ready_task.id.clone()],
+                blocked_by: vec![],
+                requires: vec![],
+                tags: vec!["assignment".to_string(), "agency".to_string()],
+                skills: vec![],
+                inputs: vec![],
+                deliverables: vec![],
+                artifacts: vec![],
+                exec: None,
+                not_before: None,
+                created_at: Some(Utc::now().to_rfc3339()),
+                started_at: None,
+                completed_at: None,
+                log: vec![],
+                retry_count: 0,
+                max_retries: None,
+                failure_reason: None,
+                model: None,
+                verify: None,
+                agent: None,
+            };
+
+            mutable_graph.add_node(Node::Task(assign_task));
+
+            // Add the assignment task as a blocker on the original task
+            if let Some(t) = mutable_graph.get_task_mut(&ready_task.id) {
+                if !t.blocked_by.contains(&assign_task_id) {
+                    t.blocked_by.push(assign_task_id.clone());
+                }
+            }
+
+            eprintln!(
+                "[coordinator] Created assignment task '{}' blocking '{}'",
+                assign_task_id, ready_task.id,
+            );
+            graph_modified = true;
+        }
+
+        if graph_modified {
+            if let Err(e) = save_graph(&mutable_graph, &graph_path) {
+                eprintln!("[coordinator] Failed to save assignment subgraph: {}", e);
+            }
+        }
+    }
+
+    // Auto-evaluate: create evaluation tasks for ready tasks.
+    //
+    // Per the agency design (§4.3), when auto_evaluate is enabled the coordinator
+    // creates an evaluation task `evaluate-{task-id}` that is blocked by the
+    // original task.  When the original task completes (done, submitted, or
+    // failed), the evaluation task becomes ready and the coordinator spawns an
+    // evaluator agent on it.
+    //
+    // Tasks tagged "evaluation", "assignment", or "evolution" are NOT
+    // auto-evaluated to prevent infinite regress.  Abandoned tasks are also
+    // excluded.
+    if config.agency.auto_evaluate {
+        let mut mutable_graph = load_graph(&graph_path)
+            .context("Failed to reload graph for auto-evaluate subgraph")?;
+        let mut graph_modified = false;
+
+        // Collect all tasks (not just ready ones) that might need eval tasks.
+        // We iterate all non-terminal tasks so eval tasks are created early.
+        let tasks_needing_eval: Vec<_> = mutable_graph
+            .tasks()
+            .filter(|t| {
+                // Skip tasks that already have an evaluation task
+                let eval_id = format!("evaluate-{}", t.id);
+                if mutable_graph.get_task(&eval_id).is_some() {
+                    return false;
+                }
+                // Skip tasks tagged with evaluation/assignment/evolution
+                let dominated_tags = ["evaluation", "assignment", "evolution"];
+                if t.tags.iter().any(|tag| dominated_tags.contains(&tag.as_str())) {
+                    return false;
+                }
+                // Only create for tasks that are active (Open, InProgress, Blocked)
+                // or already completed (Done, PendingReview, Failed) without an eval task
+                !matches!(t.status, Status::Abandoned)
+            })
+            .map(|t| (t.id.clone(), t.title.clone()))
+            .collect();
+
+        for (task_id, task_title) in &tasks_needing_eval {
+            let eval_task_id = format!("evaluate-{}", task_id);
+
+            // Double-check (the filter above already checks but graph may have changed)
+            if mutable_graph.get_task(&eval_task_id).is_some() {
+                continue;
+            }
+
+            let desc = format!(
+                "Evaluate the completed task '{}'.\n\n\
+                 Run `wg evaluate {}` to produce a structured evaluation.\n\
+                 This reads the task output from `.workgraph/output/{}/` and \
+                 the task definition via `wg show {}`.",
+                task_id, task_id, task_id, task_id,
+            );
+
+            let eval_task = Task {
+                id: eval_task_id.clone(),
+                title: format!("Evaluate: {}", task_title),
+                description: Some(desc),
+                status: Status::Open,
+                assigned: None,
+                estimate: None,
+                blocks: vec![],
+                blocked_by: vec![task_id.clone()],
+                requires: vec![],
+                tags: vec!["evaluation".to_string(), "agency".to_string()],
+                skills: vec![],
+                inputs: vec![],
+                deliverables: vec![],
+                artifacts: vec![],
+                exec: Some(format!("wg evaluate {}", task_id)),
+                not_before: None,
+                created_at: Some(Utc::now().to_rfc3339()),
+                started_at: None,
+                completed_at: None,
+                log: vec![],
+                retry_count: 0,
+                max_retries: None,
+                failure_reason: None,
+                model: config.agency.evaluator_model.clone(),
+                verify: None,
+                agent: None,
+            };
+
+            mutable_graph.add_node(Node::Task(eval_task));
+
+            eprintln!(
+                "[coordinator] Created evaluation task '{}' blocked by '{}'",
+                eval_task_id, task_id,
+            );
+            graph_modified = true;
+        }
+
+        // Unblock evaluation tasks whose source task has Failed.
+        // `ready_tasks()` only unblocks when the blocker is Done. For Failed
+        // tasks we still want evaluation to proceed (§4.3: "Failed tasks also
+        // get evaluated"), so we remove the blocker explicitly.
+        let eval_fixups: Vec<(String, String)> = mutable_graph
+            .tasks()
+            .filter(|t| t.id.starts_with("evaluate-") && t.status == Status::Open)
+            .filter_map(|t| {
+                // The eval task blocks on a single task: the original
+                if t.blocked_by.len() == 1 {
+                    let source_id = &t.blocked_by[0];
+                    if let Some(source) = mutable_graph.get_task(source_id) {
+                        if source.status == Status::Failed {
+                            return Some((t.id.clone(), source_id.clone()));
+                        }
+                    }
+                }
+                None
+            })
+            .collect();
+
+        for (eval_id, source_id) in &eval_fixups {
+            if let Some(t) = mutable_graph.get_task_mut(eval_id) {
+                t.blocked_by.retain(|b| b != source_id);
+                graph_modified = true;
+                eprintln!(
+                    "[coordinator] Unblocked evaluation task '{}' (source '{}' failed)",
+                    eval_id, source_id,
+                );
+            }
+        }
+
+        if graph_modified {
+            if let Err(e) = save_graph(&mutable_graph, &graph_path) {
+                eprintln!("[coordinator] Failed to save auto-evaluate subgraph: {}", e);
+            }
+        }
+    }
+
+    // Re-load graph after potential subgraph construction so we spawn on the
+    // current set of ready tasks (which now includes assign-* tasks and excludes
+    // original tasks that became blocked).
+    let graph = load_graph(&graph_path).context("Failed to reload graph for spawning")?;
+    let ready = ready_tasks(&graph);
 
     // Spawn agents on ready tasks
     let mut spawned = 0;
@@ -359,7 +596,7 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
         }
     }
 
-    Ok(TickResult { agents_alive: alive_count + spawned, tasks_ready, agents_spawned: spawned })
+    Ok(TickResult { agents_alive: alive_count + spawned, tasks_ready: ready.len(), agents_spawned: spawned })
 }
 
 /// Reason an agent was detected as dead
@@ -448,6 +685,30 @@ fn cleanup_dead_agents(dir: &Path, graph_path: &Path, heartbeat_timeout_secs: i6
 
     if tasks_modified {
         save_graph(&graph, graph_path).context("Failed to save graph")?;
+    }
+
+    // Capture output for completed/failed tasks whose agents just died.
+    // done.rs and submit.rs already capture output, but fail.rs does not,
+    // and the agent may have completed without triggering capture (e.g. wrapper
+    // script marked it done but output capture wasn't invoked). This is a
+    // best-effort safety net.
+    let graph = load_graph(graph_path).context("Failed to reload graph for output capture")?;
+    for (_agent_id, task_id, _pid, _reason) in &dead {
+        if let Some(task) = graph.get_task(task_id) {
+            if matches!(task.status, Status::Done | Status::PendingReview | Status::Failed) {
+                let output_dir = dir.join("output").join(task_id);
+                if !output_dir.exists() {
+                    if let Err(e) = agency::capture_task_output(dir, task) {
+                        eprintln!(
+                            "[coordinator] Warning: output capture failed for '{}': {}",
+                            task_id, e
+                        );
+                    } else {
+                        eprintln!("[coordinator] Captured output for completed task '{}'", task_id);
+                    }
+                }
+            }
+        }
     }
 
     Ok(dead.into_iter().map(|(id, _, _, _)| id).collect())

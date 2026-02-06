@@ -156,12 +156,7 @@ pub fn run(
     let task_context = build_task_context(&graph, task);
 
     // Create template variables
-    let vars = TemplateVars {
-        task_id: task.id.clone(),
-        task_title: task.title.clone(),
-        task_description: task.description.clone().unwrap_or_default(),
-        task_context: task_context.clone(),
-    };
+    let vars = TemplateVars::from_task(task, Some(&task_context), Some(dir));
 
     // Get task exec command for shell executor
     let task_exec = task.exec.clone();
@@ -445,12 +440,7 @@ pub fn spawn_agent(
     let task_context = build_task_context(&graph, task);
 
     // Create template variables
-    let vars = TemplateVars {
-        task_id: task.id.clone(),
-        task_title: task.title.clone(),
-        task_description: task.description.clone().unwrap_or_default(),
-        task_context: task_context.clone(),
-    };
+    let vars = TemplateVars::from_task(task, Some(&task_context), Some(dir));
 
     // Get task exec command for shell executor
     let task_exec = task.exec.clone();
@@ -699,6 +689,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
         }
     }
 

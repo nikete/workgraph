@@ -409,6 +409,153 @@ wg tui
 wg service stop
 ```
 
+## Agency: roles, motivations, and evolution
+
+The agency system gives agents distinct identities (role + motivation) that shape how they approach tasks. Evaluations measure output quality, and evolution improves roles and motivations over time based on performance data.
+
+### Concepts
+
+- **Role** — defines *what* an agent is good at: skills, desired outcome, description
+- **Motivation** — defines *how* an agent approaches work: acceptable/unacceptable tradeoffs
+- **Identity** — a (role, motivation) pair assigned to a task
+- **Evaluation** — scores a completed task's output against its identity's criteria
+- **Evolution** — creates improved roles/motivations based on evaluation data
+
+### Creating roles and motivations
+
+```bash
+# Create a role with skills and desired outcome
+wg role add "Code Reviewer" \
+  --outcome "Catch bugs and improve code quality" \
+  --skill rust --skill testing \
+  --description "Reviews PRs for correctness and style"
+
+# Create a motivation with tradeoff boundaries
+wg motivation add "Quality First" \
+  --accept "Slower delivery" \
+  --reject "Skipping tests" \
+  --description "Prioritise correctness over speed"
+```
+
+### Managing roles and motivations
+
+```bash
+wg role list [--json]           # list all roles
+wg role show <id> [--json]      # full role details
+wg role edit <id>               # open in $EDITOR
+wg role lineage <id> [--json]   # evolutionary ancestry
+wg role rm <id>                 # delete a role
+
+wg motivation list [--json]
+wg motivation show <id> [--json]
+wg motivation edit <id>
+wg motivation lineage <id> [--json]
+wg motivation rm <id>
+```
+
+### Assigning identity to tasks
+
+```bash
+# Manual: specify both role and motivation
+wg assign <task-id> --role <role-id> --motivation <motivation-id>
+
+# Manual: specify role, auto-select best motivation
+wg assign <task-id> --role <role-id>
+
+# Automatic: match role and motivation from task skills/tags
+wg assign <task-id>
+
+# Clear identity from a task
+wg assign <task-id> --clear
+```
+
+### Evaluating completed tasks
+
+```bash
+# Evaluate a done/pending-review task (spawns a Claude evaluator)
+wg evaluate <task-id>
+
+# Preview what would be evaluated without running
+wg evaluate <task-id> --dry-run
+
+# Use a specific model for evaluation
+wg evaluate <task-id> --model haiku
+
+# JSON output
+wg evaluate <task-id> --json
+```
+
+Evaluations produce a score (0.0-1.0) with optional dimension breakdowns (correctness, completeness, efficiency, style_adherence) and are recorded in `.workgraph/agency/evaluations/`.
+
+### Evolving roles and motivations
+
+```bash
+# Run a full evolution cycle (all strategies)
+wg evolve
+
+# Dry-run to preview what would happen
+wg evolve --dry-run
+
+# Use a specific strategy
+wg evolve --strategy mutation
+wg evolve --strategy crossover
+wg evolve --strategy gap-analysis
+wg evolve --strategy retirement
+wg evolve --strategy motivation-tuning
+
+# Limit operations and choose model
+wg evolve --budget 3 --model sonnet
+
+# JSON output
+wg evolve --json
+```
+
+Evolution strategies:
+- **mutation** — tweak an existing role/motivation to improve weak dimensions
+- **crossover** — combine two roles into a new hybrid
+- **gap-analysis** — create new roles/motivations for uncovered task types
+- **retirement** — archive poor-performing roles/motivations
+- **motivation-tuning** — adjust tradeoff boundaries based on evaluation data
+- **all** — apply whichever strategies the evolver deems most impactful (default)
+
+### Agency stats
+
+```bash
+# Performance overview: leaderboards, synergy matrix, trends
+wg agency stats
+
+# With minimum evaluation threshold for under-explored detection
+wg agency stats --min-evals 5
+
+# JSON output
+wg agency stats --json
+```
+
+### Example workflow: full agency cycle
+
+```bash
+# 1. Set up roles and motivations
+wg role add "Implementer" --outcome "Working, tested code" --skill rust
+wg motivation add "Quality First" --accept "Slower delivery" --reject "Skipping tests"
+
+# 2. Assign identity to a task
+wg assign implement-feature --role implementer --motivation quality-first
+
+# 3. Agent works on the task and completes it
+wg claim implement-feature --actor claude
+# ... do the work ...
+wg done implement-feature
+
+# 4. Evaluate the output
+wg evaluate implement-feature
+
+# 5. Check agency performance
+wg agency stats
+
+# 6. Run evolution to improve roles/motivations
+wg evolve --strategy mutation --budget 2
+```
+
 ## All commands
 
 ```
@@ -456,6 +603,22 @@ wg service reload    # reload config
 wg service install   # generate systemd service
 wg dead-agents       # dead agent detection
 wg tui               # interactive dashboard
+wg role add <name>   # create a role
+wg role list         # list roles
+wg role show <id>    # role details
+wg role edit <id>    # edit role in $EDITOR
+wg role lineage <id> # role ancestry
+wg role rm <id>      # delete role
+wg motivation add    # create a motivation
+wg motivation list   # list motivations
+wg motivation show   # motivation details
+wg motivation edit   # edit motivation
+wg motivation lineage # motivation ancestry
+wg motivation rm     # delete motivation
+wg assign <id>       # assign identity to task
+wg evaluate <id>     # evaluate completed task
+wg evolve            # run evolution cycle
+wg agency stats      # agency performance stats
 ```
 
 All commands support `--json` for structured output.

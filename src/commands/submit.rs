@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::Path;
+use workgraph::agency::capture_task_output;
 use workgraph::graph::{LogEntry, Status};
 use workgraph::parser::{load_graph, save_graph};
 
@@ -49,6 +50,21 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>) -> Result<()> {
     println!("Submitted task '{}' for review", task_id);
     if let Some(ref verify) = graph.get_task(task_id).and_then(|t| t.verify.clone()) {
         println!("Verification criteria: {}", verify);
+    }
+
+    // Capture task output (git diff, artifacts, log) for evaluation.
+    // When auto_evaluate is enabled, the coordinator creates an evaluation task
+    // in the graph that becomes ready once this task completes; the captured
+    // output feeds that evaluator.
+    if let Some(task) = graph.get_task(task_id) {
+        match capture_task_output(dir, task) {
+            Ok(output_dir) => {
+                eprintln!("Output captured to {}", output_dir.display());
+            }
+            Err(e) => {
+                eprintln!("Warning: output capture failed: {}", e);
+            }
+        }
     }
 
     Ok(())

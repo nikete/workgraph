@@ -196,6 +196,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
         }
     }
 

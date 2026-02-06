@@ -11,6 +11,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
 
+use crate::agency;
 use crate::graph::Task;
 
 /// Template variables that can be used in executor configurations.
@@ -20,17 +21,68 @@ pub struct TemplateVars {
     pub task_title: String,
     pub task_description: String,
     pub task_context: String,
+    pub task_identity: String,
 }
 
 impl TemplateVars {
-    /// Create template variables from a task and optional context.
-    pub fn from_task(task: &Task, context: Option<&str>) -> Self {
+    /// Create template variables from a task, optional context, and optional workgraph directory.
+    ///
+    /// If the task has an agent set and `workgraph_dir` is provided, the Agent is loaded
+    /// by hash and its role and motivation are resolved from agency storage and rendered
+    /// into an identity prompt. If resolution fails or no agent is set, `task_identity`
+    /// is empty (backward compatible).
+    pub fn from_task(task: &Task, context: Option<&str>, workgraph_dir: Option<&Path>) -> Self {
+        let task_identity = Self::resolve_identity(task, workgraph_dir);
+
         Self {
             task_id: task.id.clone(),
             task_title: task.title.clone(),
             task_description: task.description.clone().unwrap_or_default(),
             task_context: context.unwrap_or_default().to_string(),
+            task_identity,
         }
+    }
+
+    /// Resolve the identity prompt for a task by looking up its Agent, then the
+    /// Agent's role and motivation.
+    fn resolve_identity(task: &Task, workgraph_dir: Option<&Path>) -> String {
+        let agent_hash = match &task.agent {
+            Some(h) => h,
+            None => return String::new(),
+        };
+
+        let wg_dir = match workgraph_dir {
+            Some(dir) => dir,
+            None => return String::new(),
+        };
+
+        let agency_dir = wg_dir.join("agency");
+        let agents_dir = agency_dir.join("agents");
+        let roles_dir = agency_dir.join("roles");
+        let motivations_dir = agency_dir.join("motivations");
+
+        // Look up the Agent entity by hash
+        let agent = match agency::find_agent_by_prefix(&agents_dir, agent_hash) {
+            Ok(a) => a,
+            Err(_) => return String::new(),
+        };
+
+        let role = match agency::find_role_by_prefix(&roles_dir, &agent.role_id) {
+            Ok(r) => r,
+            Err(_) => return String::new(),
+        };
+
+        let motivation =
+            match agency::find_motivation_by_prefix(&motivations_dir, &agent.motivation_id) {
+                Ok(m) => m,
+                Err(_) => return String::new(),
+            };
+
+        // Resolve skills from the role, using the project root (parent of .workgraph/)
+        let workgraph_root = wg_dir.parent().unwrap_or(wg_dir);
+        let resolved_skills = agency::resolve_all_skills(&role, workgraph_root);
+
+        agency::render_identity_prompt(&role, &motivation, &resolved_skills)
     }
 
     /// Apply template substitution to a string.
@@ -40,6 +92,7 @@ impl TemplateVars {
             .replace("{{task_title}}", &self.task_title)
             .replace("{{task_description}}", &self.task_description)
             .replace("{{task_context}}", &self.task_context)
+            .replace("{{task_identity}}", &self.task_identity)
     }
 }
 
@@ -344,6 +397,7 @@ impl Executor for DefaultExecutor {
 pub struct ExecutorRegistry {
     executors: HashMap<String, Box<dyn Executor>>,
     config_dir: PathBuf,
+    workgraph_dir: PathBuf,
 }
 
 impl ExecutorRegistry {
@@ -352,6 +406,7 @@ impl ExecutorRegistry {
         let mut registry = Self {
             executors: HashMap::new(),
             config_dir: workgraph_dir.join("executors"),
+            workgraph_dir: workgraph_dir.to_path_buf(),
         };
 
         // Register the default executor
@@ -404,6 +459,7 @@ impl ExecutorRegistry {
 
 You are an AI agent working on a task in a workgraph project.
 
+{{task_identity}}
 ## Your Task
 - **ID:** {{task_id}}
 - **Title:** {{task_title}}
@@ -500,7 +556,7 @@ Begin working on the task now."#.to_string(),
             .ok_or_else(|| anyhow!("No executor available"))?;
 
         let config = self.load_config(executor_name)?;
-        let vars = TemplateVars::from_task(task, context);
+        let vars = TemplateVars::from_task(task, context, Some(&self.workgraph_dir));
 
         executor.spawn(task, &config, &vars)
     }
@@ -560,13 +616,14 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
         }
     }
 
     #[test]
     fn test_template_vars_apply() {
         let task = make_test_task("task-123", "Implement feature");
-        let vars = TemplateVars::from_task(&task, Some("Context from deps"));
+        let vars = TemplateVars::from_task(&task, Some("Context from deps"), None);
 
         let template = "Working on {{task_id}}: {{task_title}}. Context: {{task_context}}";
         let result = vars.apply(template);
@@ -580,7 +637,7 @@ mod tests {
     #[test]
     fn test_template_vars_from_task() {
         let task = make_test_task("my-task", "My Title");
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         assert_eq!(vars.task_id, "my-task");
         assert_eq!(vars.task_title, "My Title");
@@ -634,7 +691,7 @@ template = "Work on {{task_id}}"
         };
 
         let task = make_test_task("t-1", "Test Task");
-        let vars = TemplateVars::from_task(&task, Some("dep context"));
+        let vars = TemplateVars::from_task(&task, Some("dep context"), None);
         let settings = config.apply_templates(&vars);
 
         assert_eq!(settings.command, "run-t-1");
@@ -693,7 +750,7 @@ template = "Work on {{task_id}}"
 
         let task = make_test_task("test-task", "Test");
         let config = registry.load_config("default").unwrap();
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         let executor = DefaultExecutor::new();
         let mut handle = executor.spawn(&task, &config, &vars).unwrap();
@@ -723,7 +780,7 @@ template = "Work on {{task_id}}"
             },
         };
 
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
         let executor = DefaultExecutor::new();
         let mut handle = executor.spawn(&task, &config, &vars).unwrap();
 
@@ -735,5 +792,106 @@ template = "Work on {{task_id}}"
 
         // Should no longer be running
         assert!(!handle.is_running());
+    }
+
+    #[test]
+    fn test_template_vars_no_identity_when_none() {
+        let task = make_test_task("task-1", "Test Task");
+        let vars = TemplateVars::from_task(&task, None, None);
+        assert_eq!(vars.task_identity, "");
+    }
+
+    #[test]
+    fn test_template_vars_no_identity_when_no_workgraph_dir() {
+        let mut task = make_test_task("task-1", "Test Task");
+        task.agent = Some("some-agent-hash".to_string());
+        // No workgraph_dir provided, so identity should be empty
+        let vars = TemplateVars::from_task(&task, None, None);
+        assert_eq!(vars.task_identity, "");
+    }
+
+    #[test]
+    fn test_template_vars_identity_resolved_from_agency() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        let roles_dir = wg_dir.join("agency").join("roles");
+        let motivations_dir = wg_dir.join("agency").join("motivations");
+        let agents_dir = wg_dir.join("agency").join("agents");
+        fs::create_dir_all(&roles_dir).unwrap();
+        fs::create_dir_all(&motivations_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        // Create a role using content-hash ID builder
+        let role = agency::build_role(
+            "Implementer",
+            "Implements features",
+            vec![],
+            "Working code",
+        );
+        let role_id = role.id.clone();
+        agency::save_role(&role, &roles_dir).unwrap();
+
+        // Create a motivation using content-hash ID builder
+        let motivation = agency::build_motivation(
+            "Quality First",
+            "Prioritize quality",
+            vec!["Spend more time".to_string()],
+            vec!["Skip tests".to_string()],
+        );
+        let motivation_id = motivation.id.clone();
+        agency::save_motivation(&motivation, &motivations_dir).unwrap();
+
+        // Create an Agent entity pairing the role and motivation
+        let agent_id = agency::content_hash_agent(&role_id, &motivation_id);
+        let agent = agency::Agent {
+            id: agent_id.clone(),
+            role_id: role_id.clone(),
+            motivation_id: motivation_id.clone(),
+            name: "Test Agent".to_string(),
+            performance: agency::PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: agency::Lineage::default(),
+        };
+        agency::save_agent(&agent, &agents_dir).unwrap();
+
+        // Create a task with agent reference
+        let mut task = make_test_task("task-1", "Test Task");
+        task.agent = Some(agent_id);
+
+        let vars = TemplateVars::from_task(&task, None, Some(&wg_dir));
+        assert!(!vars.task_identity.is_empty());
+        assert!(vars.task_identity.contains("Implementer"));
+        assert!(vars.task_identity.contains("Spend more time")); // acceptable tradeoff
+        assert!(vars.task_identity.contains("Skip tests")); // unacceptable tradeoff
+        assert!(vars.task_identity.contains("Agent Identity"));
+    }
+
+    #[test]
+    fn test_template_vars_identity_missing_agent_fallback() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        let agents_dir = wg_dir.join("agency").join("agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        let mut task = make_test_task("task-1", "Test Task");
+        task.agent = Some("nonexistent-agent-hash".to_string());
+
+        // Should gracefully fallback to empty string when agent can't be found
+        let vars = TemplateVars::from_task(&task, None, Some(&wg_dir));
+        assert_eq!(vars.task_identity, "");
+    }
+
+    #[test]
+    fn test_template_apply_with_identity() {
+        let mut task = make_test_task("task-1", "Test Task");
+        task.agent = None;
+        let vars = TemplateVars::from_task(&task, None, None);
+
+        let template = "Preamble\n{{task_identity}}\nTask: {{task_id}}";
+        let result = vars.apply(template);
+        assert_eq!(result, "Preamble\n\nTask: task-1");
     }
 }

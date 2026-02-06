@@ -1104,6 +1104,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
             retry_count: 0,
             max_retries: None,
             created_at: None,

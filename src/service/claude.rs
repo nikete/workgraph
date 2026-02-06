@@ -19,6 +19,7 @@ pub const DEFAULT_CLAUDE_PROMPT: &str = r#"You are agent-executor working on the
 
 1. {{task_id}} (CLAIMED - start here)
 
+{{task_identity}}
 ## Current Task: {{task_id}}
 
 {{task_title}}
@@ -337,7 +338,7 @@ pub fn spawn_claude_agent(
         .skip_permissions(true)
         .build();
 
-    let vars = TemplateVars::from_task(task, context);
+    let vars = TemplateVars::from_task(task, context, Some(workgraph_dir));
 
     executor.spawn(task, &config, &vars)
 }
@@ -375,6 +376,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
         }
     }
 
@@ -402,7 +404,7 @@ mod tests {
         let executor = ClaudeExecutor::new(temp_dir.path());
 
         let task = make_test_task("implement-feature", "Implement feature X");
-        let vars = TemplateVars::from_task(&task, Some("Context from deps"));
+        let vars = TemplateVars::from_task(&task, Some("Context from deps"), None);
 
         let config = ClaudeExecutorConfig::new().build();
         let prompt = executor.build_prompt(&task, &config, &vars);
@@ -419,7 +421,7 @@ mod tests {
         let executor = ClaudeExecutor::new(temp_dir.path());
 
         let task = make_test_task("my-task", "My Task");
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         let config = ClaudeExecutorConfig::new()
             .prompt_template("Custom prompt for {{task_id}}: {{task_title}}")
@@ -516,5 +518,15 @@ mod tests {
         assert!(DEFAULT_CLAUDE_PROMPT.contains("{{task_id}}"));
         assert!(DEFAULT_CLAUDE_PROMPT.contains("{{task_title}}"));
         assert!(DEFAULT_CLAUDE_PROMPT.contains("{{task_context}}"));
+        assert!(DEFAULT_CLAUDE_PROMPT.contains("{{task_identity}}"));
+    }
+
+    #[test]
+    fn test_default_claude_prompt_identity_before_task() {
+        // Verify {{task_identity}} appears between the preamble and task details
+        let identity_pos = DEFAULT_CLAUDE_PROMPT.find("{{task_identity}}").unwrap();
+        let task_details_pos = DEFAULT_CLAUDE_PROMPT.find("## Current Task").unwrap();
+        assert!(identity_pos < task_details_pos,
+            "{{task_identity}} should appear before task details section");
     }
 }

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
 /// A log entry for tracking progress/notes on a task
@@ -34,8 +34,12 @@ pub enum Status {
     PendingReview,
 }
 
-/// A task node
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// A task node.
+///
+/// Custom `Deserialize` handles migration from the old `identity` field
+/// (`{"role_id": "...", "motivation_id": "..."}`) to the new `agent` field
+/// (content-hash string).
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Task {
     pub id: String,
     pub title: String,
@@ -101,6 +105,123 @@ pub struct Task {
     /// Verification criteria - if set, task requires review before done
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<String>,
+    /// Agent assigned to this task (content-hash of an Agent in the agency)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<String>,
+}
+
+/// Legacy identity format: `{"role_id": "...", "motivation_id": "..."}`.
+/// Used for migrating old JSONL data that stored identity inline on tasks.
+#[derive(Deserialize)]
+struct LegacyIdentity {
+    role_id: String,
+    motivation_id: String,
+}
+
+/// Helper struct for deserializing Task with migration from old `identity` field.
+#[derive(Deserialize)]
+struct TaskHelper {
+    id: String,
+    title: String,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    status: Status,
+    #[serde(default)]
+    assigned: Option<String>,
+    #[serde(default)]
+    estimate: Option<Estimate>,
+    #[serde(default)]
+    blocks: Vec<String>,
+    #[serde(default)]
+    blocked_by: Vec<String>,
+    #[serde(default)]
+    requires: Vec<String>,
+    #[serde(default)]
+    tags: Vec<String>,
+    #[serde(default)]
+    skills: Vec<String>,
+    #[serde(default)]
+    inputs: Vec<String>,
+    #[serde(default)]
+    deliverables: Vec<String>,
+    #[serde(default)]
+    artifacts: Vec<String>,
+    #[serde(default)]
+    exec: Option<String>,
+    #[serde(default)]
+    not_before: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    started_at: Option<String>,
+    #[serde(default)]
+    completed_at: Option<String>,
+    #[serde(default)]
+    log: Vec<LogEntry>,
+    #[serde(default)]
+    retry_count: u32,
+    #[serde(default)]
+    max_retries: Option<u32>,
+    #[serde(default)]
+    failure_reason: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    verify: Option<String>,
+    #[serde(default)]
+    agent: Option<String>,
+    /// Old format: inline identity object. Migrated to `agent` hash on read.
+    #[serde(default)]
+    identity: Option<LegacyIdentity>,
+}
+
+impl<'de> Deserialize<'de> for Task {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let helper = TaskHelper::deserialize(deserializer)?;
+
+        // Migrate: if old `identity` field present and no `agent`, compute hash
+        let agent = match (helper.agent, helper.identity) {
+            (Some(a), _) => Some(a),
+            (None, Some(legacy)) => Some(crate::agency::content_hash_agent(
+                &legacy.role_id,
+                &legacy.motivation_id,
+            )),
+            (None, None) => None,
+        };
+
+        Ok(Task {
+            id: helper.id,
+            title: helper.title,
+            description: helper.description,
+            status: helper.status,
+            assigned: helper.assigned,
+            estimate: helper.estimate,
+            blocks: helper.blocks,
+            blocked_by: helper.blocked_by,
+            requires: helper.requires,
+            tags: helper.tags,
+            skills: helper.skills,
+            inputs: helper.inputs,
+            deliverables: helper.deliverables,
+            artifacts: helper.artifacts,
+            exec: helper.exec,
+            not_before: helper.not_before,
+            created_at: helper.created_at,
+            started_at: helper.started_at,
+            completed_at: helper.completed_at,
+            log: helper.log,
+            retry_count: helper.retry_count,
+            max_retries: helper.max_retries,
+            failure_reason: helper.failure_reason,
+            model: helper.model,
+            verify: helper.verify,
+            agent,
+        })
+    }
 }
 
 fn is_zero(val: &u32) -> bool {
@@ -372,6 +493,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
         }
     }
 
@@ -565,5 +687,55 @@ mod tests {
 
         // Verify deliverables not included when empty
         assert!(!json.contains("deliverables"));
+    }
+
+    #[test]
+    fn test_deserialize_with_agent_field() {
+        let json = r#"{"id":"t1","kind":"task","title":"Test","status":"open","agent":"abc123"}"#;
+        let node: Node = serde_json::from_str(json).unwrap();
+        match node {
+            Node::Task(t) => {
+                assert_eq!(t.agent, Some("abc123".to_string()));
+            }
+            _ => panic!("Expected Task"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_legacy_identity_migrates_to_agent() {
+        // Old format had identity: {role_id, motivation_id} inline on the task
+        let json = r#"{"id":"t1","kind":"task","title":"Test","status":"open","identity":{"role_id":"role-abc","motivation_id":"mot-xyz"}}"#;
+        let node: Node = serde_json::from_str(json).unwrap();
+        match node {
+            Node::Task(t) => {
+                // Should be migrated to agent hash
+                let expected = crate::agency::content_hash_agent("role-abc", "mot-xyz");
+                assert_eq!(t.agent, Some(expected));
+            }
+            _ => panic!("Expected Task"),
+        }
+    }
+
+    #[test]
+    fn test_deserialize_agent_field_takes_precedence_over_legacy_identity() {
+        // If both agent and identity are present, agent wins
+        let json = r#"{"id":"t1","kind":"task","title":"Test","status":"open","agent":"explicit-hash","identity":{"role_id":"role-abc","motivation_id":"mot-xyz"}}"#;
+        let node: Node = serde_json::from_str(json).unwrap();
+        match node {
+            Node::Task(t) => {
+                assert_eq!(t.agent, Some("explicit-hash".to_string()));
+            }
+            _ => panic!("Expected Task"),
+        }
+    }
+
+    #[test]
+    fn test_serialize_does_not_emit_identity_field() {
+        let mut task = make_task("t1", "Test task");
+        task.agent = Some("abc123".to_string());
+        let json = serde_json::to_string(&Node::Task(task)).unwrap();
+        // New format only has "agent", never "identity"
+        assert!(json.contains("\"agent\":\"abc123\""));
+        assert!(!json.contains("\"identity\""));
     }
 }

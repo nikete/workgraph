@@ -30,6 +30,25 @@ pub fn show(dir: &Path, json: bool) -> Result<()> {
         println!("  poll_interval = {}", config.coordinator.poll_interval);
         println!("  executor = \"{}\"", config.coordinator.executor);
         println!();
+        println!("[agency]");
+        println!("  auto_evaluate = {}", config.agency.auto_evaluate);
+        println!("  auto_assign = {}", config.agency.auto_assign);
+        if let Some(ref agent) = config.agency.assigner_agent {
+            println!("  assigner_agent = \"{}\"", agent);
+        }
+        if let Some(ref agent) = config.agency.evaluator_agent {
+            println!("  evaluator_agent = \"{}\"", agent);
+        }
+        if let Some(ref model) = config.agency.evaluator_model {
+            println!("  evaluator_model = \"{}\"", model);
+        }
+        if let Some(ref agent) = config.agency.evolver_agent {
+            println!("  evolver_agent = \"{}\"", agent);
+        }
+        if let Some(ref heuristics) = config.agency.retention_heuristics {
+            println!("  retention_heuristics = \"{}\"", heuristics);
+        }
+        println!();
         if config.project.name.is_some() || config.project.description.is_some() {
             println!("[project]");
             if let Some(ref name) = config.project.name {
@@ -64,6 +83,13 @@ pub fn update(
     coordinator_interval: Option<u64>,
     poll_interval: Option<u64>,
     coordinator_executor: Option<&str>,
+    auto_evaluate: Option<bool>,
+    auto_assign: Option<bool>,
+    evaluator_model: Option<&str>,
+    assigner_agent: Option<&str>,
+    evaluator_agent: Option<&str>,
+    evolver_agent: Option<&str>,
+    retention_heuristics: Option<&str>,
 ) -> Result<()> {
     let mut config = Config::load(dir)?;
     let mut changed = false;
@@ -109,6 +135,49 @@ pub fn update(
     if let Some(exec) = coordinator_executor {
         config.coordinator.executor = exec.to_string();
         println!("Set coordinator.executor = \"{}\"", exec);
+        changed = true;
+    }
+
+    // Agency settings
+    if let Some(v) = auto_evaluate {
+        config.agency.auto_evaluate = v;
+        println!("Set agency.auto_evaluate = {}", v);
+        changed = true;
+    }
+
+    if let Some(v) = auto_assign {
+        config.agency.auto_assign = v;
+        println!("Set agency.auto_assign = {}", v);
+        changed = true;
+    }
+
+    if let Some(m) = evaluator_model {
+        config.agency.evaluator_model = Some(m.to_string());
+        println!("Set agency.evaluator_model = \"{}\"", m);
+        changed = true;
+    }
+
+    if let Some(v) = assigner_agent {
+        config.agency.assigner_agent = Some(v.to_string());
+        println!("Set agency.assigner_agent = \"{}\"", v);
+        changed = true;
+    }
+
+    if let Some(v) = evaluator_agent {
+        config.agency.evaluator_agent = Some(v.to_string());
+        println!("Set agency.evaluator_agent = \"{}\"", v);
+        changed = true;
+    }
+
+    if let Some(v) = evolver_agent {
+        config.agency.evolver_agent = Some(v.to_string());
+        println!("Set agency.evolver_agent = \"{}\"", v);
+        changed = true;
+    }
+
+    if let Some(v) = retention_heuristics {
+        config.agency.retention_heuristics = Some(v.to_string());
+        println!("Set agency.retention_heuristics = \"{}\"", v);
         changed = true;
     }
 
@@ -292,7 +361,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         init(temp_dir.path()).unwrap();
 
-        let result = update(temp_dir.path(), Some("opencode"), Some("gpt-4"), Some(30), None, None, None, None);
+        let result = update(
+            temp_dir.path(), Some("opencode"), Some("gpt-4"), Some(30),
+            None, None, None, None,
+            None, None, None, None, None, None, None,
+        );
         assert!(result.is_ok());
 
         let config = Config::load(temp_dir.path()).unwrap();
@@ -306,7 +379,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         init(temp_dir.path()).unwrap();
 
-        let result = update(temp_dir.path(), None, None, None, Some(8), Some(60), None, Some("shell"));
+        let result = update(
+            temp_dir.path(), None, None, None, Some(8), Some(60), None, Some("shell"),
+            None, None, None, None, None, None, None,
+        );
         assert!(result.is_ok());
 
         let config = Config::load(temp_dir.path()).unwrap();
@@ -320,10 +396,39 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         init(temp_dir.path()).unwrap();
 
-        let result = update(temp_dir.path(), None, None, None, None, None, Some(120), None);
+        let result = update(
+            temp_dir.path(), None, None, None, None, None, Some(120), None,
+            None, None, None, None, None, None, None,
+        );
         assert!(result.is_ok());
 
         let config = Config::load(temp_dir.path()).unwrap();
         assert_eq!(config.coordinator.poll_interval, 120);
+    }
+
+    #[test]
+    fn test_update_agency() {
+        let temp_dir = TempDir::new().unwrap();
+        init(temp_dir.path()).unwrap();
+
+        let result = update(
+            temp_dir.path(), None, None, None, None, None, None, None,
+            Some(true), Some(true),
+            Some("haiku"), Some("assigner-hash"), Some("evaluator-hash"),
+            Some("evolver-hash"), Some("Retire below 0.3 after 10 evals"),
+        );
+        assert!(result.is_ok());
+
+        let config = Config::load(temp_dir.path()).unwrap();
+        assert!(config.agency.auto_evaluate);
+        assert!(config.agency.auto_assign);
+        assert_eq!(config.agency.evaluator_model, Some("haiku".to_string()));
+        assert_eq!(config.agency.assigner_agent, Some("assigner-hash".to_string()));
+        assert_eq!(config.agency.evaluator_agent, Some("evaluator-hash".to_string()));
+        assert_eq!(config.agency.evolver_agent, Some("evolver-hash".to_string()));
+        assert_eq!(
+            config.agency.retention_heuristics,
+            Some("Retire below 0.3 after 10 evals".to_string())
+        );
     }
 }

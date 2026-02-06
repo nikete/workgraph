@@ -801,7 +801,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
-            identity: None,
+            agent: None,
         }
     }
 
@@ -835,7 +835,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
-            identity: None,
+            agent: None,
         }
     }
 

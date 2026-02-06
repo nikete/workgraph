@@ -23,8 +23,10 @@ thiserror = "2.0"
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
 toml = "0.8"
+serde_yaml = "0.9"
 libc = "0.2"
 dirs = "5.0"
+sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 ratatui = "0.29"
 crossterm = "0.28"
@@ -35,7 +37,7 @@ matrix-sdk = { version = "0.16", features = ["e2e-encryption", "sqlite"], option
 futures-util = { version = "0.3", optional = true }
 
 # Lightweight Matrix integration (just HTTP, no E2EE/sqlite)
-reqwest = { version = "0.12", features = ["json"], optional = true }
+reqwest = { version = "0.12", features = ["json", "blocking"], optional = true }
 urlencoding = { version = "2.1", optional = true }
 
 [target.'cfg(unix)'.dependencies]

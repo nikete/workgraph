@@ -28,6 +28,10 @@ pub struct Config {
     /// Help display configuration
     #[serde(default)]
     pub help: HelpConfig,
+
+    /// Agency (evolutionary identity) configuration
+    #[serde(default)]
+    pub agency: AgencyConfig,
 }
 
 /// Help display configuration
@@ -46,6 +50,54 @@ impl Default for HelpConfig {
     fn default() -> Self {
         Self {
             ordering: default_help_ordering(),
+        }
+    }
+}
+
+/// Agency (evolutionary identity system) configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgencyConfig {
+    /// Automatically trigger evaluation when a task completes
+    #[serde(default)]
+    pub auto_evaluate: bool,
+
+    /// Automatically assign an identity when spawning agents
+    #[serde(default)]
+    pub auto_assign: bool,
+
+    /// Content-hash of agent to use as assigner (None = use default pipeline)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigner_agent: Option<String>,
+
+    /// Content-hash of agent to use as evaluator (None = use evaluator_model fallback)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluator_agent: Option<String>,
+
+    /// Model to use for evaluator agents (None = use default agent model).
+    /// Fallback when evaluator_agent is not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evaluator_model: Option<String>,
+
+    /// Content-hash of agent to use as evolver
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evolver_agent: Option<String>,
+
+    /// Prose policy for the evolver describing retention heuristics
+    /// (e.g. when to retire underperforming roles/motivations)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_heuristics: Option<String>,
+}
+
+impl Default for AgencyConfig {
+    fn default() -> Self {
+        Self {
+            auto_evaluate: false,
+            auto_assign: false,
+            assigner_agent: None,
+            evaluator_agent: None,
+            evaluator_model: None,
+            evolver_agent: None,
+            retention_heuristics: None,
         }
     }
 }
@@ -430,6 +482,59 @@ name = "My Project"
         config.username = Some("@user:matrix.org".to_string());
         config.access_token = Some("syt_abc123".to_string());
         assert!(config.has_credentials());
+    }
+
+    #[test]
+    fn test_default_agency_config() {
+        let config = Config::default();
+        assert!(!config.agency.auto_evaluate);
+        assert!(!config.agency.auto_assign);
+        assert!(config.agency.assigner_agent.is_none());
+        assert!(config.agency.evaluator_agent.is_none());
+        assert!(config.agency.evaluator_model.is_none());
+        assert!(config.agency.evolver_agent.is_none());
+        assert!(config.agency.retention_heuristics.is_none());
+    }
+
+    #[test]
+    fn test_parse_agency_config() {
+        let toml_str = r#"
+[agency]
+auto_evaluate = true
+auto_assign = true
+evaluator_model = "haiku"
+assigner_agent = "abc123"
+evaluator_agent = "def456"
+evolver_agent = "ghi789"
+retention_heuristics = "Retire roles scoring below 0.3 after 10 evaluations"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.agency.auto_evaluate);
+        assert!(config.agency.auto_assign);
+        assert_eq!(config.agency.evaluator_model, Some("haiku".to_string()));
+        assert_eq!(config.agency.assigner_agent, Some("abc123".to_string()));
+        assert_eq!(config.agency.evaluator_agent, Some("def456".to_string()));
+        assert_eq!(config.agency.evolver_agent, Some("ghi789".to_string()));
+        assert_eq!(
+            config.agency.retention_heuristics,
+            Some("Retire roles scoring below 0.3 after 10 evaluations".to_string())
+        );
+    }
+
+    #[test]
+    fn test_agency_config_roundtrip() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let mut config = Config::default();
+        config.agency.auto_evaluate = true;
+        config.agency.evolver_agent = Some("abc123".to_string());
+        config.agency.evaluator_model = Some("sonnet".to_string());
+        config.save(temp_dir.path()).unwrap();
+
+        let loaded = Config::load(temp_dir.path()).unwrap();
+        assert!(loaded.agency.auto_evaluate);
+        assert_eq!(loaded.agency.evolver_agent, Some("abc123".to_string()));
+        assert_eq!(loaded.agency.evaluator_model, Some("sonnet".to_string()));
     }
 
     #[test]

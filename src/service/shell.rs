@@ -310,7 +310,7 @@ pub fn spawn_shell_agent(
 ) -> Result<AgentHandle> {
     let executor = ShellExecutor::new(workgraph_dir);
     let config = ShellExecutorConfig::new().build();
-    let vars = TemplateVars::from_task(task, context);
+    let vars = TemplateVars::from_task(task, context, Some(workgraph_dir));
 
     executor.spawn(task, &config, &vars)
 }
@@ -348,6 +348,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
         }
     }
 
@@ -403,7 +404,7 @@ mod tests {
         task.exec = Some("echo 'from exec'".to_string());
 
         let config = ShellExecutorConfig::new().build();
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         let command = executor.get_command(&task, &config, &vars).unwrap();
         assert_eq!(command, "echo 'from exec'");
@@ -418,7 +419,7 @@ mod tests {
         let config = ShellExecutorConfig::new()
             .command("echo 'from config'")
             .build();
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         let command = executor.get_command(&task, &config, &vars).unwrap();
         assert_eq!(command, "echo 'from config'");
@@ -431,7 +432,7 @@ mod tests {
 
         let task = make_test_task("test-task", "Test");
         let config = ShellExecutorConfig::new().build();
-        let vars = TemplateVars::from_task(&task, Some("echo 'from context'"));
+        let vars = TemplateVars::from_task(&task, Some("echo 'from context'"), None);
 
         let command = executor.get_command(&task, &config, &vars).unwrap();
         assert_eq!(command, "echo 'from context'");
@@ -448,7 +449,7 @@ mod tests {
         let config = ShellExecutorConfig::new()
             .command("echo 'from config'")
             .build();
-        let vars = TemplateVars::from_task(&task, Some("echo 'from context'"));
+        let vars = TemplateVars::from_task(&task, Some("echo 'from context'"), None);
 
         // exec should take priority
         let command = executor.get_command(&task, &config, &vars).unwrap();
@@ -496,7 +497,7 @@ mod tests {
         task.exec = Some("echo 'hello world'".to_string());
 
         let config = ShellExecutorConfig::new().build();
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         let mut handle = executor.spawn(&task, &config, &vars).unwrap();
 
@@ -514,7 +515,7 @@ mod tests {
         task.exec = Some("echo $WG_TASK_ID $WG_TASK_TITLE".to_string());
 
         let config = ShellExecutorConfig::new().build();
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         let mut handle = executor.spawn(&task, &config, &vars).unwrap();
         let status = handle.wait().unwrap();
@@ -531,7 +532,7 @@ mod tests {
         task.exec = Some("echo 'test'".to_string());
 
         let config = ShellExecutorConfig::new().build();
-        let vars = TemplateVars::from_task(&task, None);
+        let vars = TemplateVars::from_task(&task, None, None);
 
         let mut handle = executor.spawn(&task, &config, &vars).unwrap();
         handle.wait().unwrap();
