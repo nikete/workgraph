@@ -1440,4 +1440,1237 @@ mod tests {
             .to_string()
             .contains("only remaining role"));
     }
+
+    // =======================================================================
+    // parse_evolver_output: complex multi-operation responses
+    // =======================================================================
+
+    #[test]
+    fn test_parse_evolver_output_multi_operations() {
+        let raw = r#"{
+            "run_id": "run-20250501-140000",
+            "operations": [
+                {
+                    "op": "create_role",
+                    "new_id": "security-expert",
+                    "name": "Security Expert",
+                    "description": "Specializes in security audits and vulnerability assessment",
+                    "skills": ["security-audit", "penetration-testing", "code-review"],
+                    "desired_outcome": "Comprehensive security report with remediation steps",
+                    "rationale": "Gap analysis revealed no security-focused role"
+                },
+                {
+                    "op": "modify_role",
+                    "target_id": "existing-dev",
+                    "new_id": "existing-dev-v2",
+                    "name": "Enhanced Developer",
+                    "description": "Improved developer with testing focus",
+                    "skills": ["coding", "testing", "debugging"],
+                    "desired_outcome": "Well-tested code",
+                    "rationale": "Low test coverage scores"
+                },
+                {
+                    "op": "retire_role",
+                    "target_id": "obsolete-role",
+                    "rationale": "Consistently underperforming"
+                },
+                {
+                    "op": "create_motivation",
+                    "new_id": "security-first",
+                    "name": "Security First",
+                    "description": "Prioritizes security above all else",
+                    "acceptable_tradeoffs": ["Slower delivery", "More verbose code"],
+                    "unacceptable_tradeoffs": ["Known vulnerabilities", "Skipping auth checks"],
+                    "rationale": "Need security-oriented motivation"
+                },
+                {
+                    "op": "modify_motivation",
+                    "target_id": "existing-mot",
+                    "new_id": "existing-mot-v2",
+                    "name": "Tuned Careful",
+                    "description": "Relaxed speed constraints",
+                    "acceptable_tradeoffs": ["Moderate slowness"],
+                    "unacceptable_tradeoffs": ["Untested code"],
+                    "rationale": "Motivation was too conservative"
+                },
+                {
+                    "op": "retire_motivation",
+                    "target_id": "bad-mot",
+                    "rationale": "Produced poor outcomes"
+                }
+            ],
+            "summary": "Comprehensive evolution: added security role/motivation, improved dev, retired underperformers"
+        }"#;
+
+        let output = parse_evolver_output(raw).unwrap();
+        assert_eq!(output.run_id, Some("run-20250501-140000".to_string()));
+        assert_eq!(output.operations.len(), 6);
+        assert_eq!(
+            output.summary,
+            Some("Comprehensive evolution: added security role/motivation, improved dev, retired underperformers".to_string())
+        );
+
+        // Verify operation types in order
+        assert_eq!(output.operations[0].op, "create_role");
+        assert_eq!(output.operations[1].op, "modify_role");
+        assert_eq!(output.operations[2].op, "retire_role");
+        assert_eq!(output.operations[3].op, "create_motivation");
+        assert_eq!(output.operations[4].op, "modify_motivation");
+        assert_eq!(output.operations[5].op, "retire_motivation");
+
+        // Verify fields on the create_role operation
+        let create_role = &output.operations[0];
+        assert_eq!(create_role.name, Some("Security Expert".to_string()));
+        assert_eq!(
+            create_role.skills,
+            Some(vec![
+                "security-audit".to_string(),
+                "penetration-testing".to_string(),
+                "code-review".to_string(),
+            ])
+        );
+        assert_eq!(
+            create_role.desired_outcome,
+            Some("Comprehensive security report with remediation steps".to_string())
+        );
+
+        // Verify fields on the create_motivation operation
+        let create_mot = &output.operations[3];
+        assert_eq!(
+            create_mot.acceptable_tradeoffs,
+            Some(vec!["Slower delivery".to_string(), "More verbose code".to_string()])
+        );
+        assert_eq!(
+            create_mot.unacceptable_tradeoffs,
+            Some(vec!["Known vulnerabilities".to_string(), "Skipping auth checks".to_string()])
+        );
+    }
+
+    #[test]
+    fn test_parse_evolver_output_with_markdown_fences_and_commentary() {
+        let raw = r#"I've analyzed the performance data. Here's my evolution plan:
+
+```json
+{
+    "run_id": "run-fenced",
+    "operations": [
+        {
+            "op": "create_role",
+            "name": "Optimizer",
+            "description": "Performance optimization specialist",
+            "skills": ["profiling", "benchmarking"],
+            "desired_outcome": "Measurably faster code"
+        }
+    ],
+    "summary": "Added optimizer role"
+}
+```
+
+Let me know if you'd like me to adjust anything."#;
+
+        let output = parse_evolver_output(raw).unwrap();
+        assert_eq!(output.run_id, Some("run-fenced".to_string()));
+        assert_eq!(output.operations.len(), 1);
+        assert_eq!(output.operations[0].name, Some("Optimizer".to_string()));
+    }
+
+    #[test]
+    fn test_parse_evolver_output_no_run_id() {
+        let raw = r#"{"operations": [{"op": "retire_role", "target_id": "old"}]}"#;
+        let output = parse_evolver_output(raw).unwrap();
+        assert_eq!(output.run_id, None);
+        assert_eq!(output.summary, None);
+        assert_eq!(output.operations.len(), 1);
+    }
+
+    #[test]
+    fn test_parse_evolver_output_empty_operations() {
+        let raw = r#"{"run_id": "noop", "operations": [], "summary": "No changes needed"}"#;
+        let output = parse_evolver_output(raw).unwrap();
+        assert!(output.operations.is_empty());
+        assert_eq!(output.summary, Some("No changes needed".to_string()));
+    }
+
+    #[test]
+    fn test_parse_evolver_output_garbage_fails() {
+        let result = parse_evolver_output("This is not JSON at all");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_evolver_output_missing_operations_fails() {
+        let raw = r#"{"run_id": "bad", "summary": "missing operations field"}"#;
+        let result = parse_evolver_output(raw);
+        assert!(result.is_err());
+    }
+
+    // =======================================================================
+    // apply_operations: create/modify/retire motivations with lineage
+    // =======================================================================
+
+    #[test]
+    fn test_apply_create_motivation() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "create_motivation".into(),
+            target_id: None,
+            new_id: Some("new-mot".into()),
+            name: Some("Security First".into()),
+            description: Some("Prioritizes security".into()),
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: Some(vec!["Slower delivery".into(), "More verbose code".into()]),
+            unacceptable_tradeoffs: Some(vec!["Known vulnerabilities".into()]),
+            rationale: Some("Gap analysis".into()),
+        };
+
+        let result = apply_create_motivation(&op, "test-run", &motivations_dir).unwrap();
+        assert_eq!(result["status"], "applied");
+        assert_eq!(result["op"], "create_motivation");
+
+        // ID should be a content hash, not the LLM-suggested new_id
+        let id = result["id"].as_str().unwrap();
+        assert_eq!(id.len(), 64, "ID should be a full SHA-256 hex hash");
+        assert_ne!(id, "new-mot");
+
+        // Verify the file was created and can be loaded
+        let mot_path = motivations_dir.join(format!("{}.yaml", id));
+        assert!(mot_path.exists());
+
+        let motivation = agency::load_motivation(&mot_path).unwrap();
+        assert_eq!(motivation.id, id);
+        assert_eq!(motivation.name, "Security First");
+        assert_eq!(motivation.description, "Prioritizes security");
+        assert_eq!(motivation.acceptable_tradeoffs, vec!["Slower delivery", "More verbose code"]);
+        assert_eq!(motivation.unacceptable_tradeoffs, vec!["Known vulnerabilities"]);
+        assert_eq!(motivation.lineage.generation, 0);
+        assert!(motivation.lineage.created_by.contains("test-run"));
+        assert!(motivation.lineage.parent_ids.is_empty());
+    }
+
+    #[test]
+    fn test_apply_create_motivation_missing_name_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "create_motivation".into(),
+            target_id: None,
+            new_id: None,
+            name: None, // missing!
+            description: Some("desc".into()),
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_create_motivation(&op, "test-run", &motivations_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("requires name"));
+    }
+
+    #[test]
+    fn test_apply_modify_motivation() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let parent = Motivation {
+            id: "parent-mot".into(),
+            name: "Careful".into(),
+            description: "Prioritizes reliability".into(),
+            acceptable_tradeoffs: vec!["Slow".into()],
+            unacceptable_tradeoffs: vec!["Untested code".into()],
+            performance: PerformanceRecord {
+                task_count: 3,
+                avg_score: Some(0.65),
+                evaluations: vec![],
+            },
+            lineage: Lineage {
+                parent_ids: vec![],
+                generation: 0,
+                created_by: "human".into(),
+                created_at: chrono::Utc::now(),
+            },
+        };
+
+        let op = EvolverOperation {
+            op: "modify_motivation".into(),
+            target_id: Some("parent-mot".into()),
+            new_id: Some("parent-mot-v2".into()),
+            name: Some("Carefully Fast".into()),
+            description: Some("Balance of speed and reliability".into()),
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: Some(vec!["Moderate slowness".into()]),
+            unacceptable_tradeoffs: Some(vec!["Untested code".into(), "Known bugs".into()]),
+            rationale: Some("Motivation was too conservative".into()),
+        };
+
+        let result =
+            apply_modify_motivation(&op, &[parent], "test-run", &motivations_dir).unwrap();
+        assert_eq!(result["status"], "applied");
+        assert_eq!(result["op"], "modify_motivation");
+        assert_eq!(result["target_id"], "parent-mot");
+        assert_eq!(result["generation"], 1);
+
+        // Verify lineage
+        let parent_ids: Vec<String> = result["parent_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(parent_ids, vec!["parent-mot"]);
+
+        // ID should be content hash
+        let new_id = result["new_id"].as_str().unwrap();
+        assert_eq!(new_id.len(), 64);
+
+        // Load and verify
+        let mot = agency::load_motivation(
+            &motivations_dir.join(format!("{}.yaml", new_id)),
+        )
+        .unwrap();
+        assert_eq!(mot.name, "Carefully Fast");
+        assert_eq!(mot.lineage.generation, 1);
+        assert_eq!(mot.lineage.parent_ids, vec!["parent-mot"]);
+        assert!(mot.lineage.created_by.contains("test-run"));
+    }
+
+    #[test]
+    fn test_apply_modify_motivation_missing_target_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "modify_motivation".into(),
+            target_id: None, // missing!
+            new_id: None,
+            name: Some("X".into()),
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_modify_motivation(&op, &[], "test-run", &motivations_dir);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("requires target_id"));
+    }
+
+    #[test]
+    fn test_apply_modify_motivation_parent_not_found_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "modify_motivation".into(),
+            target_id: Some("nonexistent".into()),
+            new_id: None,
+            name: None,
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_modify_motivation(&op, &[], "test-run", &motivations_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_apply_retire_motivation() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let mot_a = Motivation {
+            id: "mot-a".into(),
+            name: "A".into(),
+            description: "".into(),
+            acceptable_tradeoffs: vec![],
+            unacceptable_tradeoffs: vec![],
+            performance: PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: Lineage::default(),
+        };
+        let mot_b = Motivation {
+            id: "mot-b".into(),
+            name: "B".into(),
+            description: "".into(),
+            acceptable_tradeoffs: vec![],
+            unacceptable_tradeoffs: vec![],
+            performance: PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: Lineage::default(),
+        };
+
+        agency::save_motivation(&mot_a, &motivations_dir).unwrap();
+        agency::save_motivation(&mot_b, &motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "retire_motivation".into(),
+            target_id: Some("mot-a".into()),
+            new_id: None,
+            name: None,
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: Some("Poor outcomes".into()),
+        };
+
+        let result =
+            apply_retire_motivation(&op, &[mot_a, mot_b], &motivations_dir).unwrap();
+        assert_eq!(result["status"], "applied");
+        assert_eq!(result["op"], "retire_motivation");
+
+        // .yaml should be gone, .yaml.retired should exist
+        assert!(!motivations_dir.join("mot-a.yaml").exists());
+        assert!(motivations_dir.join("mot-a.yaml.retired").exists());
+    }
+
+    #[test]
+    fn test_retire_last_motivation_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let mot = Motivation {
+            id: "only-mot".into(),
+            name: "Only".into(),
+            description: "".into(),
+            acceptable_tradeoffs: vec![],
+            unacceptable_tradeoffs: vec![],
+            performance: PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: Lineage::default(),
+        };
+        agency::save_motivation(&mot, &motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "retire_motivation".into(),
+            target_id: Some("only-mot".into()),
+            new_id: None,
+            name: None,
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_retire_motivation(&op, &[mot], &motivations_dir);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("only remaining motivation"));
+    }
+
+    #[test]
+    fn test_retire_motivation_not_found_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let mot = Motivation {
+            id: "mot-x".into(),
+            name: "X".into(),
+            description: "".into(),
+            acceptable_tradeoffs: vec![],
+            unacceptable_tradeoffs: vec![],
+            performance: PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: Lineage::default(),
+        };
+
+        let op = EvolverOperation {
+            op: "retire_motivation".into(),
+            target_id: Some("nonexistent".into()),
+            new_id: None,
+            name: None,
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_retire_motivation(&op, &[mot], &motivations_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    // =======================================================================
+    // apply_modify_role: crossover lineage (two parents)
+    // =======================================================================
+
+    #[test]
+    fn test_apply_modify_role_crossover() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+
+        let parent_a = Role {
+            id: "parent-a".into(),
+            name: "Developer".into(),
+            description: "Writes code".into(),
+            skills: vec![SkillRef::Name("coding".into())],
+            desired_outcome: "Working code".into(),
+            performance: PerformanceRecord {
+                task_count: 10,
+                avg_score: Some(0.7),
+                evaluations: vec![],
+            },
+            lineage: Lineage {
+                parent_ids: vec![],
+                generation: 2,
+                created_by: "evolver-run-1".into(),
+                created_at: chrono::Utc::now(),
+            },
+        };
+
+        let parent_b = Role {
+            id: "parent-b".into(),
+            name: "Tester".into(),
+            description: "Tests code".into(),
+            skills: vec![SkillRef::Name("testing".into())],
+            desired_outcome: "Well-tested code".into(),
+            performance: PerformanceRecord {
+                task_count: 8,
+                avg_score: Some(0.8),
+                evaluations: vec![],
+            },
+            lineage: Lineage {
+                parent_ids: vec![],
+                generation: 1,
+                created_by: "evolver-run-0".into(),
+                created_at: chrono::Utc::now(),
+            },
+        };
+
+        let op = EvolverOperation {
+            op: "modify_role".into(),
+            target_id: Some("parent-a,parent-b".into()), // crossover!
+            new_id: Some("crossover-result".into()),
+            name: Some("Dev-Tester Hybrid".into()),
+            description: Some("Codes and tests".into()),
+            skills: Some(vec!["coding".into(), "testing".into(), "debugging".into()]),
+            desired_outcome: Some("Working, well-tested code".into()),
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: Some("Combining best of both".into()),
+        };
+
+        let result =
+            apply_modify_role(&op, &[parent_a, parent_b], "test-run", &roles_dir).unwrap();
+        assert_eq!(result["status"], "applied");
+
+        // Generation should be max(2, 1) + 1 = 3
+        assert_eq!(result["generation"], 3);
+
+        // Parent IDs should include both parents
+        let parent_ids: Vec<String> = result["parent_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(parent_ids, vec!["parent-a", "parent-b"]);
+
+        // Verify the content-hash ID
+        let new_id = result["new_id"].as_str().unwrap();
+        assert_eq!(new_id.len(), 64);
+
+        // Load and verify
+        let role = agency::load_role(&roles_dir.join(format!("{}.yaml", new_id))).unwrap();
+        assert_eq!(role.name, "Dev-Tester Hybrid");
+        assert_eq!(role.skills.len(), 3);
+        assert_eq!(role.lineage.generation, 3);
+        assert_eq!(role.lineage.parent_ids, vec!["parent-a", "parent-b"]);
+        assert!(role.lineage.created_by.contains("test-run"));
+    }
+
+    #[test]
+    fn test_apply_modify_role_parent_not_found_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "modify_role".into(),
+            target_id: Some("nonexistent-parent".into()),
+            new_id: None,
+            name: Some("X".into()),
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_modify_role(&op, &[], "test-run", &roles_dir);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_apply_modify_role_missing_target_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "modify_role".into(),
+            target_id: None, // missing!
+            new_id: None,
+            name: None,
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_modify_role(&op, &[], "test-run", &roles_dir);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("requires target_id"));
+    }
+
+    // =======================================================================
+    // apply_operation dispatcher
+    // =======================================================================
+
+    #[test]
+    fn test_apply_operation_dispatches_create_role() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&roles_dir).unwrap();
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "create_role".into(),
+            target_id: None,
+            new_id: None,
+            name: Some("Dispatcher Test".into()),
+            description: Some("Testing dispatch".into()),
+            skills: Some(vec!["dispatch".into()]),
+            desired_outcome: Some("Dispatched".into()),
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result =
+            apply_operation(&op, &[], &[], "run-dispatch", &roles_dir, &motivations_dir)
+                .unwrap();
+        assert_eq!(result["status"], "applied");
+        assert_eq!(result["op"], "create_role");
+    }
+
+    #[test]
+    fn test_apply_operation_unknown_op_fails() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&roles_dir).unwrap();
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "delete_everything".into(),
+            target_id: None,
+            new_id: None,
+            name: None,
+            description: None,
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result =
+            apply_operation(&op, &[], &[], "run-bad", &roles_dir, &motivations_dir);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown operation type"));
+    }
+
+    // =======================================================================
+    // Content-hash ID determinism: same content -> same ID
+    // =======================================================================
+
+    #[test]
+    fn test_create_role_deterministic_id() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "create_role".into(),
+            target_id: None,
+            new_id: None,
+            name: Some("Deterministic".into()),
+            description: Some("Same description".into()),
+            skills: Some(vec!["skill-a".into()]),
+            desired_outcome: Some("Same outcome".into()),
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result1 = apply_create_role(&op, "run-1", &roles_dir).unwrap();
+        let result2 = apply_create_role(&op, "run-2", &roles_dir).unwrap();
+
+        // Same content = same ID (even though run_id differs)
+        assert_eq!(result1["id"], result2["id"]);
+    }
+
+    #[test]
+    fn test_create_motivation_deterministic_id() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let motivations_dir = temp_dir.path().join("motivations");
+        fs::create_dir_all(&motivations_dir).unwrap();
+
+        let op = EvolverOperation {
+            op: "create_motivation".into(),
+            target_id: None,
+            new_id: None,
+            name: Some("Deterministic".into()),
+            description: Some("Same desc".into()),
+            skills: None,
+            desired_outcome: None,
+            acceptable_tradeoffs: Some(vec!["trade-a".into()]),
+            unacceptable_tradeoffs: Some(vec!["trade-b".into()]),
+            rationale: None,
+        };
+
+        let result1 = apply_create_motivation(&op, "run-1", &motivations_dir).unwrap();
+        let result2 = apply_create_motivation(&op, "run-2", &motivations_dir).unwrap();
+
+        assert_eq!(result1["id"], result2["id"]);
+    }
+
+    // =======================================================================
+    // Strategy prompt generation: each strategy produces valid prompt content
+    // =======================================================================
+
+    fn make_test_roles() -> Vec<Role> {
+        vec![Role {
+            id: "test-role".into(),
+            name: "Test Role".into(),
+            description: "A test role".into(),
+            skills: vec![SkillRef::Name("testing".into())],
+            desired_outcome: "Pass tests".into(),
+            performance: PerformanceRecord {
+                task_count: 5,
+                avg_score: Some(0.75),
+                evaluations: vec![],
+            },
+            lineage: Lineage::default(),
+        }]
+    }
+
+    fn make_test_motivations() -> Vec<Motivation> {
+        vec![Motivation {
+            id: "test-mot".into(),
+            name: "Test Motivation".into(),
+            description: "A test motivation".into(),
+            acceptable_tradeoffs: vec!["Slow".into()],
+            unacceptable_tradeoffs: vec!["Broken".into()],
+            performance: PerformanceRecord {
+                task_count: 3,
+                avg_score: Some(0.60),
+                evaluations: vec![],
+            },
+            lineage: Lineage::default(),
+        }]
+    }
+
+    #[test]
+    fn test_build_prompt_mutation_strategy() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let config = Config::default();
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &[], // no skill docs for unit test
+            Strategy::Mutation,
+            None,
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Evolver Agent Instructions"));
+        assert!(prompt.contains("mutation"));
+        assert!(prompt.contains("Focus on the **mutation** strategy"));
+        assert!(prompt.contains("Performance Summary"));
+        assert!(prompt.contains("Test Role"));
+        assert!(prompt.contains("Test Motivation"));
+        assert!(prompt.contains("Required Output Format"));
+        assert!(prompt.contains("create_role"));
+        assert!(prompt.contains("modify_role"));
+    }
+
+    #[test]
+    fn test_build_prompt_crossover_strategy() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let config = Config::default();
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &[],
+            Strategy::Crossover,
+            Some(3),
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Focus on the **crossover** strategy"));
+        assert!(prompt.contains("Propose at most 3 operations"));
+    }
+
+    #[test]
+    fn test_build_prompt_gap_analysis_strategy() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let config = Config::default();
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &[],
+            Strategy::GapAnalysis,
+            None,
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Focus on the **gap-analysis** strategy"));
+    }
+
+    #[test]
+    fn test_build_prompt_retirement_strategy() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let config = Config::default();
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &[],
+            Strategy::Retirement,
+            None,
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Focus on the **retirement** strategy"));
+    }
+
+    #[test]
+    fn test_build_prompt_motivation_tuning_strategy() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let config = Config::default();
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &[],
+            Strategy::MotivationTuning,
+            None,
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Focus on the **motivation-tuning** strategy"));
+    }
+
+    #[test]
+    fn test_build_prompt_all_strategy() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let config = Config::default();
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &[],
+            Strategy::All,
+            None,
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Use ALL strategies"));
+        // Should NOT contain "Focus on the" since it's "All"
+        assert!(!prompt.contains("Focus on the"));
+    }
+
+    #[test]
+    fn test_build_prompt_includes_skill_docs() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let config = Config::default();
+
+        let skill_docs = vec![
+            ("role-mutation.md".to_string(), "Mutation procedure: vary one trait at a time.".to_string()),
+            ("gap-analysis.md".to_string(), "Identify missing capabilities.".to_string()),
+        ];
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &skill_docs,
+            Strategy::All,
+            None,
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Evolution Skill Documents"));
+        assert!(prompt.contains("Skill: role-mutation.md"));
+        assert!(prompt.contains("Mutation procedure: vary one trait at a time."));
+        assert!(prompt.contains("Skill: gap-analysis.md"));
+        assert!(prompt.contains("Identify missing capabilities."));
+    }
+
+    #[test]
+    fn test_build_prompt_includes_retention_heuristics() {
+        let roles = make_test_roles();
+        let motivations = make_test_motivations();
+        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let mut config = Config::default();
+        config.agency.retention_heuristics =
+            Some("Retire roles scoring below 0.3 after 10 evaluations".to_string());
+
+        let prompt = build_evolver_prompt(
+            &perf,
+            &[],
+            Strategy::All,
+            None,
+            &config,
+            &roles,
+            &motivations,
+            Path::new("/tmp/fake"),
+        );
+
+        assert!(prompt.contains("Retention Policy"));
+        assert!(prompt.contains("Retire roles scoring below 0.3 after 10 evaluations"));
+    }
+
+    // =======================================================================
+    // Performance summary: evaluations with dimensions
+    // =======================================================================
+
+    #[test]
+    fn test_build_performance_summary_with_evaluations_and_synergy() {
+        let roles = vec![
+            Role {
+                id: "r1".into(),
+                name: "Dev".into(),
+                description: "Developer".into(),
+                skills: vec![SkillRef::Name("coding".into())],
+                desired_outcome: "Code".into(),
+                performance: PerformanceRecord {
+                    task_count: 2,
+                    avg_score: Some(0.75),
+                    evaluations: vec![],
+                },
+                lineage: Lineage::default(),
+            },
+            Role {
+                id: "r2".into(),
+                name: "Tester".into(),
+                description: "Tester".into(),
+                skills: vec![SkillRef::Name("testing".into())],
+                desired_outcome: "Tests".into(),
+                performance: PerformanceRecord {
+                    task_count: 1,
+                    avg_score: Some(0.90),
+                    evaluations: vec![],
+                },
+                lineage: Lineage::default(),
+            },
+        ];
+        let motivations = vec![Motivation {
+            id: "m1".into(),
+            name: "Careful".into(),
+            description: "Be careful".into(),
+            acceptable_tradeoffs: vec!["Slow".into()],
+            unacceptable_tradeoffs: vec!["Broken".into()],
+            performance: PerformanceRecord {
+                task_count: 3,
+                avg_score: Some(0.80),
+                evaluations: vec![],
+            },
+            lineage: Lineage::default(),
+        }];
+        let mut dims = HashMap::new();
+        dims.insert("correctness".to_string(), 0.9);
+        dims.insert("completeness".to_string(), 0.6);
+
+        let evaluations = vec![
+            Evaluation {
+                id: "e1".into(),
+                task_id: "t1".into(),
+                agent_id: "".into(),
+                role_id: "r1".into(),
+                motivation_id: "m1".into(),
+                score: 0.8,
+                dimensions: dims.clone(),
+                notes: "Good".into(),
+                evaluator: "human".into(),
+                timestamp: "2025-01-01T00:00:00Z".into(),
+            },
+            Evaluation {
+                id: "e2".into(),
+                task_id: "t2".into(),
+                agent_id: "".into(),
+                role_id: "r1".into(),
+                motivation_id: "m1".into(),
+                score: 0.7,
+                dimensions: HashMap::new(),
+                notes: "OK".into(),
+                evaluator: "human".into(),
+                timestamp: "2025-01-02T00:00:00Z".into(),
+            },
+            Evaluation {
+                id: "e3".into(),
+                task_id: "t3".into(),
+                agent_id: "".into(),
+                role_id: "r2".into(),
+                motivation_id: "m1".into(),
+                score: 0.9,
+                dimensions: HashMap::new(),
+                notes: "Great".into(),
+                evaluator: "human".into(),
+                timestamp: "2025-01-03T00:00:00Z".into(),
+            },
+        ];
+
+        let summary = build_performance_summary(&roles, &motivations, &evaluations);
+
+        // Overall stats
+        assert!(summary.contains("Total roles: 2"));
+        assert!(summary.contains("Total motivations: 1"));
+        assert!(summary.contains("Total evaluations: 3"));
+        assert!(summary.contains("Overall avg score: 0.800"));
+
+        // Per-role
+        assert!(summary.contains("Dev"));
+        assert!(summary.contains("Tester"));
+
+        // Dimensions for r1
+        assert!(summary.contains("correctness=0.90"));
+        assert!(summary.contains("completeness=0.60"));
+
+        // Synergy matrix
+        assert!(summary.contains("Synergy Matrix"));
+        // r1 x m1 should appear with avg 0.75, r2 x m1 with avg 0.90
+        assert!(summary.contains("(r1, m1)"));
+        assert!(summary.contains("(r2, m1)"));
+    }
+
+    // =======================================================================
+    // Lineage metadata correctness
+    // =======================================================================
+
+    #[test]
+    fn test_mutation_lineage_increments_generation() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+
+        // Parent at generation 5
+        let parent = Role {
+            id: "gen5-parent".into(),
+            name: "Gen5".into(),
+            description: "Fifth gen".into(),
+            skills: vec![],
+            desired_outcome: "Evolve".into(),
+            performance: PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: Lineage {
+                parent_ids: vec!["gen4-parent".into()],
+                generation: 5,
+                created_by: "evolver-run-old".into(),
+                created_at: chrono::Utc::now(),
+            },
+        };
+
+        let op = EvolverOperation {
+            op: "modify_role".into(),
+            target_id: Some("gen5-parent".into()),
+            new_id: None,
+            name: Some("Gen6 Child".into()),
+            description: Some("Sixth gen".into()),
+            skills: Some(vec!["evolved".into()]),
+            desired_outcome: Some("More evolved".into()),
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result = apply_modify_role(&op, &[parent], "run-new", &roles_dir).unwrap();
+        assert_eq!(result["generation"], 6);
+
+        let parent_ids: Vec<String> = result["parent_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(parent_ids, vec!["gen5-parent"]);
+    }
+
+    #[test]
+    fn test_crossover_lineage_uses_max_generation() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let roles_dir = temp_dir.path().join("roles");
+        fs::create_dir_all(&roles_dir).unwrap();
+
+        let parent_a = Role {
+            id: "pa".into(),
+            name: "A".into(),
+            description: "".into(),
+            skills: vec![],
+            desired_outcome: "".into(),
+            performance: PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: Lineage {
+                parent_ids: vec![],
+                generation: 3,
+                created_by: "x".into(),
+                created_at: chrono::Utc::now(),
+            },
+        };
+        let parent_b = Role {
+            id: "pb".into(),
+            name: "B".into(),
+            description: "".into(),
+            skills: vec![],
+            desired_outcome: "".into(),
+            performance: PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: Lineage {
+                parent_ids: vec![],
+                generation: 7,
+                created_by: "x".into(),
+                created_at: chrono::Utc::now(),
+            },
+        };
+
+        let op = EvolverOperation {
+            op: "modify_role".into(),
+            target_id: Some("pa,pb".into()),
+            new_id: None,
+            name: None,
+            description: Some("cross".into()),
+            skills: Some(vec!["merged".into()]),
+            desired_outcome: Some("merged".into()),
+            acceptable_tradeoffs: None,
+            unacceptable_tradeoffs: None,
+            rationale: None,
+        };
+
+        let result =
+            apply_modify_role(&op, &[parent_a, parent_b], "run-x", &roles_dir).unwrap();
+        // max(3, 7) + 1 = 8
+        assert_eq!(result["generation"], 8);
+    }
+
+    // =======================================================================
+    // extract_json edge cases
+    // =======================================================================
+
+    #[test]
+    fn test_extract_json_with_leading_whitespace() {
+        let input = "   \n\n  {\"run_id\": \"ws\", \"operations\": []}  \n  ";
+        let result = extract_json(input).unwrap();
+        assert!(result.contains("ws"));
+    }
+
+    #[test]
+    fn test_extract_json_nested_braces() {
+        let input = r#"{"run_id": "nested", "operations": [{"op": "create_role", "name": "X", "description": "has {braces} in text"}]}"#;
+        let result = extract_json(input).unwrap();
+        assert!(result.contains("nested"));
+    }
+
+    #[test]
+    fn test_extract_json_fences_without_json_tag() {
+        let input = "```\n{\"run_id\": \"plain-fence\", \"operations\": []}\n```";
+        let result = extract_json(input).unwrap();
+        assert!(result.contains("plain-fence"));
+    }
 }

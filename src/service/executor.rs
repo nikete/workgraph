@@ -451,6 +451,7 @@ impl ExecutorRegistry {
                     command: "claude".to_string(),
                     args: vec![
                         "--print".to_string(),
+                        "--verbose".to_string(),
                         "--permission-mode".to_string(),
                         "bypassPermissions".to_string(),
                         "--output-format".to_string(),

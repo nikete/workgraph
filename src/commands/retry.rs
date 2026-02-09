@@ -42,6 +42,8 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
     // Keep retry_count for history - don't reset it
     // Clear failure_reason since we're retrying
     task.failure_reason = None;
+    // Clear assigned so the coordinator can re-spawn an agent
+    task.assigned = None;
 
     // Extract values we need for printing before saving
     let retry_count = task.retry_count;
