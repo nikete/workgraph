@@ -971,21 +971,189 @@ fn test_registry_active_and_idle_counts() {
 }
 
 // ===========================================================================
-// 13. LLM-based tests (gated behind #[ignore])
+// 13. LLM-based tests (gated behind feature flag)
 // ===========================================================================
 
-// Run with: cargo test -- --ignored
-#[test]
-#[ignore]
-fn test_coordinator_tick_spawns_real_agent() {
-    // This test spawns an actual claude agent and requires WG_TEST_LLM=1
-    if std::env::var("WG_TEST_LLM").unwrap_or_default() != "1" {
-        eprintln!("Skipping LLM test (set WG_TEST_LLM=1 to run)");
-        return;
+// Run with: cargo test --features llm-tests
+// Optionally set WG_TEST_MODEL to pick a model (default: haiku)
+
+#[cfg(feature = "llm-tests")]
+mod llm_tests {
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    use tempfile::TempDir;
+
+    /// Get the path to the compiled `wg` binary.
+    fn wg_binary() -> PathBuf {
+        let mut path = std::env::current_exe().expect("could not get current exe path");
+        path.pop();
+        if path.ends_with("deps") {
+            path.pop();
+        }
+        path.push("wg");
+        assert!(path.exists(), "wg binary not found at {:?}. Run `cargo build` first.", path);
+        path
     }
 
-    // This would test coordinator_tick with a real executor, verifying
-    // that agents are actually spawned and can complete tasks.
-    // Keeping as a placeholder for manual testing.
-    eprintln!("LLM integration test placeholder - implement when LLM test infrastructure is ready");
+    /// Run `wg` with given args in a specific workgraph directory.
+    fn wg_cmd(wg_dir: &Path, args: &[&str]) -> std::process::Output {
+        let wg = wg_binary();
+        Command::new(&wg)
+            .arg("--dir")
+            .arg(wg_dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap_or_else(|e| panic!("Failed to run wg {:?}: {}", args, e))
+    }
+
+    /// Run `wg` and assert success, returning stdout.
+    fn wg_ok(wg_dir: &Path, args: &[&str]) -> String {
+        let output = wg_cmd(wg_dir, args);
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        assert!(
+            output.status.success(),
+            "wg {:?} failed.\nstdout: {}\nstderr: {}",
+            args, stdout, stderr
+        );
+        stdout
+    }
+
+    /// Read task status via `wg show --json`.
+    fn task_status(wg_dir: &Path, task_id: &str) -> String {
+        let output = wg_cmd(wg_dir, &["show", task_id, "--json"]);
+        if !output.status.success() {
+            return "unknown".to_string();
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        match serde_json::from_str::<serde_json::Value>(&stdout) {
+            Ok(val) => val["status"].as_str().unwrap_or("unknown").to_string(),
+            Err(_) => "unknown".to_string(),
+        }
+    }
+
+    /// Poll until a condition is met or timeout expires.
+    fn wait_for(timeout: Duration, poll_ms: u64, mut f: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(poll_ms));
+        }
+        false
+    }
+
+    /// Set up a workgraph directory via `wg init`, with claude executor configured.
+    fn setup_llm_workgraph(tmp_root: &Path) -> PathBuf {
+        let wg_dir = tmp_root.join(".workgraph");
+        wg_ok(&wg_dir, &["init"]);
+
+        let wg_bin_dir = wg_binary().parent().unwrap().to_string_lossy().to_string();
+        let path_with_test_binary = format!(
+            "{}:{}",
+            wg_bin_dir,
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let executors_dir = wg_dir.join("executors");
+        std::fs::create_dir_all(&executors_dir).unwrap();
+        let claude_config = format!(
+            r#"[executor]
+type = "claude"
+command = "claude"
+args = ["--print", "--verbose", "--permission-mode", "bypassPermissions", "--output-format", "stream-json"]
+working_dir = "{}"
+
+[executor.env]
+PATH = "{}"
+"#,
+            tmp_root.display(),
+            path_with_test_binary,
+        );
+        std::fs::write(executors_dir.join("claude.toml"), claude_config).unwrap();
+
+        wg_dir
+    }
+
+    fn test_model() -> String {
+        std::env::var("WG_TEST_MODEL").unwrap_or_else(|_| "haiku".to_string())
+    }
+
+    #[test]
+    fn test_coordinator_tick_spawns_real_agent() {
+        let tmp = TempDir::new().unwrap();
+        let wg_dir = setup_llm_workgraph(tmp.path());
+        let model = test_model();
+
+        // Add a simple task: the Claude agent just needs to mark it done
+        wg_ok(
+            &wg_dir,
+            &[
+                "add",
+                "Say hello and mark this task done",
+                "--id",
+                "hello-task",
+                "-d",
+                "This is a test task. Just run: wg done hello-task",
+            ],
+        );
+
+        // Spawn a real Claude agent on the task
+        let output = wg_cmd(
+            &wg_dir,
+            &["spawn", "hello-task", "--executor", "claude", "--model", &model],
+        );
+        assert!(
+            output.status.success(),
+            "wg spawn failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // Wait for the task to complete (up to 120s for LLM)
+        let completed = wait_for(Duration::from_secs(120), 1000, || {
+            let status = task_status(&wg_dir, "hello-task");
+            status == "done" || status == "failed"
+        });
+        assert!(
+            completed,
+            "hello-task did not complete within 120s. Status: {}",
+            task_status(&wg_dir, "hello-task")
+        );
+
+        // Verify the task succeeded
+        let final_status = task_status(&wg_dir, "hello-task");
+        assert_eq!(
+            final_status, "done",
+            "hello-task should be done, got: {}",
+            final_status
+        );
+
+        // Verify output was captured
+        let agents_dir = wg_dir.join("agents");
+        if agents_dir.exists() {
+            let has_output = std::fs::read_dir(&agents_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .any(|entry| {
+                    let output_log = entry.path().join("output.log");
+                    if output_log.exists() {
+                        let content = std::fs::read_to_string(&output_log).unwrap_or_default();
+                        !content.is_empty()
+                    } else {
+                        false
+                    }
+                });
+            assert!(has_output, "Agent output should have been captured in output.log");
+        }
+
+        eprintln!(
+            "LLM coordinator test passed: hello-task completed successfully (model: {})",
+            model
+        );
+    }
 }

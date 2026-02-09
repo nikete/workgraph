@@ -888,24 +888,205 @@ fn test_assigned_agent_survives_subgraph_construction() {
 // 5. LLM-gated tests (require actual Claude invocation)
 // ===========================================================================
 
-// Run with: cargo test -- --ignored
-// Or set WG_TEST_LLM=1 to enable
-#[test]
-#[ignore]
-fn test_llm_assignment_reasoning() {
-    // Skip unless WG_TEST_LLM=1 is set
-    if std::env::var("WG_TEST_LLM").unwrap_or_default() != "1" {
-        eprintln!("Skipping LLM test: set WG_TEST_LLM=1 to run");
-        return;
+// Run with: cargo test --features llm-tests
+// Optionally set WG_TEST_MODEL to pick a model (default: haiku)
+
+#[cfg(feature = "llm-tests")]
+mod llm_tests {
+    use super::*;
+    use std::path::PathBuf;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    /// Get the path to the compiled `wg` binary.
+    fn wg_binary() -> PathBuf {
+        let mut path = std::env::current_exe().expect("could not get current exe path");
+        path.pop();
+        if path.ends_with("deps") {
+            path.pop();
+        }
+        path.push("wg");
+        assert!(path.exists(), "wg binary not found at {:?}. Run `cargo build` first.", path);
+        path
     }
 
-    // This test would:
-    // 1. Set up agency with multiple roles/motivations/agents
-    // 2. Create a task requiring specific skills
-    // 3. Spawn an actual assigner agent via the executor
-    // 4. Verify the agent picks a reasonable agent for the task
-    //
-    // Since this requires a running Claude instance and API key,
-    // it is gated behind #[ignore].
-    eprintln!("LLM assignment test would run here with actual Claude invocation");
+    /// Run `wg` with given args in a specific workgraph directory.
+    fn wg_cmd(wg_dir: &Path, args: &[&str]) -> std::process::Output {
+        let wg = wg_binary();
+        Command::new(&wg)
+            .arg("--dir")
+            .arg(wg_dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap_or_else(|e| panic!("Failed to run wg {:?}: {}", args, e))
+    }
+
+    /// Run `wg` and assert success, returning stdout.
+    fn wg_ok(wg_dir: &Path, args: &[&str]) -> String {
+        let output = wg_cmd(wg_dir, args);
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        assert!(
+            output.status.success(),
+            "wg {:?} failed.\nstdout: {}\nstderr: {}",
+            args, stdout, stderr
+        );
+        stdout
+    }
+
+    /// Read task status via `wg show --json`.
+    fn task_status(wg_dir: &Path, task_id: &str) -> String {
+        let output = wg_cmd(wg_dir, &["show", task_id, "--json"]);
+        if !output.status.success() {
+            return "unknown".to_string();
+        }
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        match serde_json::from_str::<serde_json::Value>(&stdout) {
+            Ok(val) => val["status"].as_str().unwrap_or("unknown").to_string(),
+            Err(_) => "unknown".to_string(),
+        }
+    }
+
+    /// Read task JSON via `wg show --json`.
+    fn task_json(wg_dir: &Path, task_id: &str) -> Option<serde_json::Value> {
+        let output = wg_cmd(wg_dir, &["show", task_id, "--json"]);
+        if !output.status.success() {
+            return None;
+        }
+        serde_json::from_str(&String::from_utf8_lossy(&output.stdout)).ok()
+    }
+
+    /// Poll until a condition is met or timeout expires.
+    fn wait_for(timeout: Duration, poll_ms: u64, mut f: impl FnMut() -> bool) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < timeout {
+            if f() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(poll_ms));
+        }
+        false
+    }
+
+    /// Set up a workgraph directory via `wg init`, with PATH including the test binary.
+    fn setup_llm_workgraph(tmp_root: &Path) -> PathBuf {
+        let wg_dir = tmp_root.join(".workgraph");
+        wg_ok(&wg_dir, &["init"]);
+
+        // Write claude executor config with working_dir and PATH so the wrapper
+        // script's bare `wg` commands find the test binary and the workgraph.
+        let wg_bin_dir = wg_binary().parent().unwrap().to_string_lossy().to_string();
+        let path_with_test_binary = format!(
+            "{}:{}",
+            wg_bin_dir,
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let executors_dir = wg_dir.join("executors");
+        fs::create_dir_all(&executors_dir).unwrap();
+        let claude_config = format!(
+            r#"[executor]
+type = "claude"
+command = "claude"
+args = ["--print", "--verbose", "--permission-mode", "bypassPermissions", "--output-format", "stream-json"]
+working_dir = "{}"
+
+[executor.env]
+PATH = "{}"
+"#,
+            tmp_root.display(),
+            path_with_test_binary,
+        );
+        fs::write(executors_dir.join("claude.toml"), claude_config).unwrap();
+
+        wg_dir
+    }
+
+    fn test_model() -> String {
+        std::env::var("WG_TEST_MODEL").unwrap_or_else(|_| "haiku".to_string())
+    }
+
+    #[test]
+    fn test_llm_assignment_reasoning() {
+        let tmp = TempDir::new().unwrap();
+        let wg_dir = setup_llm_workgraph(tmp.path());
+        let model = test_model();
+
+        // Set up agency with two agents with different skills
+        let (agent_id, _, _) = setup_agency(&wg_dir);
+        let second_agent_id = setup_second_agent(&wg_dir);
+
+        // Create a task that needs Rust skills (should match "Implementer" agent)
+        let mut task = make_task_with_skills("rust-feature", "Implement a Rust parser", vec!["rust"]);
+        task.description = Some("Write a parser for a simple DSL in Rust".to_string());
+        setup_workgraph(&wg_dir, vec![task]);
+        write_config_auto_assign(&wg_dir, true);
+
+        // Build the auto-assign subgraph (creates assign-rust-feature)
+        build_assign_subgraph(&wg_dir);
+
+        // Verify assign task was created
+        let graph = load_graph(&wg_dir.join("graph.jsonl")).unwrap();
+        let assign_task = graph.get_task("assign-rust-feature");
+        assert!(assign_task.is_some(), "assign-rust-feature task should exist");
+
+        // Spawn a real Claude agent on the assign task
+        let output = wg_cmd(
+            &wg_dir,
+            &["spawn", "assign-rust-feature", "--executor", "claude", "--model", &model],
+        );
+        assert!(
+            output.status.success(),
+            "wg spawn failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // Wait for the assign task to complete (up to 120s for LLM)
+        let completed = wait_for(Duration::from_secs(120), 1000, || {
+            let status = task_status(&wg_dir, "assign-rust-feature");
+            status == "done" || status == "failed"
+        });
+        assert!(
+            completed,
+            "assign task did not complete within 120s. Status: {}",
+            task_status(&wg_dir, "assign-rust-feature")
+        );
+
+        // Verify the assign task succeeded
+        let assign_status = task_status(&wg_dir, "assign-rust-feature");
+        assert_eq!(
+            assign_status, "done",
+            "assign task should be done, got: {}",
+            assign_status
+        );
+
+        // Verify the original task now has an agent assigned
+        let task_val = task_json(&wg_dir, "rust-feature");
+        assert!(task_val.is_some(), "rust-feature task should exist");
+        let task_val = task_val.unwrap();
+        let assigned_agent = task_val["agent"].as_str();
+        assert!(
+            assigned_agent.is_some(),
+            "rust-feature task should have an agent assigned after LLM reasoning. Task JSON: {}",
+            serde_json::to_string_pretty(&task_val).unwrap()
+        );
+
+        // The assigned agent should be one of our two agents
+        let assigned = assigned_agent.unwrap();
+        assert!(
+            assigned == agent_id || assigned == second_agent_id,
+            "Assigned agent '{}' should be one of the known agents ({} or {})",
+            assigned,
+            agent_id,
+            second_agent_id
+        );
+
+        eprintln!(
+            "LLM assignment test passed: agent '{}' was assigned to rust-feature (model: {})",
+            assigned, model
+        );
+    }
 }
