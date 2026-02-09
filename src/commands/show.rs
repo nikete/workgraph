@@ -66,6 +66,8 @@ struct TaskDetails {
     model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     verify: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<String>,
 }
 
 pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
@@ -146,6 +148,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
         failure_reason: task.failure_reason.clone(),
         model: task.model.clone(),
         verify: task.verify.clone(),
+        agent: task.agent.clone(),
     };
 
     if json {
@@ -164,6 +167,9 @@ fn print_human_readable(details: &TaskDetails) {
 
     if let Some(ref assigned) = details.assigned {
         println!("Assigned: {}", assigned);
+    }
+    if let Some(ref agent) = details.agent {
+        println!("Agent: {}", agent);
     }
 
     // Failure info
@@ -405,6 +411,7 @@ mod tests {
             failure_reason: None,
             model: None,
             verify: None,
+            agent: None,
         };
 
         let json = serde_json::to_string(&details).unwrap();

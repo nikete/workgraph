@@ -1048,7 +1048,9 @@ mod llm_tests {
         false
     }
 
-    /// Set up a workgraph directory via `wg init`, with claude executor configured.
+    /// Set up a workgraph directory via `wg init`, then write a claude executor
+    /// config with working_dir and PATH so the wrapper script's bare `wg`
+    /// commands find the test binary and the workgraph.
     fn setup_llm_workgraph(tmp_root: &Path) -> PathBuf {
         let wg_dir = tmp_root.join(".workgraph");
         wg_ok(&wg_dir, &["init"]);
@@ -1067,13 +1069,51 @@ mod llm_tests {
 type = "claude"
 command = "claude"
 args = ["--print", "--verbose", "--permission-mode", "bypassPermissions", "--output-format", "stream-json"]
-working_dir = "{}"
+working_dir = "{working_dir}"
 
 [executor.env]
-PATH = "{}"
+PATH = "{path}"
+
+[executor.prompt_template]
+template = """
+# Task Assignment
+
+You are an AI agent working on a task in a workgraph project.
+
+{{{{task_identity}}}}
+## Your Task
+- **ID:** {{{{task_id}}}}
+- **Title:** {{{{task_title}}}}
+- **Description:** {{{{task_description}}}}
+
+## Context from Dependencies
+{{{{task_context}}}}
+
+## Required Workflow
+
+You MUST use these commands to track your work:
+
+1. **Complete the task** when done:
+   ```bash
+   wg done {{{{task_id}}}}
+   wg submit {{{{task_id}}}}
+   ```
+
+2. **Mark as failed** if you cannot complete:
+   ```bash
+   wg fail {{{{task_id}}}} --reason "Specific reason why"
+   ```
+
+## Important
+- Run `wg done` (or `wg submit`) BEFORE you finish responding
+- If `wg done` fails saying "requires verification", use `wg submit` instead
+- Focus only on this specific task
+
+Begin working on the task now.
+"""
 "#,
-            tmp_root.display(),
-            path_with_test_binary,
+            working_dir = tmp_root.display(),
+            path = path_with_test_binary,
         );
         std::fs::write(executors_dir.join("claude.toml"), claude_config).unwrap();
 

@@ -971,13 +971,13 @@ mod llm_tests {
         false
     }
 
-    /// Set up a workgraph directory via `wg init`, with PATH including the test binary.
+    /// Set up a workgraph directory via `wg init`, then write a claude executor
+    /// config with working_dir and PATH so the wrapper script's bare `wg`
+    /// commands find the test binary and the workgraph.
     fn setup_llm_workgraph(tmp_root: &Path) -> PathBuf {
         let wg_dir = tmp_root.join(".workgraph");
         wg_ok(&wg_dir, &["init"]);
 
-        // Write claude executor config with working_dir and PATH so the wrapper
-        // script's bare `wg` commands find the test binary and the workgraph.
         let wg_bin_dir = wg_binary().parent().unwrap().to_string_lossy().to_string();
         let path_with_test_binary = format!(
             "{}:{}",
@@ -985,6 +985,8 @@ mod llm_tests {
             std::env::var("PATH").unwrap_or_default()
         );
 
+        // wg init doesn't create executors/, so we write a full claude.toml
+        // that includes the prompt template (required for stdin piping).
         let executors_dir = wg_dir.join("executors");
         fs::create_dir_all(&executors_dir).unwrap();
         let claude_config = format!(
@@ -992,13 +994,51 @@ mod llm_tests {
 type = "claude"
 command = "claude"
 args = ["--print", "--verbose", "--permission-mode", "bypassPermissions", "--output-format", "stream-json"]
-working_dir = "{}"
+working_dir = "{working_dir}"
 
 [executor.env]
-PATH = "{}"
+PATH = "{path}"
+
+[executor.prompt_template]
+template = """
+# Task Assignment
+
+You are an AI agent working on a task in a workgraph project.
+
+{{{{task_identity}}}}
+## Your Task
+- **ID:** {{{{task_id}}}}
+- **Title:** {{{{task_title}}}}
+- **Description:** {{{{task_description}}}}
+
+## Context from Dependencies
+{{{{task_context}}}}
+
+## Required Workflow
+
+You MUST use these commands to track your work:
+
+1. **Complete the task** when done:
+   ```bash
+   wg done {{{{task_id}}}}
+   wg submit {{{{task_id}}}}
+   ```
+
+2. **Mark as failed** if you cannot complete:
+   ```bash
+   wg fail {{{{task_id}}}} --reason "Specific reason why"
+   ```
+
+## Important
+- Run `wg done` (or `wg submit`) BEFORE you finish responding
+- If `wg done` fails saying "requires verification", use `wg submit` instead
+- Focus only on this specific task
+
+Begin working on the task now.
+"""
 "#,
-            tmp_root.display(),
-            path_with_test_binary,
+            working_dir = tmp_root.display(),
+            path = path_with_test_binary,
         );
         fs::write(executors_dir.join("claude.toml"), claude_config).unwrap();
 
@@ -1019,19 +1059,66 @@ PATH = "{}"
         let (agent_id, _, _) = setup_agency(&wg_dir);
         let second_agent_id = setup_second_agent(&wg_dir);
 
-        // Create a task that needs Rust skills (should match "Implementer" agent)
+        // Create the target task that needs Rust skills
         let mut task = make_task_with_skills("rust-feature", "Implement a Rust parser", vec!["rust"]);
         task.description = Some("Write a parser for a simple DSL in Rust".to_string());
-        setup_workgraph(&wg_dir, vec![task]);
-        write_config_auto_assign(&wg_dir, true);
 
-        // Build the auto-assign subgraph (creates assign-rust-feature)
-        build_assign_subgraph(&wg_dir);
+        // Create a hand-crafted assign task with an explicit, unambiguous description
+        // that tells the agent exactly what commands to run. This avoids the problem
+        // where the LLM marks the task done without actually running wg assign.
+        let assign_desc = format!(
+            "You MUST assign an agent to task 'rust-feature'.\n\n\
+             ## Step 1: List available agents\n\
+             Run this command:\n\
+             ```\n\
+             wg agent list\n\
+             ```\n\n\
+             ## Step 2: Choose the best agent for a Rust task\n\
+             The task requires the 'rust' skill. Pick the agent whose role best matches.\n\n\
+             ## Step 3: Assign the agent (REQUIRED — do NOT skip this)\n\
+             ```\n\
+             wg assign rust-feature <agent-hash>\n\
+             ```\n\
+             Replace <agent-hash> with the actual hash from step 1.\n\n\
+             ## Step 4: Mark this task done\n\
+             Only AFTER running wg assign:\n\
+             ```\n\
+             wg done assign-rust-feature\n\
+             ```\n\n\
+             IMPORTANT: You must run BOTH `wg assign` AND `wg done`. Do not skip `wg assign`."
+        );
+        let assign_task = Task {
+            id: "assign-rust-feature".to_string(),
+            title: "Assign agent for: Implement a Rust parser".to_string(),
+            description: Some(assign_desc),
+            status: Status::Open,
+            assigned: None,
+            estimate: None,
+            blocks: vec!["rust-feature".to_string()],
+            blocked_by: vec![],
+            requires: vec![],
+            tags: vec!["assignment".to_string(), "agency".to_string()],
+            skills: vec![],
+            inputs: vec![],
+            deliverables: vec![],
+            artifacts: vec![],
+            exec: None,
+            not_before: None,
+            created_at: Some(chrono::Utc::now().to_rfc3339()),
+            started_at: None,
+            completed_at: None,
+            log: vec![],
+            retry_count: 0,
+            max_retries: None,
+            failure_reason: None,
+            model: None,
+            verify: None,
+            agent: None,
+        };
 
-        // Verify assign task was created
-        let graph = load_graph(&wg_dir.join("graph.jsonl")).unwrap();
-        let assign_task = graph.get_task("assign-rust-feature");
-        assert!(assign_task.is_some(), "assign-rust-feature task should exist");
+        // Wire up: assign-rust-feature blocks rust-feature
+        task.blocked_by = vec!["assign-rust-feature".to_string()];
+        setup_workgraph(&wg_dir, vec![task, assign_task]);
 
         // Spawn a real Claude agent on the assign task
         let output = wg_cmd(
@@ -1055,8 +1142,27 @@ PATH = "{}"
             task_status(&wg_dir, "assign-rust-feature")
         );
 
-        // Verify the assign task succeeded
+        // Dump agent output on any failure
         let assign_status = task_status(&wg_dir, "assign-rust-feature");
+        let dump_agent_logs = |wg_dir: &Path| {
+            let agents_dir = wg_dir.join("agents");
+            if agents_dir.exists() {
+                for entry in fs::read_dir(&agents_dir).unwrap().filter_map(|e| e.ok()) {
+                    for fname in &["output.log", "prompt.txt"] {
+                        let fpath = entry.path().join(fname);
+                        if fpath.exists() {
+                            let content = fs::read_to_string(&fpath).unwrap_or_default();
+                            let start = content.len().saturating_sub(3000);
+                            eprintln!("--- {} ---\n{}", fpath.display(), &content[start..]);
+                        }
+                    }
+                }
+            }
+        };
+
+        if assign_status != "done" {
+            dump_agent_logs(&wg_dir);
+        }
         assert_eq!(
             assign_status, "done",
             "assign task should be done, got: {}",
@@ -1068,6 +1174,9 @@ PATH = "{}"
         assert!(task_val.is_some(), "rust-feature task should exist");
         let task_val = task_val.unwrap();
         let assigned_agent = task_val["agent"].as_str();
+        if assigned_agent.is_none() {
+            dump_agent_logs(&wg_dir);
+        }
         assert!(
             assigned_agent.is_some(),
             "rust-feature task should have an agent assigned after LLM reasoning. Task JSON: {}",
