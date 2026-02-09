@@ -358,6 +358,13 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
                 continue;
             }
 
+            // Skip tasks tagged with assignment/evaluation/evolution to prevent
+            // infinite regress (assign-assign-assign-...)
+            let dominated_tags = ["assignment", "evaluation", "evolution"];
+            if ready_task.tags.iter().any(|tag| dominated_tags.contains(&tag.as_str())) {
+                continue;
+            }
+
             let assign_task_id = format!("assign-{}", ready_task.id);
 
             // Skip if assignment task already exists (idempotent)
