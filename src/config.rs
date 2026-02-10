@@ -73,6 +73,11 @@ pub struct AgencyConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluator_agent: Option<String>,
 
+    /// Model to use for assigner agents (None = use default agent model).
+    /// Fallback when assigner_agent is not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub assigner_model: Option<String>,
+
     /// Model to use for evaluator agents (None = use default agent model).
     /// Fallback when evaluator_agent is not set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -94,6 +99,7 @@ impl Default for AgencyConfig {
             auto_evaluate: false,
             auto_assign: false,
             assigner_agent: None,
+            assigner_model: None,
             evaluator_agent: None,
             evaluator_model: None,
             evolver_agent: None,
@@ -490,6 +496,7 @@ name = "My Project"
         assert!(!config.agency.auto_evaluate);
         assert!(!config.agency.auto_assign);
         assert!(config.agency.assigner_agent.is_none());
+        assert!(config.agency.assigner_model.is_none());
         assert!(config.agency.evaluator_agent.is_none());
         assert!(config.agency.evaluator_model.is_none());
         assert!(config.agency.evolver_agent.is_none());
@@ -502,6 +509,7 @@ name = "My Project"
 [agency]
 auto_evaluate = true
 auto_assign = true
+assigner_model = "haiku"
 evaluator_model = "haiku"
 assigner_agent = "abc123"
 evaluator_agent = "def456"
@@ -511,6 +519,7 @@ retention_heuristics = "Retire roles scoring below 0.3 after 10 evaluations"
         let config: Config = toml::from_str(toml_str).unwrap();
         assert!(config.agency.auto_evaluate);
         assert!(config.agency.auto_assign);
+        assert_eq!(config.agency.assigner_model, Some("haiku".to_string()));
         assert_eq!(config.agency.evaluator_model, Some("haiku".to_string()));
         assert_eq!(config.agency.assigner_agent, Some("abc123".to_string()));
         assert_eq!(config.agency.evaluator_agent, Some("def456".to_string()));

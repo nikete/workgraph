@@ -4,6 +4,7 @@ use std::path::Path;
 use workgraph::agency::capture_task_output;
 use workgraph::graph::Status;
 use workgraph::parser::{load_graph, save_graph};
+use workgraph::query;
 
 use super::graph_path;
 
@@ -24,6 +25,24 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
         println!("Task '{}' is already done", id);
         return Ok(());
     }
+
+    // Check for unresolved blockers
+    let blockers = query::blocked_by(&graph, id);
+    if !blockers.is_empty() {
+        let blocker_list: Vec<String> = blockers
+            .iter()
+            .map(|t| format!("  - {} ({}): {:?}", t.id, t.title, t.status))
+            .collect();
+        anyhow::bail!(
+            "Cannot mark '{}' as done: blocked by {} unresolved task(s):\n{}",
+            id,
+            blockers.len(),
+            blocker_list.join("\n")
+        );
+    }
+
+    // Re-acquire mutable reference after immutable borrow
+    let task = graph.get_task_mut(id).unwrap();
 
     // Verified tasks must use submit -> approve workflow
     if task.verify.is_some() {

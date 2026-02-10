@@ -419,7 +419,7 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
                 retry_count: 0,
                 max_retries: None,
                 failure_reason: None,
-                model: None,
+                model: config.agency.assigner_model.clone(),
                 verify: None,
                 agent: None,
             };

@@ -9,6 +9,7 @@ use std::path::Path;
 use workgraph::agency::capture_task_output;
 use workgraph::graph::{LogEntry, Status};
 use workgraph::parser::{load_graph, save_graph};
+use workgraph::query;
 
 use super::graph_path;
 
@@ -33,6 +34,24 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>) -> Result<()> {
             task.status
         );
     }
+
+    // Check for unresolved blockers
+    let blockers = query::blocked_by(&graph, task_id);
+    if !blockers.is_empty() {
+        let blocker_list: Vec<String> = blockers
+            .iter()
+            .map(|t| format!("  - {} ({}): {:?}", t.id, t.title, t.status))
+            .collect();
+        anyhow::bail!(
+            "Cannot submit task '{}': blocked by {} unresolved task(s):\n{}",
+            task_id,
+            blockers.len(),
+            blocker_list.join("\n")
+        );
+    }
+
+    // Re-acquire mutable reference after immutable borrow
+    let task = graph.get_task_mut(task_id).unwrap();
 
     // Set status to PendingReview
     task.status = Status::PendingReview;
