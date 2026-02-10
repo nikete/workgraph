@@ -99,6 +99,48 @@ enum Commands {
         verify: Option<String>,
     },
 
+    /// Edit an existing task
+    Edit {
+        /// Task ID to edit
+        id: String,
+
+        /// Update task title
+        #[arg(long)]
+        title: Option<String>,
+
+        /// Update task description
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+
+        /// Add a blocked-by dependency
+        #[arg(long = "add-blocked-by")]
+        add_blocked_by: Vec<String>,
+
+        /// Remove a blocked-by dependency
+        #[arg(long = "remove-blocked-by")]
+        remove_blocked_by: Vec<String>,
+
+        /// Add a tag
+        #[arg(long = "add-tag")]
+        add_tag: Vec<String>,
+
+        /// Remove a tag
+        #[arg(long = "remove-tag")]
+        remove_tag: Vec<String>,
+
+        /// Update preferred model
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Add a required skill
+        #[arg(long = "add-skill")]
+        add_skill: Vec<String>,
+
+        /// Remove a required skill
+        #[arg(long = "remove-skill")]
+        remove_skill: Vec<String>,
+    },
+
     /// Mark a task as done (fails for verified tasks - use submit instead)
     Done {
         /// Task ID to mark as done
@@ -1351,6 +1393,7 @@ fn command_name(cmd: &Commands) -> &'static str {
     match cmd {
         Commands::Init => "init",
         Commands::Add { .. } => "add",
+        Commands::Edit { .. } => "edit",
         Commands::Done { .. } => "done",
         Commands::Submit { .. } => "submit",
         Commands::Approve { .. } => "approve",
@@ -1470,6 +1513,30 @@ fn main() -> Result<()> {
             max_retries,
             model.as_deref(),
             verify.as_deref(),
+        ),
+        Commands::Edit {
+            id,
+            title,
+            description,
+            add_blocked_by,
+            remove_blocked_by,
+            add_tag,
+            remove_tag,
+            model,
+            add_skill,
+            remove_skill,
+        } => commands::edit::run(
+            &workgraph_dir,
+            &id,
+            title.as_deref(),
+            description.as_deref(),
+            &add_blocked_by,
+            &remove_blocked_by,
+            &add_tag,
+            &remove_tag,
+            model.as_deref(),
+            &add_skill,
+            &remove_skill,
         ),
         Commands::Done { id } => commands::done::run(&workgraph_dir, &id),
         Commands::Submit { id, actor } => commands::submit::run(&workgraph_dir, &id, actor.as_deref()),

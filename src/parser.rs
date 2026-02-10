@@ -1,8 +1,11 @@
 use crate::graph::{Node, WorkGraph};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use thiserror::Error;
+
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
 
 #[derive(Error, Debug)]
 pub enum ParseError {
@@ -13,10 +16,86 @@ pub enum ParseError {
         line: usize,
         source: serde_json::Error,
     },
+    #[error("Lock error: {0}")]
+    Lock(String),
+}
+
+/// RAII guard for file locks - automatically releases lock on drop
+struct FileLock {
+    #[cfg(unix)]
+    file: File,
+}
+
+impl FileLock {
+    /// Acquire an exclusive lock on a lock file
+    #[cfg(unix)]
+    fn acquire<P: AsRef<Path>>(lock_path: P) -> Result<Self, ParseError> {
+        use std::os::unix::io::AsRawFd;
+
+        // Ensure the .workgraph directory exists
+        if let Some(parent) = lock_path.as_ref().parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Open/create the lock file
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&lock_path)?;
+
+        // Acquire exclusive lock (LOCK_EX) - blocks until available
+        let fd = file.as_raw_fd();
+        let ret = unsafe { libc::flock(fd, libc::LOCK_EX) };
+
+        if ret != 0 {
+            return Err(ParseError::Lock(format!(
+                "Failed to acquire lock on {:?}: {}",
+                lock_path.as_ref(),
+                std::io::Error::last_os_error()
+            )));
+        }
+
+        Ok(FileLock { file })
+    }
+
+    #[cfg(not(unix))]
+    fn acquire<P: AsRef<Path>>(_lock_path: P) -> Result<Self, ParseError> {
+        // On non-Unix systems, we can't use flock - return a no-op lock
+        // This is a limitation but workgraph is primarily for Unix systems
+        Ok(FileLock {})
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            // Release the lock (LOCK_UN) - best effort, ignore errors on drop
+            let fd = self.file.as_raw_fd();
+            unsafe {
+                libc::flock(fd, libc::LOCK_UN);
+            }
+        }
+    }
+}
+
+/// Get the lock file path for a given graph file
+fn get_lock_path<P: AsRef<Path>>(graph_path: P) -> PathBuf {
+    let graph_path = graph_path.as_ref();
+    if let Some(parent) = graph_path.parent() {
+        parent.join("graph.lock")
+    } else {
+        PathBuf::from("graph.lock")
+    }
 }
 
 /// Load a work graph from a JSONL file
+/// Uses advisory file locking to prevent concurrent access corruption
 pub fn load_graph<P: AsRef<Path>>(path: P) -> Result<WorkGraph, ParseError> {
+    let lock_path = get_lock_path(&path);
+    let _lock = FileLock::acquire(&lock_path)?;
+
     let file = File::open(path)?;
     let reader = BufReader::new(file);
     let mut graph = WorkGraph::new();
@@ -35,10 +114,15 @@ pub fn load_graph<P: AsRef<Path>>(path: P) -> Result<WorkGraph, ParseError> {
     }
 
     Ok(graph)
+    // Lock is automatically released when _lock goes out of scope
 }
 
 /// Save a work graph to a JSONL file
+/// Uses advisory file locking to prevent concurrent access corruption
 pub fn save_graph<P: AsRef<Path>>(graph: &WorkGraph, path: P) -> Result<(), ParseError> {
+    let lock_path = get_lock_path(&path);
+    let _lock = FileLock::acquire(&lock_path)?;
+
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
@@ -51,6 +135,7 @@ pub fn save_graph<P: AsRef<Path>>(graph: &WorkGraph, path: P) -> Result<(), Pars
     }
 
     Ok(())
+    // Lock is automatically released when _lock goes out of scope
 }
 
 #[cfg(test)]
@@ -162,5 +247,56 @@ mod tests {
         let result = load_graph("/nonexistent/path/graph.jsonl");
         assert!(result.is_err());
         assert!(matches!(result.unwrap_err(), ParseError::Io(_)));
+    }
+
+    #[test]
+    fn test_concurrent_access_with_locking() {
+        use std::sync::Arc;
+        use std::thread;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        // Create a temporary file
+        let file = NamedTempFile::new().unwrap();
+        let path = Arc::new(file.path().to_path_buf());
+
+        // Initialize with a task
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("t1", "Initial Task")));
+        save_graph(&graph, path.as_ref()).unwrap();
+
+        let success_count = Arc::new(AtomicUsize::new(0));
+        let mut handles = vec![];
+
+        // Spawn multiple threads that try to read and write concurrently
+        for i in 0..10 {
+            let path = Arc::clone(&path);
+            let success_count = Arc::clone(&success_count);
+
+            let handle = thread::spawn(move || {
+                // Each thread loads the graph, adds a task, and saves it back
+                if let Ok(mut graph) = load_graph(path.as_ref()) {
+                    graph.add_node(Node::Task(make_task(&format!("t{}", i + 2), &format!("Task {}", i + 2))));
+                    if save_graph(&graph, path.as_ref()).is_ok() {
+                        success_count.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            });
+
+            handles.push(handle);
+        }
+
+        // Wait for all threads to complete
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        // Verify we can still load the graph without corruption
+        let final_graph = load_graph(path.as_ref()).unwrap();
+
+        // At least some operations should have succeeded
+        assert!(success_count.load(Ordering::SeqCst) > 0);
+
+        // The graph should be parseable (no EOF errors or corruption)
+        assert!(final_graph.len() > 0);
     }
 }

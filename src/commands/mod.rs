@@ -60,6 +60,7 @@ pub mod role;
 pub mod motivation;
 pub mod assign;
 pub mod evolve;
+pub mod edit;
 #[cfg(any(feature = "matrix", feature = "matrix-lite"))]
 pub mod notify;
 #[cfg(any(feature = "matrix", feature = "matrix-lite"))]
