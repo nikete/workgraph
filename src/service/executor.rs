@@ -37,8 +37,12 @@ impl TemplateVars {
         let task_identity = Self::resolve_identity(task, workgraph_dir);
 
         let working_dir = workgraph_dir
-            .and_then(|d| d.parent())
-            .map(|p| p.to_string_lossy().to_string())
+            .and_then(|d| {
+                // Canonicalize to resolve relative paths like ".workgraph"
+                // whose parent() would be "" instead of the actual directory.
+                let abs = d.canonicalize().ok()?;
+                abs.parent().map(|p| p.to_string_lossy().to_string())
+            })
             .unwrap_or_default();
 
         let skills_preamble = Self::resolve_skills_preamble(workgraph_dir);
@@ -102,7 +106,10 @@ impl TemplateVars {
     /// agents spawned via `--print` (which don't trigger SessionStart hooks)
     /// still get the skill-invocation discipline.
     fn resolve_skills_preamble(workgraph_dir: Option<&Path>) -> String {
-        let project_root = match workgraph_dir.and_then(|d| d.parent()) {
+        let project_root = match workgraph_dir.and_then(|d| {
+            // Canonicalize to handle relative paths like ".workgraph"
+            d.canonicalize().ok().and_then(|abs| abs.parent().map(|p| p.to_path_buf()))
+        }) {
             Some(r) => r,
             None => return String::new(),
         };
