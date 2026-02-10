@@ -140,9 +140,10 @@ pub fn run(
     // Load config for evolver identity and model
     let config = Config::load(dir).unwrap_or_default();
 
-    // Determine model
+    // Determine model: CLI flag > agency.evolver_model > agent.model
     let model = model
         .map(|s| s.to_string())
+        .or(config.agency.evolver_model.clone())
         .unwrap_or_else(|| config.agent.model.clone());
 
     // Build performance summary

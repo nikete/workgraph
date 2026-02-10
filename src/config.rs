@@ -83,6 +83,11 @@ pub struct AgencyConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evaluator_model: Option<String>,
 
+    /// Model to use for evolver agents (None = use default agent model).
+    /// Fallback when evolver_agent is not set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evolver_model: Option<String>,
+
     /// Content-hash of agent to use as evolver
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evolver_agent: Option<String>,
@@ -102,6 +107,7 @@ impl Default for AgencyConfig {
             assigner_model: None,
             evaluator_agent: None,
             evaluator_model: None,
+            evolver_model: None,
             evolver_agent: None,
             retention_heuristics: None,
         }
@@ -499,6 +505,7 @@ name = "My Project"
         assert!(config.agency.assigner_model.is_none());
         assert!(config.agency.evaluator_agent.is_none());
         assert!(config.agency.evaluator_model.is_none());
+        assert!(config.agency.evolver_model.is_none());
         assert!(config.agency.evolver_agent.is_none());
         assert!(config.agency.retention_heuristics.is_none());
     }
@@ -511,6 +518,7 @@ auto_evaluate = true
 auto_assign = true
 assigner_model = "haiku"
 evaluator_model = "haiku"
+evolver_model = "opus-4-5"
 assigner_agent = "abc123"
 evaluator_agent = "def456"
 evolver_agent = "ghi789"
@@ -521,6 +529,7 @@ retention_heuristics = "Retire roles scoring below 0.3 after 10 evaluations"
         assert!(config.agency.auto_assign);
         assert_eq!(config.agency.assigner_model, Some("haiku".to_string()));
         assert_eq!(config.agency.evaluator_model, Some("haiku".to_string()));
+        assert_eq!(config.agency.evolver_model, Some("opus-4-5".to_string()));
         assert_eq!(config.agency.assigner_agent, Some("abc123".to_string()));
         assert_eq!(config.agency.evaluator_agent, Some("def456".to_string()));
         assert_eq!(config.agency.evolver_agent, Some("ghi789".to_string()));

@@ -39,8 +39,14 @@ pub fn show(dir: &Path, json: bool) -> Result<()> {
         if let Some(ref agent) = config.agency.evaluator_agent {
             println!("  evaluator_agent = \"{}\"", agent);
         }
+        if let Some(ref model) = config.agency.assigner_model {
+            println!("  assigner_model = \"{}\"", model);
+        }
         if let Some(ref model) = config.agency.evaluator_model {
             println!("  evaluator_model = \"{}\"", model);
+        }
+        if let Some(ref model) = config.agency.evolver_model {
+            println!("  evolver_model = \"{}\"", model);
         }
         if let Some(ref agent) = config.agency.evolver_agent {
             println!("  evolver_agent = \"{}\"", agent);
@@ -85,7 +91,9 @@ pub fn update(
     coordinator_executor: Option<&str>,
     auto_evaluate: Option<bool>,
     auto_assign: Option<bool>,
+    assigner_model: Option<&str>,
     evaluator_model: Option<&str>,
+    evolver_model: Option<&str>,
     assigner_agent: Option<&str>,
     evaluator_agent: Option<&str>,
     evolver_agent: Option<&str>,
@@ -151,9 +159,21 @@ pub fn update(
         changed = true;
     }
 
+    if let Some(m) = assigner_model {
+        config.agency.assigner_model = Some(m.to_string());
+        println!("Set agency.assigner_model = \"{}\"", m);
+        changed = true;
+    }
+
     if let Some(m) = evaluator_model {
         config.agency.evaluator_model = Some(m.to_string());
         println!("Set agency.evaluator_model = \"{}\"", m);
+        changed = true;
+    }
+
+    if let Some(m) = evolver_model {
+        config.agency.evolver_model = Some(m.to_string());
+        println!("Set agency.evolver_model = \"{}\"", m);
         changed = true;
     }
 
@@ -364,7 +384,7 @@ mod tests {
         let result = update(
             temp_dir.path(), Some("opencode"), Some("gpt-4"), Some(30),
             None, None, None, None,
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None,
         );
         assert!(result.is_ok());
 
@@ -381,7 +401,7 @@ mod tests {
 
         let result = update(
             temp_dir.path(), None, None, None, Some(8), Some(60), None, Some("shell"),
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None,
         );
         assert!(result.is_ok());
 
@@ -398,7 +418,7 @@ mod tests {
 
         let result = update(
             temp_dir.path(), None, None, None, None, None, Some(120), None,
-            None, None, None, None, None, None, None,
+            None, None, None, None, None, None, None, None, None,
         );
         assert!(result.is_ok());
 
@@ -414,7 +434,8 @@ mod tests {
         let result = update(
             temp_dir.path(), None, None, None, None, None, None, None,
             Some(true), Some(true),
-            Some("haiku"), Some("assigner-hash"), Some("evaluator-hash"),
+            Some("sonnet"), Some("haiku"), Some("opus-4-5"),
+            Some("assigner-hash"), Some("evaluator-hash"),
             Some("evolver-hash"), Some("Retire below 0.3 after 10 evals"),
         );
         assert!(result.is_ok());
@@ -422,7 +443,9 @@ mod tests {
         let config = Config::load(temp_dir.path()).unwrap();
         assert!(config.agency.auto_evaluate);
         assert!(config.agency.auto_assign);
+        assert_eq!(config.agency.assigner_model, Some("sonnet".to_string()));
         assert_eq!(config.agency.evaluator_model, Some("haiku".to_string()));
+        assert_eq!(config.agency.evolver_model, Some("opus-4-5".to_string()));
         assert_eq!(config.agency.assigner_agent, Some("assigner-hash".to_string()));
         assert_eq!(config.agency.evaluator_agent, Some("evaluator-hash".to_string()));
         assert_eq!(config.agency.evolver_agent, Some("evolver-hash".to_string()));

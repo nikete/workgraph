@@ -656,9 +656,17 @@ enum Commands {
         #[arg(long)]
         auto_assign: Option<bool>,
 
+        /// Set model for assigner agents
+        #[arg(long)]
+        assigner_model: Option<String>,
+
         /// Set model for evaluator agents
         #[arg(long)]
         evaluator_model: Option<String>,
+
+        /// Set model for evolver agents
+        #[arg(long)]
+        evolver_model: Option<String>,
 
         /// Set assigner agent (content-hash)
         #[arg(long)]
@@ -1747,7 +1755,9 @@ fn main() -> Result<()> {
             room,
             auto_evaluate,
             auto_assign,
+            assigner_model,
             evaluator_model,
+            evolver_model,
             assigner_agent,
             evaluator_agent,
             evolver_agent,
@@ -1784,7 +1794,7 @@ fn main() -> Result<()> {
                 && max_agents.is_none() && coordinator_interval.is_none() && poll_interval.is_none()
                 && coordinator_executor.is_none()
                 && auto_evaluate.is_none() && auto_assign.is_none()
-                && evaluator_model.is_none()
+                && assigner_model.is_none() && evaluator_model.is_none() && evolver_model.is_none()
                 && assigner_agent.is_none() && evaluator_agent.is_none()
                 && evolver_agent.is_none() && retention_heuristics.is_none()) {
                 commands::config_cmd::show(&workgraph_dir, cli.json)
@@ -1800,7 +1810,9 @@ fn main() -> Result<()> {
                     coordinator_executor.as_deref(),
                     auto_evaluate,
                     auto_assign,
+                    assigner_model.as_deref(),
                     evaluator_model.as_deref(),
+                    evolver_model.as_deref(),
                     assigner_agent.as_deref(),
                     evaluator_agent.as_deref(),
                     evolver_agent.as_deref(),
