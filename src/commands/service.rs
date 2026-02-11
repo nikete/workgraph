@@ -421,7 +421,7 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
                 failure_reason: None,
                 model: config.agency.assigner_model.clone(),
                 verify: None,
-                agent: None,
+                agent: config.agency.assigner_agent.clone(),
             };
 
             mutable_graph.add_node(Node::Task(assign_task));
@@ -527,7 +527,7 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
                 failure_reason: None,
                 model: config.agency.evaluator_model.clone(),
                 verify: None,
-                agent: None,
+                agent: config.agency.evaluator_agent.clone(),
             };
 
             mutable_graph.add_node(Node::Task(eval_task));
@@ -1897,6 +1897,16 @@ fn is_process_running(pid: u32) -> bool {
 #[cfg(not(unix))]
 fn is_process_running(_pid: u32) -> bool {
     true
+}
+
+/// Public wrapper: check if the service process is alive
+pub fn is_service_alive(pid: u32) -> bool {
+    is_process_running(pid)
+}
+
+/// Check if the coordinator is currently paused
+pub fn is_service_paused(dir: &Path) -> bool {
+    CoordinatorState::load(dir).map_or(false, |c| c.paused)
 }
 
 /// Send SIGTERM, wait, then SIGKILL

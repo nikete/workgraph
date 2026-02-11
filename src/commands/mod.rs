@@ -77,3 +77,23 @@ pub fn graph_path(dir: &Path) -> std::path::PathBuf {
 pub fn notify_graph_changed(dir: &Path) {
     let _ = service::send_request(dir, service::IpcRequest::GraphChanged);
 }
+
+/// Check service status and print a hint for the user/agent.
+/// Returns true if the service is running.
+pub fn print_service_hint(dir: &Path) -> bool {
+    match service::ServiceState::load(dir) {
+        Ok(Some(state)) if service::is_service_alive(state.pid) => {
+            if service::is_service_paused(dir) {
+                eprintln!("Service: running (paused). New tasks won't be dispatched until resumed. Use `wg service resume`.");
+            } else {
+                eprintln!("Service: running. The coordinator will dispatch this automatically.");
+            }
+            true
+        }
+        _ => {
+            eprintln!("Warning: No service running. Tasks won't be dispatched automatically.");
+            eprintln!("  Start the coordinator with: wg service start");
+            false
+        }
+    }
+}

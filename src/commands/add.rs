@@ -92,6 +92,7 @@ pub fn run(
     super::notify_graph_changed(dir);
 
     println!("Added task: {} ({})", title, task_id);
+    super::print_service_hint(dir);
     Ok(())
 }
 
