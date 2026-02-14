@@ -60,6 +60,17 @@ CONTEXT & ARTIFACTS
   wg artifact <task-id> path  # Record output file/artifact
   wg log <task-id> --list     # View task's progress log
 
+LOOP EDGES (cyclic processes)
+─────────────────────────────────────────
+  Some workflows repeat. A loops_to edge fires when its task completes,
+  resetting a target task back to open and incrementing loop_iteration.
+  Intermediate tasks in the chain are also re-opened automatically.
+
+  wg add "Revise" --loops-to write --loop-max 3          # loop back to write
+  wg add "Poll" --loops-to poll --loop-max 10 --loop-delay 5m  # self-loop with delay
+  wg show <task-id>           # See loop_iteration to know which pass you're on
+  wg loops                    # List all loop edges and their status
+
 TIPS
 ─────────────────────────────────────────
 • If the coordinator is running: add tasks → it dispatches automatically
@@ -105,6 +116,12 @@ pub fn run(json: bool) -> Result<()> {
                     "fail": "Mark failed (can be retried)",
                     "abandon": "Give up permanently"
                 }
+            },
+            "loops": {
+                "description": "Loop edges model repeating workflows. A loops_to edge fires when its task completes, resetting a target back to open and incrementing loop_iteration.",
+                "create": "wg add \"Revise\" --loops-to write --loop-max 3",
+                "inspect": ["wg show <task-id>", "wg loops"],
+                "note": "Agents read loop_iteration from wg show to know which pass they are on"
             },
             "tips": [
                 "If the coordinator is running: add tasks with dependencies, it dispatches automatically",

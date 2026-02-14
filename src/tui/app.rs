@@ -1358,13 +1358,8 @@ impl App {
 
     /// Check whether the service daemon is running
     pub fn is_service_running(&self) -> bool {
-        let pid_path = self.workgraph_dir.join("service.pid");
-        if pid_path.exists() {
-            if let Ok(contents) = std::fs::read_to_string(&pid_path) {
-                if let Ok(pid) = contents.trim().parse::<u32>() {
-                    return is_process_alive(pid);
-                }
-            }
+        if let Ok(Some(state)) = crate::commands::service::ServiceState::load(&self.workgraph_dir) {
+            return is_process_alive(state.pid);
         }
         false
     }

@@ -302,8 +302,36 @@ enum Commands {
         status: Option<String>,
     },
 
-    /// Show the full graph (DOT format for Graphviz)
+    /// Visualize the dependency graph (ASCII tree by default)
     Graph {
+        /// Include done tasks (default: only open tasks)
+        #[arg(long)]
+        all: bool,
+
+        /// Filter by status (open, in-progress, done, blocked)
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Highlight the critical path in red
+        #[arg(long)]
+        critical_path: bool,
+
+        /// Output Graphviz DOT format
+        #[arg(long, conflicts_with_all = ["mermaid"])]
+        dot: bool,
+
+        /// Output Mermaid diagram format
+        #[arg(long, conflicts_with_all = ["dot"])]
+        mermaid: bool,
+
+        /// Render directly to file (requires dot installed)
+        #[arg(long, short)]
+        output: Option<String>,
+    },
+
+    /// Output the full graph data (DOT format with archive support)
+    #[command(hide = true)]
+    GraphExport {
         /// Include archived tasks
         #[arg(long)]
         archive: bool,
@@ -433,7 +461,8 @@ enum Commands {
         list: bool,
     },
 
-    /// Visualize the graph with filtering options
+    /// Alias for 'graph' (deprecated, use 'wg graph' instead)
+    #[command(hide = true)]
     Viz {
         /// Include done tasks (default: only open tasks)
         #[arg(long)]
@@ -456,7 +485,8 @@ enum Commands {
         output: Option<String>,
     },
 
-    /// Show ASCII dependency graph
+    /// Alias for 'graph' (deprecated, use 'wg graph' instead)
+    #[command(hide = true)]
     Dag {
         /// Include done tasks (default: only open tasks)
         #[arg(long)]
@@ -1132,7 +1162,7 @@ enum ServiceCommands {
         #[arg(long)]
         port: Option<u16>,
 
-        /// Unix socket path (default: /tmp/wg-{project}.sock)
+        /// Unix socket path (default: .workgraph/service/daemon.sock)
         #[arg(long)]
         socket: Option<String>,
 
@@ -1436,6 +1466,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Check => "check",
         Commands::List { .. } => "list",
         Commands::Graph { .. } => "graph",
+        Commands::GraphExport { .. } => "graph-export",
         Commands::Cost { .. } => "cost",
         Commands::Coordinate { .. } => "coordinate",
         Commands::Plan { .. } => "plan",
@@ -1598,7 +1629,31 @@ fn main() -> Result<()> {
         Commands::WhyBlocked { id } => commands::why_blocked::run(&workgraph_dir, &id, cli.json),
         Commands::Check => commands::check::run(&workgraph_dir),
         Commands::List { status } => commands::list::run(&workgraph_dir, status.as_deref(), cli.json),
-        Commands::Graph { archive, since, until } => {
+        Commands::Graph {
+            all,
+            status,
+            critical_path,
+            dot,
+            mermaid,
+            output,
+        } => {
+            let fmt = if dot {
+                commands::viz::OutputFormat::Dot
+            } else if mermaid {
+                commands::viz::OutputFormat::Mermaid
+            } else {
+                commands::viz::OutputFormat::Ascii
+            };
+            let options = commands::viz::VizOptions {
+                all,
+                status,
+                critical_path,
+                format: fmt,
+                output,
+            };
+            commands::viz::run(&workgraph_dir, options)
+        }
+        Commands::GraphExport { archive, since, until } => {
             commands::graph::run(&workgraph_dir, archive, since.as_deref(), until.as_deref())
         }
         Commands::Cost { id } => commands::cost::run(&workgraph_dir, &id),

@@ -585,6 +585,74 @@ For most projects:
 
 5. **Ship**: When `wg ready` is empty and everything important is done, you're there.
 
+## Loop edges (cyclic processes)
+
+Some workflows repeat: write → review → revise → write again. Loop edges let you model this. A `loops_to` edge on a task fires when that task completes, resetting a target task back to `open` and incrementing its `loop_iteration` counter.
+
+### How it works
+
+When the source task completes (via `wg done` or `wg approve`), each of its loop edges is evaluated:
+
+1. **Guard check** — if a guard condition is set, it must be true for the loop to fire.
+2. **Iteration check** — the target's `loop_iteration` must be below `max_iterations`.
+3. **Re-activate** — the target is reset to `open`, its `loop_iteration` is incremented, and any `assigned`/`started_at`/`completed_at` fields are cleared.
+4. **Propagate** — intermediate tasks between the target and source in the dependency chain are also re-opened. This happens through the dependency system, not the loop edge itself — resetting the target breaks the `blocked_by` chain downstream, so tasks that were `done` from a previous iteration get re-opened to run again.
+5. **Delay** — if `--loop-delay` is set, the target gets a `ready_after` timestamp so it won't be dispatched until the delay elapses.
+
+### Creating loop edges
+
+```bash
+# write → review → revise, with revise looping back to write (max 3 iterations)
+wg add "Write draft" --id write
+wg add "Review draft" --blocked-by write --id review
+wg add "Revise draft" --blocked-by review --id revise \
+  --loops-to write --loop-max 3
+
+# With a delay (wait 5 minutes between iterations)
+wg add "Poll status" --loops-to poll-status --loop-max 10 --loop-delay 5m
+
+# With a guard condition (only loop if another task has a specific status)
+wg add "Retry upload" --loops-to retry-upload --loop-max 5 \
+  --loop-guard "task:check-connection=done"
+
+# Self-loops are allowed
+wg add "Periodic check" --loops-to periodic-check --loop-max 20 --loop-delay 1h
+
+# Edit existing tasks to add/remove loop edges
+wg edit my-task --add-loops-to target-task --loop-max 5
+wg edit my-task --remove-loops-to target-task
+```
+
+`--loop-max` is required — every loop must have a hard iteration cap.
+
+### Example: write → review → revise cycle
+
+```
+Iteration 0: write(open) → review(blocked) → revise(blocked)
+             write completes → review becomes ready
+             review completes → revise becomes ready
+             revise completes → loop fires → write reset to open (iteration 1)
+
+Iteration 1: write(open, iter=1) → review(re-opened) → revise(re-opened)
+             Same cycle repeats...
+
+Iteration 2: write(open, iter=2) → review(re-opened) → revise(re-opened)
+             revise completes → loop fires → write reset to open (iteration 3)
+             iteration 3 >= max 3 → loop stops
+```
+
+### How agents see loops
+
+When an agent is spawned on a task inside a loop, it can read `loop_iteration` from `wg show` to know which pass it's on. Previous iterations' logs and artifacts are preserved, so the agent can review what happened before and build on it rather than starting from scratch.
+
+### Inspecting loops
+
+```bash
+wg loops               # List all loop edges, their status, and iteration counts
+wg show <task-id>      # Shows loop edges and current iteration on a task
+wg graph               # Loop edges appear as dashed lines in graph output
+```
+
 ## Key concepts
 
 **Tasks** have a status (`open`, `in-progress`, `done`, `failed`, `abandoned`, `pending-review`) and can block other tasks. Tasks can carry a per-task `model` override and an `agent` identity assignment.
@@ -606,7 +674,7 @@ wg ready              # what can be worked on now?
 wg list               # all tasks (--status to filter)
 wg show <id>          # full task details
 wg status             # quick one-screen overview
-wg dag                # ASCII dependency graph (--all to include done)
+wg graph              # ASCII dependency graph (--all to include done)
 
 wg why-blocked <id>   # trace the blocker chain
 wg impact <id>        # what depends on this?
@@ -622,14 +690,14 @@ wg structure          # entry points, dead ends, high-impact roots
 wg analyze            # comprehensive health report (all of the above)
 ```
 
-See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference including `viz`, `plan`, `coordinate`, `archive`, `reschedule`, and more.
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference including `graph`, `plan`, `coordinate`, `archive`, `reschedule`, and more.
 
 ## Utilities
 
 ```bash
 wg log <id> "message"     # add progress notes to a task
 wg artifact <id> path     # record a file produced by a task
-wg viz --format mermaid   # generate DOT/mermaid/ASCII graph
+wg graph --mermaid        # generate DOT/mermaid/ASCII graph
 wg archive                # archive completed tasks
 wg check                  # check graph for cycles and issues
 wg trajectory <id>        # optimal task claim order for agents

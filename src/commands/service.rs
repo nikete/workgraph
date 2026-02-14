@@ -165,15 +165,9 @@ pub fn tail_log(dir: &Path, n: usize, level_filter: Option<&str>) -> Vec<String>
     filtered.into_iter().rev().take(n).collect::<Vec<_>>().into_iter().rev().collect()
 }
 
-/// Default socket path (project-specific)
+/// Default socket path (project-specific, inside .workgraph dir)
 pub fn default_socket_path(dir: &Path) -> PathBuf {
-    // Use project directory name for unique socket
-    let project_name = dir
-        .canonicalize()
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
-        .unwrap_or_else(|| "wg".to_string());
-    PathBuf::from(format!("/tmp/wg-{}.sock", project_name))
+    dir.join("service").join("daemon.sock")
 }
 
 /// Path to the service state file
@@ -391,14 +385,80 @@ pub fn coordinator_tick(dir: &Path, max_agents: usize, executor: &str, model: Op
                 desc.push_str(&format!("**Skills:** {}\n", task_skills.join(", ")));
             }
             desc.push_str(&format!(
-                "\n## Instructions\n\
-                 Inspect the agency with `wg agent list`, `wg role list`, etc.\n\
-                 Choose the best agent for this task, then run:\n\
+                "\n## Instructions\n\n\
+                 Pick the best agent for this task and assign them.\n\n\
+                 ### Step 1: Gather Information\n\n\
+                 Run these commands to understand the available agents and their track records:\n\
+                 ```\n\
+                 wg agent list --json\n\
+                 wg role list --json\n\
+                 wg motivation list --json\n\
+                 ```\n\n\
+                 For agents with evaluation history, drill into performance details:\n\
+                 ```\n\
+                 wg agent performance <agent-hash> --json\n\
+                 ```\n\n\
+                 ### Step 2: Match Agent to Task\n\n\
+                 Compare each agent's capabilities to the task requirements:\n\n\
+                 1. **Role fit**: The agent's role skills should overlap with the task's \
+                 required skills. A Programmer (code-writing, testing, debugging) fits \
+                 implementation tasks; a Reviewer (code-review, security-audit) fits review \
+                 tasks; an Architect (system-design, dependency-analysis) fits design tasks; \
+                 a Documenter (technical-writing) fits documentation tasks.\n\n\
+                 2. **Motivation fit**: The agent's operational parameters should match the \
+                 task's nature. A Careful agent suits tasks where correctness is critical. \
+                 A Fast agent suits urgent, low-risk tasks. A Thorough agent suits complex \
+                 tasks requiring deep analysis.\n\n\
+                 3. **Capabilities**: Check the agent's `capabilities` list for specific \
+                 technology or domain tags that match the task (e.g., \"rust\", \"python\", \
+                 \"kubernetes\").\n\n\
+                 ### Step 3: Use Performance Data\n\n\
+                 Each agent has a `performance` record with `task_count`, `avg_score` \
+                 (0.0–1.0), and individual evaluation entries. Each evaluation has \
+                 dimension scores: `correctness` (40% weight), `completeness` (30%), \
+                 `efficiency` (15%), `style_adherence` (15%).\n\n\
+                 - **Prefer agents with higher avg_score** on similar tasks (check \
+                 evaluation `task_id` and `context_id` to see what kinds of work they've \
+                 done before).\n\
+                 - **Weight recent evaluations more** — an agent's latest scores are more \
+                 predictive than older ones.\n\
+                 - **Consider dimension strengths**: If the task demands correctness above \
+                 all else, prefer agents who score highest on `correctness` even if their \
+                 overall average is slightly lower.\n\n\
+                 ### Step 4: Handle Cold Start\n\n\
+                 When agents have 0 evaluations (new agency, or new agents), you cannot \
+                 rely on performance data. In this case:\n\n\
+                 - **Match on role and motivation** — this is the primary signal. Pick the \
+                 agent whose role skills best cover the task requirements.\n\
+                 - **Spread work across untested agents** to build evaluation data. If \
+                 multiple agents have 0 evaluations and similar role fit, prefer whichever \
+                 has completed fewer tasks (lower `task_count`) so the agency gathers \
+                 diverse signal.\n\
+                 - **Default to Careful motivation** for high-stakes tasks and Fast \
+                 motivation for routine work when there's no data to differentiate.\n\n\
+                 ### Step 5: Balance Exploration vs Exploitation\n\n\
+                 - **Exploitation (default)**: Assign the highest-scoring agent whose \
+                 skills match. This maximizes expected quality.\n\
+                 - **Exploration**: Occasionally assign a less-proven agent to gather new \
+                 performance data. Do this when:\n\
+                   - A newer agent (higher generation, or fewer evaluations) has relevant \
+                 skills but limited history.\n\
+                   - The top performer's score advantage is small (< 0.1 difference).\n\
+                   - The task is lower-risk (not blocking many other tasks, not tagged as \
+                 critical).\n\
+                 - **Never explore with agents whose avg_score is below 0.4** — that \
+                 signals consistent poor performance.\n\n\
+                 ### Step 6: Assign\n\n\
+                 Once you've chosen an agent, run:\n\
                  ```\n\
                  wg assign {} <agent-hash>\n\
                  wg done {}\n\
+                 ```\n\n\
+                 If no suitable agent exists for this task, report why:\n\
+                 ```\n\
+                 wg fail {} --reason \"No agent with matching skills for: <explanation>\"\n\
                  ```",
-                task_id, assign_task_id,
+                task_id, assign_task_id, assign_task_id,
             ));
 
             // Create the assignment task (blocks the original)
@@ -1036,9 +1096,19 @@ pub fn generate_systemd_service(dir: &Path) -> Result<()> {
     let workdir = dir.canonicalize()
         .unwrap_or_else(|_| dir.to_path_buf());
 
+    // Derive a project identifier from the directory basename for unique service naming
+    let project_name = workdir.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("default");
+    // Sanitize for systemd unit naming: keep alphanumerics, hyphens, underscores
+    let project_name: String = project_name.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let unit_name = format!("wg-{project_name}");
+
     // ExecStart uses `wg service start` - the service daemon includes the coordinator
     let service_content = format!(r#"[Unit]
-Description=Workgraph Service
+Description=Workgraph Service ({project_name})
 After=network.target
 
 [Service]
@@ -1052,12 +1122,13 @@ RestartSec=10
 [Install]
 WantedBy=default.target
 "#,
+        project_name = project_name,
         workdir = workdir.display(),
         wg = std::env::current_exe()?.display(),
         wg_dir = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf()).display(),
     );
 
-    // Write to ~/.config/systemd/user/wg-service.service
+    // Write to ~/.config/systemd/user/wg-{project_name}.service
     let home = std::env::var("HOME").context("HOME not set")?;
     let service_dir = std::path::PathBuf::from(&home)
         .join(".config")
@@ -1066,7 +1137,7 @@ WantedBy=default.target
 
     std::fs::create_dir_all(&service_dir)?;
 
-    let service_path = service_dir.join("wg-service.service");
+    let service_path = service_dir.join(format!("{unit_name}.service"));
     std::fs::write(&service_path, service_content)?;
 
     println!("Created systemd user service: {}", service_path.display());
@@ -1076,12 +1147,12 @@ WantedBy=default.target
     println!();
     println!("To enable and start:");
     println!("  systemctl --user daemon-reload");
-    println!("  systemctl --user enable wg-service");
-    println!("  systemctl --user start wg-service");
+    println!("  systemctl --user enable {unit_name}");
+    println!("  systemctl --user start {unit_name}");
     println!();
     println!("To check status:");
-    println!("  systemctl --user status wg-service");
-    println!("  journalctl --user -u wg-service -f");
+    println!("  systemctl --user status {unit_name}");
+    println!("  journalctl --user -u {unit_name} -f");
 
     Ok(())
 }
@@ -2328,8 +2399,7 @@ mod tests {
     fn test_default_socket_path() {
         let temp_dir = TempDir::new().unwrap();
         let socket = default_socket_path(temp_dir.path());
-        assert!(socket.to_string_lossy().starts_with("/tmp/wg-"));
-        assert!(socket.to_string_lossy().ends_with(".sock"));
+        assert_eq!(socket, temp_dir.path().join("service").join("daemon.sock"));
     }
 
     #[test]

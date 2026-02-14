@@ -44,6 +44,10 @@ wg add <TITLE> [OPTIONS]
 | `--max-retries <N>` | Maximum retry attempts |
 | `--model <MODEL>` | Preferred model for this task (haiku, sonnet, opus) |
 | `--verify <CRITERIA>` | Verification criteria — task requires review before done |
+| `--loops-to <ID>` | Create a loop edge back to target task (re-activates on completion) |
+| `--loop-max <N>` | Maximum loop iterations (required with `--loops-to`) |
+| `--loop-delay <DUR>` | Delay between iterations (e.g., `30s`, `5m`, `1h`, `24h`, `7d`) |
+| `--loop-guard <EXPR>` | Guard condition: `task:<id>=<status>` or `always` |
 
 **Examples:**
 
@@ -65,6 +69,17 @@ wg add "Quick formatting fix" --model haiku
 
 # Task requiring review
 wg add "Security audit" --verify "All findings documented with severity ratings"
+
+# Loop edge: revise loops back to write (max 3 iterations)
+wg add "Revise draft" --blocked-by review \
+  --loops-to write --loop-max 3
+
+# Self-loop with delay
+wg add "Poll status" --loops-to poll-status --loop-max 10 --loop-delay 5m
+
+# Loop with guard condition
+wg add "Retry upload" --loops-to retry-upload --loop-max 5 \
+  --loop-guard "task:check-connection=done"
 ```
 
 ---
@@ -89,6 +104,12 @@ wg edit <ID> [OPTIONS]
 | `--add-skill <SKILL>` | Add a required skill (repeatable) |
 | `--remove-skill <SKILL>` | Remove a required skill (repeatable) |
 | `--model <MODEL>` | Update preferred model |
+| `--add-loops-to <ID>` | Add a loop edge back to target task |
+| `--remove-loops-to <ID>` | Remove a loop edge to target task |
+| `--loop-max <N>` | Maximum loop iterations (required with `--add-loops-to`) |
+| `--loop-delay <DUR>` | Delay between iterations (e.g., `30s`, `5m`, `1h`) |
+| `--loop-guard <EXPR>` | Guard condition: `task:<id>=<status>` or `always` |
+| `--loop-iteration <N>` | Manually override the loop iteration counter |
 
 Triggers a `graph_changed` IPC notification to the service daemon, so the coordinator picks up changes immediately.
 
@@ -564,15 +585,18 @@ wg structure
 
 ### `wg loops`
 
-Analyze cycles in the graph with classification.
+Inspect loop edges and detect dependency cycles in the graph.
 
 ```bash
 wg loops
 ```
 
+Shows all `loops_to` edges with their current iteration count, max iterations, guard conditions, delays, and whether the loop is active or exhausted. Also detects and classifies any `blocked_by` dependency cycles.
+
 **Example:**
 ```bash
 wg loops
+# Shows loop edges: revise -> write (iteration 1/3, active)
 # Detects and classifies any dependency cycles in the graph
 ```
 
@@ -671,27 +695,12 @@ wg coordinate --max-parallel 3
 
 ---
 
-### `wg dag`
+### `wg dag` *(hidden alias)*
 
-Show ASCII DAG of the dependency graph.
+Alias for `wg graph`. Kept for backward compatibility.
 
 ```bash
 wg dag [--all] [--status <STATUS>]
-```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--all` | Include done tasks (default: only open tasks) |
-| `--status <STATUS>` | Filter by status |
-
-**Example:**
-```bash
-wg dag
-# Prints an ASCII dependency tree of active tasks
-
-wg dag --all
-# Include completed tasks in the graph
 ```
 
 ---
@@ -1431,46 +1440,45 @@ wg check
 
 ### `wg graph`
 
-Output the full graph data.
+Visualize the dependency graph (ASCII tree by default).
 
 ```bash
-wg graph [--archive] [--since <DATE>] [--until <DATE>]
+wg graph [OPTIONS]
 ```
 
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--archive` | Include archived tasks |
-| `--since <DATE>` | Only tasks completed/archived after this date (YYYY-MM-DD) |
-| `--until <DATE>` | Only tasks completed/archived before this date (YYYY-MM-DD) |
+| `--all` | Include done tasks (default: only open tasks) |
+| `--status <STATUS>` | Filter by status (open, in-progress, done, blocked) |
+| `--critical-path` | Highlight the critical path in red |
+| `--dot` | Output Graphviz DOT format |
+| `--mermaid` | Output Mermaid diagram format |
+| `-o, --output <FILE>` | Render directly to file (requires graphviz) |
 
 **Example:**
 ```bash
-wg graph --json
-# Output full graph as JSON
+wg graph
+# ASCII dependency tree of active tasks
 
-wg graph --archive --since 2025-01-01
-# Include archived tasks from 2025 onward
+wg graph --all
+# Include completed tasks
+
+wg graph --dot
+# Graphviz DOT output
+
+wg graph --mermaid
+# Mermaid diagram output
+
+wg graph --dot -o graph.png
+# Render to PNG file (requires graphviz)
+
+wg graph --critical-path
+# Highlight the longest dependency chain
 ```
 
----
-
-### `wg viz`
-
-Visualize the graph with filtering options.
-
-```bash
-wg viz [OPTIONS]
-```
-
-**Options:**
-| Option | Description |
-|--------|-------------|
-| `--all` | Include done tasks |
-| `--status <STATUS>` | Filter by status |
-| `--critical-path` | Highlight critical path in red |
-| `--format <FMT>` | Output format: dot, mermaid, ascii (default: dot) |
-| `-o, --output <FILE>` | Render directly to file (requires graphviz) |
+> **Note:** `wg dag` and `wg viz` are hidden aliases for backward compatibility.
+> `wg graph-export` provides the old `wg graph` behavior (full DOT output with archive support).
 
 ---
 

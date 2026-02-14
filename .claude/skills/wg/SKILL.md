@@ -44,7 +44,7 @@ wg agents --alive        # Only alive agents
 wg agents --working      # Only working agents
 wg service status        # Service health
 wg status                # Quick one-screen overview
-wg dag                   # ASCII dependency graph
+wg graph                 # ASCII dependency graph
 wg tui                   # Interactive TUI dashboard
 ```
 
@@ -100,6 +100,26 @@ open → [claim] → in-progress → [done] → done
                              → [abandon] → abandoned
 ```
 
+## Loop edges (cyclic processes)
+
+Some workflows repeat. A `loops_to` edge on a task fires when that task completes, resetting a target task back to `open` and incrementing its `loop_iteration`. Intermediate tasks in the dependency chain are also re-opened automatically.
+
+```bash
+# Create: revise loops back to write, max 3 iterations
+wg add "Revise" --blocked-by review --loops-to write --loop-max 3
+
+# Self-loops, delays, and guards
+wg add "Poll" --loops-to poll --loop-max 10 --loop-delay 5m
+wg add "Retry" --loops-to retry --loop-max 5 --loop-guard "task:conn-check=done"
+```
+
+As a spawned agent on a looping task, check `wg show <task-id>` for `loop_iteration` to know which pass you're on. Review previous logs and artifacts to build on prior work.
+
+```bash
+wg loops                    # List all loop edges and status
+wg show <task-id>           # See loop_iteration and loop edges
+```
+
 ## Full command reference
 
 ### Task creation & editing
@@ -113,8 +133,13 @@ open → [claim] → in-progress → [done] → done
 | `wg add "X" --model haiku` | Task with preferred model |
 | `wg add "X" --verify "Tests pass"` | Task requiring review before completion |
 | `wg add "X" --tag important --hours 2` | Tags and estimates |
+| `wg add "X" --loops-to Y --loop-max 3` | Loop back to task Y on completion (max 3 iterations) |
+| `wg add "X" --loops-to Y --loop-max 5 --loop-delay 5m` | Loop with delay between iterations |
+| `wg add "X" --loops-to Y --loop-max 3 --loop-guard "task:Z=done"` | Loop with guard condition |
 | `wg edit <id> --title "New" --description "New"` | Edit task fields |
 | `wg edit <id> --add-blocked-by X --remove-blocked-by Y` | Modify dependencies |
+| `wg edit <id> --add-loops-to X --loop-max 3` | Add loop edge |
+| `wg edit <id> --remove-loops-to X` | Remove loop edge |
 | `wg edit <id> --add-tag T --remove-tag T` | Modify tags |
 | `wg edit <id> --add-skill S --remove-skill S` | Modify skills |
 | `wg edit <id> --model sonnet` | Change preferred model |
@@ -154,14 +179,13 @@ open → [claim] → in-progress → [done] → done
 
 | Command | Purpose |
 |---------|---------|
-| `wg dag` | ASCII dependency graph of open tasks |
-| `wg dag --all` | Include done tasks |
-| `wg dag --status done` | Filter by status |
-| `wg viz --format dot` | Graphviz DOT output |
-| `wg viz --format mermaid` | Mermaid diagram |
-| `wg viz --format ascii` | ASCII visualization |
-| `wg viz --critical-path` | Highlight critical path |
-| `wg viz -o graph.png` | Render to file |
+| `wg graph` | ASCII dependency graph of open tasks |
+| `wg graph --all` | Include done tasks |
+| `wg graph --status done` | Filter by status |
+| `wg graph --dot` | Graphviz DOT output |
+| `wg graph --mermaid` | Mermaid diagram |
+| `wg graph --critical-path` | Highlight critical path |
+| `wg graph --dot -o graph.png` | Render to file |
 | `wg tui` | Interactive TUI dashboard |
 
 ### Analysis & metrics

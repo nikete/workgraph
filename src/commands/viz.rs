@@ -47,7 +47,7 @@ impl Default for VizOptions {
             all: false,
             status: None,
             critical_path: false,
-            format: OutputFormat::Dot,
+            format: OutputFormat::Ascii,
             output: None,
         }
     }
