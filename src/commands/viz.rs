@@ -711,14 +711,17 @@ fn generate_ascii(
                 forward: &HashMap<&str, Vec<&'a str>>,
                 reverse: &HashMap<&str, Vec<&'a str>>,
                 format_node: &dyn Fn(&str) -> String,
+                task_map: &HashMap<&str, &workgraph::graph::Task>,
+                graph: &WorkGraph,
+                use_color: bool,
             ) {
                 // Build the connector for this node
                 let connector = if is_root {
                     String::new()
                 } else if is_last {
-                    "└─→ ".to_string()
+                    "└→ ".to_string()
                 } else {
-                    "├─→ ".to_string()
+                    "├→ ".to_string()
                 };
 
                 // Check if already rendered (fan-in case)
@@ -747,10 +750,31 @@ fn generate_ascii(
                 let child_prefix = if is_root {
                     prefix.to_string()
                 } else if is_last {
-                    format!("{}      ", prefix)
+                    format!("{}  ", prefix)
                 } else {
-                    format!("{}│     ", prefix)
+                    format!("{}│ ", prefix)
                 };
+
+                // Draw loop back-edges if this task has any
+                if let Some(task) = task_map.get(id) {
+                    let magenta = if use_color { "\x1b[35m" } else { "" };
+                    let reset = if use_color { "\x1b[0m" } else { "" };
+                    for loop_edge in &task.loops_to {
+                        let iter = graph.get_task(&loop_edge.target)
+                            .map(|t| t.loop_iteration)
+                            .unwrap_or(0);
+                        lines.push(format!(
+                            "{}{}↑ loops to {} ({}/{})",
+                            child_prefix, magenta, loop_edge.target,
+                            iter, loop_edge.max_iterations
+                        ));
+                        if use_color {
+                            // Append reset to the last line
+                            let last = lines.last_mut().unwrap();
+                            last.push_str(reset);
+                        }
+                    }
+                }
 
                 // Get children and recurse
                 let children = forward.get(id).map(|v| v.as_slice()).unwrap_or(&[]);
@@ -767,6 +791,9 @@ fn generate_ascii(
                         forward,
                         reverse,
                         format_node,
+                        task_map,
+                        graph,
+                        use_color,
                     );
                 }
             }
@@ -781,6 +808,9 @@ fn generate_ascii(
                 &forward,
                 &reverse,
                 &format_node,
+                &task_map,
+                &graph,
+                use_color,
             );
         }
     }
@@ -1077,7 +1107,7 @@ mod tests {
         // Tree output: src is root, tgt is child
         assert!(result.contains("src"));
         assert!(result.contains("tgt"));
-        assert!(result.contains("└─→"));
+        assert!(result.contains("└→"));
         assert!(result.contains("(open)"));
     }
 
@@ -1098,8 +1128,8 @@ mod tests {
         let result = generate_ascii(&graph, &tasks, &task_ids);
 
         // a is root with two children
-        assert!(result.contains("├─→"));
-        assert!(result.contains("└─→"));
+        assert!(result.contains("├→"));
+        assert!(result.contains("└→"));
         assert!(result.contains('a'));
         assert!(result.contains('b'));
         assert!(result.contains('c'));
@@ -1183,6 +1213,6 @@ mod tests {
         // First line is the root (a), no prefix
         assert!(result_lines[0].contains("a"));
         // Nested nodes should have tree characters
-        assert!(result.contains("└─→"));
+        assert!(result.contains("└→"));
     }
 }

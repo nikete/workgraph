@@ -796,6 +796,37 @@ wg match implement-api
 
 ---
 
+### `wg matrix`
+
+Matrix integration commands for task management and notifications.
+
+```bash
+wg matrix <SUBCOMMAND> [OPTIONS]
+```
+
+**Subcommands:**
+| Subcommand | Description |
+|------------|-------------|
+| `listen` | Listen for Matrix messages |
+| `send` | Send a message to Matrix |
+| `status` | Check Matrix connection status |
+| `login` | Authenticate with Matrix server |
+| `logout` | Disconnect from Matrix server |
+
+---
+
+### `wg notify`
+
+Send task notification to Matrix room.
+
+```bash
+wg notify <TASK> [OPTIONS]
+```
+
+Notifies configured Matrix room(s) about task status changes.
+
+---
+
 ## Agency Commands
 
 The agency system manages composable agent identities (roles + motivations). See [AGENCY.md](AGENCY.md) for the full design.
@@ -1468,8 +1499,6 @@ wg viz --dot -o graph.png
 wg viz --critical-path
 # Highlight the longest dependency chain
 ```
-
-> **Note:** `wg graph-export` provides full DOT output with archive support.
 
 ---
 

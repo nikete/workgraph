@@ -84,9 +84,14 @@ fn test_basic_loop_a_b_c_loops_to_a() {
     let b = graph.get_task("b").unwrap();
     assert_eq!(b.status, Status::Open, "B should be re-opened via propagation");
 
-    // reactivated should contain a, b (c is the source so it stays Done)
+    // reactivated should contain a, b, and c (source is also re-opened)
     assert!(reactivated.contains(&"a".to_string()));
     assert!(reactivated.contains(&"b".to_string()));
+    assert!(reactivated.contains(&"c".to_string()));
+
+    let c = graph.get_task("c").unwrap();
+    assert_eq!(c.status, Status::Open, "C (source) should be re-opened");
+    assert_eq!(c.loop_iteration, 1, "C's loop_iteration should be 1");
 }
 
 // ---------------------------------------------------------------------------
@@ -355,18 +360,19 @@ fn test_multi_step_propagation() {
         "C should be re-opened as intermediate"
     );
 
-    // D is the source — it stays Done (loop fired from D)
+    // D is the source — it should be re-opened as part of the cycle
     assert_eq!(
         graph.get_task("d").unwrap().status,
-        Status::Done,
-        "D (source) should stay Done"
+        Status::Open,
+        "D (source) should be re-opened by loop"
     );
+    assert_eq!(graph.get_task("d").unwrap().loop_iteration, 1);
 
-    // All of a, b, c should be in reactivated
+    // All of a, b, c, d should be in reactivated
     assert!(reactivated.contains(&"a".to_string()));
     assert!(reactivated.contains(&"b".to_string()));
     assert!(reactivated.contains(&"c".to_string()));
-    assert!(!reactivated.contains(&"d".to_string()));
+    assert!(reactivated.contains(&"d".to_string()));
 }
 
 // ---------------------------------------------------------------------------

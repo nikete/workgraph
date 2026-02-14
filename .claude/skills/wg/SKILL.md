@@ -201,12 +201,12 @@ wg show <task-id>           # See loop_iteration and loop edges
 | `wg velocity --weeks 8` | Completion velocity over time |
 | `wg aging` | Task age distribution |
 | `wg forecast` | Completion forecast from velocity |
-| `wg workload` | Actor workload balance |
+| `wg workload` | Agent workload balance |
 | `wg resources` | Resource utilization |
 | `wg cost <id>` | Cost including dependencies |
 | `wg coordinate` | Ready tasks for parallel execution |
 | `wg trajectory <id>` | Optimal claim order for context |
-| `wg next --actor <id>` | Best next task for an actor |
+| `wg next --agent <id>` | Best next task for an agent |
 
 ### Service & agents
 
@@ -265,8 +265,7 @@ wg show <task-id>           # See loop_iteration and loop edges
 | `wg artifact <task> <path> --remove` | Remove artifact |
 | `wg resource add <id> --type money --available 1000 --unit usd` | Add resource |
 | `wg resource list` | List resources |
-| `wg actor add <id> --role engineer --capability rust` | Add actor |
-| `wg match <task>` | Find capable actors |
+| `wg match <task>` | Find capable agents |
 
 ### Housekeeping
 

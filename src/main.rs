@@ -411,7 +411,7 @@ enum Commands {
     /// Show project completion forecast based on velocity and remaining work
     Forecast,
 
-    /// Show actor workload balance and assignment distribution
+    /// Show agent workload balance and assignment distribution
     Workload,
 
     /// Show resource utilization - committed vs available capacity
@@ -512,19 +512,19 @@ enum Commands {
         clear: bool,
     },
 
-    /// Find actors capable of performing a task
+    /// Find agents capable of performing a task
     Match {
-        /// Task ID to match actors against
+        /// Task ID to match agents against
         task: String,
     },
 
-    /// Record actor/agent heartbeat or check for stale actors/agents
+    /// Record agent heartbeat or check for stale agents
     Heartbeat {
-        /// Actor or agent ID to record heartbeat for (omit to check status)
+        /// Agent ID to record heartbeat for (omit to check status)
         /// Agent IDs start with "agent-" (e.g., agent-1, agent-7)
         actor: Option<String>,
 
-        /// Check for stale actors (no heartbeat within threshold)
+        /// Check for stale agents (no heartbeat within threshold)
         #[arg(long)]
         check: bool,
 
@@ -532,7 +532,7 @@ enum Commands {
         #[arg(long)]
         agents: bool,
 
-        /// Minutes without heartbeat before actor/agent is considered stale (default: 5)
+        /// Minutes without heartbeat before agent is considered stale (default: 5)
         #[arg(long, default_value = "5")]
         threshold: u64,
     },
@@ -560,9 +560,9 @@ enum Commands {
         dependents: bool,
     },
 
-    /// Find the best next task for an actor (agent work loop)
+    /// Find the best next task for an agent (agent work loop)
     Next {
-        /// Actor ID to find tasks for
+        /// Agent ID to find tasks for
         #[arg(long)]
         actor: String,
     },

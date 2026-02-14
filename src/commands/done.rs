@@ -312,9 +312,10 @@ mod tests {
         let path = graph_path(dir_path);
         let graph = load_graph(&path).unwrap();
 
-        // Source should be Done
+        // Source should be re-opened (part of the cycle)
         let source = graph.get_task("source").unwrap();
-        assert_eq!(source.status, Status::Done);
+        assert_eq!(source.status, Status::Open);
+        assert_eq!(source.loop_iteration, 1);
 
         // Target should be re-activated (Open) with incremented loop_iteration
         let target = graph.get_task("target").unwrap();
@@ -392,5 +393,55 @@ mod tests {
         let target = graph.get_task("target").unwrap();
         assert_eq!(target.status, Status::Done);
         assert_eq!(target.loop_iteration, 2);
+
+        // Source should also stay Done (loop didn't fire)
+        let source = graph.get_task("source").unwrap();
+        assert_eq!(source.status, Status::Done);
+    }
+
+    #[test]
+    fn test_done_loop_reopens_source_in_chain() {
+        // Regression test: A→B→C chain with loop from C back to A.
+        // When C completes, A (target), B (intermediate), and C (source)
+        // should all be re-opened.
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let mut task_a = make_task("a", "Task A", Status::Done);
+        task_a.loop_iteration = 0;
+
+        let mut task_b = make_task("b", "Task B", Status::Done);
+        task_b.blocked_by = vec!["a".to_string()];
+
+        let mut task_c = make_task("c", "Task C", Status::InProgress);
+        task_c.blocked_by = vec!["b".to_string()];
+        task_c.loops_to = vec![LoopEdge {
+            target: "a".to_string(),
+            guard: None,
+            max_iterations: 3,
+            delay: None,
+        }];
+
+        setup_workgraph(dir_path, vec![task_a, task_b, task_c]);
+
+        let result = run(dir_path, "c");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+
+        // A (target) should be re-opened with incremented iteration
+        let a = graph.get_task("a").unwrap();
+        assert_eq!(a.status, Status::Open);
+        assert_eq!(a.loop_iteration, 1);
+
+        // B (intermediate) should be re-opened
+        let b = graph.get_task("b").unwrap();
+        assert_eq!(b.status, Status::Open);
+
+        // C (source) should be re-opened with incremented iteration
+        let c = graph.get_task("c").unwrap();
+        assert_eq!(c.status, Status::Open);
+        assert_eq!(c.loop_iteration, 1);
     }
 }

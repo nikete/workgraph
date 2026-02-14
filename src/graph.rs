@@ -532,7 +532,7 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
         let intermediates = find_intermediate_tasks(graph, &edge.target, source_id);
         for mid_id in &intermediates {
             if mid_id == source_id {
-                continue; // Don't re-open the source (it just completed)
+                continue; // Source is re-opened separately below
             }
             if let Some(mid_task) = graph.get_task_mut(mid_id) {
                 if mid_task.status == Status::Done {
@@ -553,6 +553,28 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
                     reactivated.push(mid_id.clone());
                 }
             }
+        }
+
+        // 5. Re-open the source task itself so it runs again in the next
+        //    iteration of the cycle.  The source was just marked Done by the
+        //    caller, but it is part of the loop and must execute again.
+        if let Some(src_task) = graph.get_task_mut(source_id) {
+            src_task.status = Status::Open;
+            src_task.assigned = None;
+            src_task.started_at = None;
+            src_task.completed_at = None;
+            src_task.loop_iteration = new_iteration;
+
+            src_task.log.push(LogEntry {
+                timestamp: Utc::now().to_rfc3339(),
+                actor: None,
+                message: format!(
+                    "Re-opened by own loop to {} (iteration {}/{})",
+                    edge.target, new_iteration, edge.max_iterations
+                ),
+            });
+
+            reactivated.push(source_id.to_string());
         }
     }
 

@@ -317,7 +317,8 @@ fn test_done_reactivates_loop_target() {
     );
 
     let looper = graph.get_task("looper").unwrap();
-    assert_eq!(looper.status, Status::Done, "Looper (source) should remain Done");
+    assert_eq!(looper.status, Status::Open, "Looper (source) should be re-opened by loop");
+    assert_eq!(looper.loop_iteration, 1, "Looper loop_iteration should be incremented to 1");
 }
 
 // ===========================================================================
@@ -607,9 +608,10 @@ fn test_chain_loop_via_cli() {
     let b = graph.get_task("b").unwrap();
     assert_eq!(b.status, Status::Open, "B should be re-opened as intermediate");
 
-    // C should stay Done (it's the loop source)
+    // C should be re-opened (it's the loop source but is part of the cycle)
     let c = graph.get_task("c").unwrap();
-    assert_eq!(c.status, Status::Done, "C (source) should stay Done");
+    assert_eq!(c.status, Status::Open, "C (source) should be re-opened by loop");
+    assert_eq!(c.loop_iteration, 1);
 }
 
 // ===========================================================================
