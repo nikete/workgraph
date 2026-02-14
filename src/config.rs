@@ -373,6 +373,7 @@ impl Config {
     }
 
     /// Build the executor command from template
+    #[cfg(test)]
     pub fn build_command(&self, prompt: &str, task_id: &str, workdir: &str) -> String {
         self.agent
             .command_template

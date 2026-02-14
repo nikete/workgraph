@@ -604,3 +604,76 @@ fn test_always_guard_fires() {
     assert!(r.contains(&"always".to_string()));
     assert_eq!(graph.get_task("always").unwrap().loop_iteration, 1);
 }
+
+// ---------------------------------------------------------------------------
+// Test: Source task not re-opened when target doesn't exist
+// ---------------------------------------------------------------------------
+#[test]
+fn test_loop_to_nonexistent_target_does_not_reopen_source() {
+    let mut graph = WorkGraph::new();
+
+    let mut src = make_task("src");
+    src.loops_to = vec![LoopEdge {
+        target: "nonexistent".to_string(),
+        guard: None,
+        max_iterations: 5,
+        delay: None,
+    }];
+    graph.add_node(Node::Task(src));
+
+    // Complete the source task
+    graph.get_task_mut("src").unwrap().status = Status::Done;
+
+    let reactivated = evaluate_loop_edges(&mut graph, "src");
+
+    // Target doesn't exist, so nothing should be reactivated
+    assert!(
+        reactivated.is_empty(),
+        "No tasks should be reactivated when target doesn't exist"
+    );
+    // Source should remain Done (not re-opened)
+    let src = graph.get_task("src").unwrap();
+    assert_eq!(
+        src.status,
+        Status::Done,
+        "Source should stay Done when target doesn't exist"
+    );
+    assert_eq!(
+        src.loop_iteration, 0,
+        "Source loop_iteration should not increment"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test: Source not re-opened when iteration limit already reached
+// ---------------------------------------------------------------------------
+#[test]
+fn test_loop_source_not_reopened_when_at_max_iterations() {
+    let mut graph = WorkGraph::new();
+
+    let mut target = make_task("tgt");
+    target.loop_iteration = 5; // Already at max
+    let mut src = make_task("src");
+    src.loops_to = vec![LoopEdge {
+        target: "tgt".to_string(),
+        guard: None,
+        max_iterations: 5,
+        delay: None,
+    }];
+
+    graph.add_node(Node::Task(target));
+    graph.add_node(Node::Task(src));
+
+    graph.get_task_mut("src").unwrap().status = Status::Done;
+    let reactivated = evaluate_loop_edges(&mut graph, "src");
+
+    assert!(
+        reactivated.is_empty(),
+        "No reactivation when target is at max iterations"
+    );
+    assert_eq!(
+        graph.get_task("src").unwrap().status,
+        Status::Done,
+        "Source should remain Done when loop doesn't fire"
+    );
+}

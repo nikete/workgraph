@@ -208,6 +208,7 @@ pub const DEFAULT_ORDER: &[&str] = &[
 ///
 /// Returns (commands, is_personalized) where is_personalized indicates
 /// whether the ordering is based on actual usage data.
+#[cfg(test)]
 pub fn get_help_order(dir: &Path) -> (Vec<String>, bool) {
     if let Some(commands) = load_command_order(dir) {
         let names: Vec<String> = commands.into_iter().map(|(name, _)| name).collect();

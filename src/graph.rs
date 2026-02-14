@@ -464,8 +464,9 @@ fn evaluate_guard(guard: &Option<LoopGuard>, graph: &WorkGraph) -> bool {
     match guard {
         None => true, // No guard = always loop
         Some(LoopGuard::Always) => true,
-        Some(LoopGuard::IterationLessThan(_n)) => {
-            // This is checked separately against the target's loop_iteration
+        Some(LoopGuard::IterationLessThan(_)) => {
+            // Deferred: requires target task context not available here.
+            // Checked in evaluate_loop_edges() against the target's loop_iteration.
             true
         }
         Some(LoopGuard::TaskStatus { task, status }) => graph
@@ -528,7 +529,7 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
             parse_delay(d).map(|secs| (Utc::now() + Duration::seconds(secs as i64)).to_rfc3339())
         });
 
-        if let Some(target) = graph.get_task_mut(&edge.target) {
+        let target_reactivated = if let Some(target) = graph.get_task_mut(&edge.target) {
             target.status = Status::Open;
             target.assigned = None;
             target.started_at = None;
@@ -546,6 +547,14 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
             });
 
             reactivated.push(edge.target.clone());
+            true
+        } else {
+            false
+        };
+
+        // Only re-open intermediates and source if target was successfully reactivated
+        if !target_reactivated {
+            continue;
         }
 
         // 4. Re-open intermediate tasks between target and source whose

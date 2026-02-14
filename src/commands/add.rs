@@ -65,6 +65,10 @@ pub fn run(
     loop_guard: Option<&str>,
     loop_delay: Option<&str>,
 ) -> Result<()> {
+    if title.trim().is_empty() {
+        anyhow::bail!("Task title cannot be empty");
+    }
+
     let path = graph_path(dir);
 
     // Load existing graph to check for ID conflicts
@@ -507,5 +511,74 @@ mod tests {
         let graph = WorkGraph::new();
         let id = generate_id("Deploy service", &graph);
         assert_eq!(id, "deploy-service");
+    }
+
+    #[test]
+    fn empty_title_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        // Initialize a workgraph
+        std::fs::create_dir_all(dir_path).unwrap();
+        let path = super::graph_path(dir_path);
+        let graph = WorkGraph::new();
+        workgraph::parser::save_graph(&graph, &path).unwrap();
+
+        let result = run(
+            dir_path,
+            "",
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn whitespace_only_title_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        std::fs::create_dir_all(dir_path).unwrap();
+        let path = super::graph_path(dir_path);
+        let graph = WorkGraph::new();
+        workgraph::parser::save_graph(&graph, &path).unwrap();
+
+        let result = run(
+            dir_path,
+            "   ",
+            None,
+            None,
+            &[],
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
     }
 }

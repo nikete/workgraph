@@ -316,6 +316,7 @@ impl AgentRegistry {
     }
 
     /// Get agents working on a specific task
+    #[cfg(test)]
     pub fn agents_for_task(&self, task_id: &str) -> Vec<&AgentEntry> {
         self.agents
             .values()
@@ -405,6 +406,7 @@ impl AgentRegistry {
     }
 
     /// Count agents by status
+    #[cfg(test)]
     pub fn count_by_status(&self) -> HashMap<AgentStatus, usize> {
         let mut counts = HashMap::new();
         for agent in self.agents.values() {

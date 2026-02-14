@@ -1172,14 +1172,15 @@ pub fn seed_starters(agency_dir: &Path) -> Result<(usize, usize), AgencyError> {
 }
 
 // ---------------------------------------------------------------------------
-// Evolution utilities
+// Evolution utilities (test-only: used by evolve.rs tests to verify primitives)
 // ---------------------------------------------------------------------------
 
 /// Mutate a parent role to produce a child with updated fields and correct lineage.
 ///
 /// Any `None` field inherits the parent's value. The child gets a fresh content-hash ID
 /// based on its (possibly mutated) description, skills, and desired_outcome.
-pub fn mutate_role(
+#[cfg(test)]
+pub(crate) fn mutate_role(
     parent: &Role,
     run_id: &str,
     new_name: Option<&str>,
@@ -1218,7 +1219,8 @@ pub fn mutate_role(
 ///
 /// Produces a new motivation whose acceptable_tradeoffs and unacceptable_tradeoffs are
 /// the deduplicated union of both parents' lists.
-pub fn crossover_motivations(
+#[cfg(test)]
+pub(crate) fn crossover_motivations(
     parent_a: &Motivation,
     parent_b: &Motivation,
     run_id: &str,
@@ -1261,7 +1263,8 @@ pub fn crossover_motivations(
 ///
 /// Returns `None` if the slice is empty. Roles without a score (`avg_score == None`)
 /// are treated as having score 0.0.
-pub fn tournament_select_role(candidates: &[Role]) -> Option<&Role> {
+#[cfg(test)]
+pub(crate) fn tournament_select_role(candidates: &[Role]) -> Option<&Role> {
     candidates.iter().max_by(|a, b| {
         let sa = a.performance.avg_score.unwrap_or(0.0);
         let sb = b.performance.avg_score.unwrap_or(0.0);
@@ -1273,7 +1276,8 @@ pub fn tournament_select_role(candidates: &[Role]) -> Option<&Role> {
 ///
 /// Only roles with at least `min_evals` evaluations are considered; roles with
 /// fewer evaluations are never flagged for retirement (they haven't been tested enough).
-pub fn roles_below_threshold(roles: &[Role], threshold: f64, min_evals: u32) -> Vec<&Role> {
+#[cfg(test)]
+pub(crate) fn roles_below_threshold(roles: &[Role], threshold: f64, min_evals: u32) -> Vec<&Role> {
     roles
         .iter()
         .filter(|r| {
@@ -1288,7 +1292,8 @@ pub fn roles_below_threshold(roles: &[Role], threshold: f64, min_evals: u32) -> 
 ///
 /// A skill is "covered" if at least one role has a `SkillRef::Name(n)` where
 /// `n` matches the required skill (case-sensitive).
-pub fn uncovered_skills(required: &[&str], roles: &[Role]) -> Vec<String> {
+#[cfg(test)]
+pub(crate) fn uncovered_skills(required: &[&str], roles: &[Role]) -> Vec<String> {
     let covered: std::collections::HashSet<&str> = roles
         .iter()
         .flat_map(|r| r.skills.iter())
