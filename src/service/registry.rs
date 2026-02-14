@@ -255,19 +255,6 @@ impl AgentRegistry {
 
     /// Register a new agent, returning the assigned agent ID
     ///
-    /// This is an alias for `register_agent` for backward compatibility.
-    pub fn register(
-        &mut self,
-        pid: u32,
-        task_id: &str,
-        executor: &str,
-        output_file: &str,
-    ) -> String {
-        self.register_agent(pid, task_id, executor, output_file)
-    }
-
-    /// Register a new agent, returning the assigned agent ID
-    ///
     /// The agent ID is auto-incremented (agent-1, agent-2, etc.)
     pub fn register_agent(
         &mut self,
@@ -297,35 +284,20 @@ impl AgentRegistry {
     }
 
     /// Get an agent by ID
-    pub fn get(&self, agent_id: &str) -> Option<&AgentEntry> {
+    pub fn get_agent(&self, agent_id: &str) -> Option<&AgentEntry> {
         self.agents.get(agent_id)
     }
 
-    /// Get an agent by ID (alias for get)
-    pub fn get_agent(&self, agent_id: &str) -> Option<&AgentEntry> {
-        self.get(agent_id)
-    }
-
     /// Get a mutable reference to an agent by ID
-    pub fn get_mut(&mut self, agent_id: &str) -> Option<&mut AgentEntry> {
-        self.agents.get_mut(agent_id)
-    }
-
-    /// Get a mutable reference to an agent by ID (alias)
     pub fn get_agent_mut(&mut self, agent_id: &str) -> Option<&mut AgentEntry> {
-        self.get_mut(agent_id)
-    }
-
-    /// Remove an agent from the registry
-    pub fn remove(&mut self, agent_id: &str) -> Option<AgentEntry> {
-        self.agents.remove(agent_id)
+        self.agents.get_mut(agent_id)
     }
 
     /// Unregister an agent (remove from registry)
     ///
     /// Returns the removed agent entry, or None if not found.
     pub fn unregister_agent(&mut self, agent_id: &str) -> Option<AgentEntry> {
-        self.remove(agent_id)
+        self.agents.remove(agent_id)
     }
 
     /// Get all agents
@@ -911,23 +883,5 @@ mod tests {
         assert_eq!(agent.pid, 54321);
         assert_eq!(agent.task_id, "implement-feature");
         assert_eq!(agent.status, AgentStatus::Working);
-    }
-
-    #[test]
-    fn test_backward_compat_register() {
-        // Test that the old `register` function still works
-        let mut registry = AgentRegistry::new();
-        let id = registry.register(12345, "task-1", "claude", "/tmp/output.log");
-        assert_eq!(id, "agent-1");
-    }
-
-    #[test]
-    fn test_backward_compat_get() {
-        let mut registry = AgentRegistry::new();
-        registry.register_agent(12345, "task-1", "claude", "/tmp/output.log");
-
-        // Both get and get_agent should work
-        assert!(registry.get("agent-1").is_some());
-        assert!(registry.get_agent("agent-1").is_some());
     }
 }

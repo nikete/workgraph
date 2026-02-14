@@ -374,7 +374,7 @@ exit $EXIT_CODE
     save_graph(&graph, &graph_path).context("Failed to save graph")?;
 
     // Register the agent
-    let agent_id = agent_registry.register(pid, task_id, executor_name, &output_file_str);
+    let agent_id = agent_registry.register_agent(pid, task_id, executor_name, &output_file_str);
     agent_registry.save(dir)?;
 
     // Write metadata

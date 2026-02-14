@@ -84,6 +84,8 @@ pub enum Status {
 
 /// A task node.
 ///
+/// A task in the workgraph with dependencies, status, and execution metadata.
+///
 /// Custom `Deserialize` handles migration from the old `identity` field
 /// (`{"role_id": "...", "motivation_id": "..."}`) to the new `agent` field
 /// (content-hash string).

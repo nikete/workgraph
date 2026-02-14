@@ -27,16 +27,11 @@ pub struct LayoutNode {
     pub task_id: String,
     pub title: String,
     pub status: Status,
-    #[allow(dead_code)]
-    pub assigned: Option<String>,
     pub critical: bool,
     pub active_agent_count: usize,
     pub active_agent_ids: Vec<String>,
     /// Layer index (0 = top/sources)
     pub layer: usize,
-    /// Position within layer (0-based, left to right)
-    #[allow(dead_code)]
-    pub order: usize,
     /// Character column of the left edge of the box
     pub x: usize,
     /// Character row of the top edge of the box
@@ -50,10 +45,6 @@ pub struct LayoutNode {
 /// An edge between two nodes.
 #[derive(Debug, Clone)]
 pub struct LayoutEdge {
-    #[allow(dead_code)]
-    pub from_id: String,
-    #[allow(dead_code)]
-    pub to_id: String,
     /// Segments to draw: list of (x, y) points forming a polyline
     pub segments: Vec<(usize, usize)>,
 }
@@ -355,7 +346,7 @@ impl DagLayout {
         // Build LayoutNode structs
         let mut layout_nodes: Vec<LayoutNode> = Vec::new();
         for (level_idx, level) in level_nodes.iter().enumerate() {
-            for (order, &(num_id, task_id)) in level.iter().enumerate() {
+            for &(num_id, task_id) in level.iter() {
                 let (x, y, w, h) = node_positions.get(&num_id).copied().unwrap_or((
                     0,
                     0,
@@ -372,12 +363,10 @@ impl DagLayout {
                     task_id: task_id.to_string(),
                     title: task.map(|t| t.title.clone()).unwrap_or_default(),
                     status: task.map(|t| t.status.clone()).unwrap_or(Status::Open),
-                    assigned: task.and_then(|t| t.assigned.clone()),
                     critical: critical_ids.contains(task_id),
                     active_agent_count: agent_count,
                     active_agent_ids: agent_ids,
                     layer: level_idx,
-                    order,
                     x,
                     y,
                     w,
@@ -433,11 +422,7 @@ impl DagLayout {
                 segments.push((to_x, to_y));
             }
 
-            layout_edges.push(LayoutEdge {
-                from_id: from_task_id.to_string(),
-                to_id: to_task_id.to_string(),
-                segments,
-            });
+            layout_edges.push(LayoutEdge { segments });
         }
 
         // Build back-edges for cycles (will be routed later in reroute_edges)
@@ -612,11 +597,7 @@ pub fn reroute_edges(layout: &mut DagLayout, graph: &WorkGraph) {
                 segments.push((to_x, to_y));
             }
 
-            new_edges.push(LayoutEdge {
-                from_id: blocker_id.clone(),
-                to_id: node.task_id.clone(),
-                segments,
-            });
+            new_edges.push(LayoutEdge { segments });
         }
     }
 

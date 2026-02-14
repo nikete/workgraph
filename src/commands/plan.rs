@@ -213,7 +213,9 @@ fn print_human_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
     use workgraph::graph::{Estimate, Node, Status, Task, WorkGraph};
+    use workgraph::parser::save_graph;
 
     fn make_task(id: &str, title: &str) -> Task {
         Task {
@@ -344,5 +346,75 @@ mod tests {
 
         assert_eq!(parsed["summary"]["open"], 2);
         assert_eq!(parsed["summary"]["total_cost"], 1000.0);
+    }
+
+    fn setup_plan_graph(dir: &Path) {
+        let path = dir.join("graph.jsonl");
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Task 1");
+        t1.estimate = Some(Estimate {
+            hours: Some(4.0),
+            cost: Some(400.0),
+        });
+
+        let mut t2 = make_task("t2", "Task 2");
+        t2.estimate = Some(Estimate {
+            hours: Some(8.0),
+            cost: Some(800.0),
+        });
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        save_graph(&graph, &path).unwrap();
+    }
+
+    #[test]
+    fn test_run_no_constraints() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_plan_graph(temp_dir.path());
+        assert!(run(temp_dir.path(), None, None, false).is_ok());
+    }
+
+    #[test]
+    fn test_run_with_budget() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_plan_graph(temp_dir.path());
+        assert!(run(temp_dir.path(), Some(500.0), None, false).is_ok());
+    }
+
+    #[test]
+    fn test_run_with_hours() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_plan_graph(temp_dir.path());
+        assert!(run(temp_dir.path(), None, Some(6.0), false).is_ok());
+    }
+
+    #[test]
+    fn test_run_json_output() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_plan_graph(temp_dir.path());
+        assert!(run(temp_dir.path(), Some(500.0), Some(6.0), true).is_ok());
+    }
+
+    #[test]
+    fn test_run_empty_graph() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+        save_graph(&WorkGraph::new(), &path).unwrap();
+        assert!(run(temp_dir.path(), None, None, false).is_ok());
+    }
+
+    #[test]
+    fn test_run_no_init() {
+        let temp_dir = TempDir::new().unwrap();
+        assert!(run(temp_dir.path(), None, None, false).is_err());
+    }
+
+    #[test]
+    fn test_run_budget_and_hours() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_plan_graph(temp_dir.path());
+        assert!(run(temp_dir.path(), Some(1500.0), Some(20.0), false).is_ok());
     }
 }

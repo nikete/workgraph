@@ -161,7 +161,9 @@ pub fn run_install() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempfile::TempDir;
     use workgraph::graph::{Node, Status, Task, WorkGraph};
+    use workgraph::parser::save_graph;
 
     fn make_task(id: &str, title: &str) -> Task {
         Task {
@@ -251,5 +253,93 @@ mod tests {
 
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].id, "t1");
+    }
+
+    fn setup_graph_with_skills(dir: &Path) {
+        let path = dir.join("graph.jsonl");
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Rust task");
+        t1.skills = vec!["rust".to_string(), "testing".to_string()];
+
+        let mut t2 = make_task("t2", "Python task");
+        t2.skills = vec!["python".to_string()];
+
+        let t3 = make_task("t3", "No-skill task");
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+        save_graph(&graph, &path).unwrap();
+    }
+
+    #[test]
+    fn test_run_list_shows_skills() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_list(temp_dir.path(), false).is_ok());
+    }
+
+    #[test]
+    fn test_run_list_json() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_list(temp_dir.path(), true).is_ok());
+    }
+
+    #[test]
+    fn test_run_list_empty_graph() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+        save_graph(&WorkGraph::new(), &path).unwrap();
+        assert!(run_list(temp_dir.path(), false).is_ok());
+    }
+
+    #[test]
+    fn test_run_task_existing() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_task(temp_dir.path(), "t1", false).is_ok());
+    }
+
+    #[test]
+    fn test_run_task_nonexistent() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_task(temp_dir.path(), "no-such", false).is_err());
+    }
+
+    #[test]
+    fn test_run_task_no_skills() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_task(temp_dir.path(), "t3", false).is_ok());
+    }
+
+    #[test]
+    fn test_run_find_matching() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_find(temp_dir.path(), "rust", false).is_ok());
+    }
+
+    #[test]
+    fn test_run_find_no_match() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_find(temp_dir.path(), "haskell", false).is_ok());
+    }
+
+    #[test]
+    fn test_run_find_json() {
+        let temp_dir = TempDir::new().unwrap();
+        setup_graph_with_skills(temp_dir.path());
+        assert!(run_find(temp_dir.path(), "rust", true).is_ok());
+    }
+
+    #[test]
+    fn test_run_list_no_init() {
+        let temp_dir = TempDir::new().unwrap();
+        assert!(run_list(temp_dir.path(), false).is_err());
     }
 }
