@@ -317,4 +317,309 @@ mod tests {
         let result = run(temp_dir.path(), "t2", false);
         assert!(result.is_ok());
     }
+
+    // --- Deep dependency tree tests ---
+
+    #[test]
+    fn test_context_deep_dependency_chain() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        // Chain: t1 -> t2 -> t3 -> t4
+        // t4 should only see context from its direct dependency (t3)
+        let mut t1 = make_task("t1", "Root producer");
+        t1.status = Status::Done;
+        t1.artifacts = vec!["root-output.txt".to_string()];
+
+        let mut t2 = make_task("t2", "Middle 1");
+        t2.status = Status::Done;
+        t2.blocked_by = vec!["t1".to_string()];
+        t2.artifacts = vec!["middle-output.txt".to_string()];
+
+        let mut t3 = make_task("t3", "Middle 2");
+        t3.status = Status::Done;
+        t3.blocked_by = vec!["t2".to_string()];
+        t3.artifacts = vec!["final-input.txt".to_string()];
+
+        let mut t4 = make_task("t4", "Consumer");
+        t4.blocked_by = vec!["t3".to_string()];
+        t4.inputs = vec!["final-input.txt".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+        graph.add_node(Node::Task(t4));
+        save_graph(&graph, &path).unwrap();
+
+        // t4 only directly depends on t3, so only t3's artifacts are shown
+        let result = run(temp_dir.path(), "t4", false);
+        assert!(result.is_ok());
+
+        // JSON output should confirm
+        let result = run(temp_dir.path(), "t4", true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_context_task_with_no_dependencies() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("t1", "Independent task");
+        graph.add_node(Node::Task(t1));
+        save_graph(&graph, &path).unwrap();
+
+        // Task with no dependencies should have no context
+        let result = run(temp_dir.path(), "t1", false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_context_task_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let graph = WorkGraph::new();
+        save_graph(&graph, &path).unwrap();
+
+        let result = run(temp_dir.path(), "nonexistent", false);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_context_multiple_dependency_artifacts() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        // t3 depends on both t1 and t2
+        let mut t1 = make_task("t1", "Producer A");
+        t1.status = Status::Done;
+        t1.artifacts = vec!["a.txt".to_string(), "b.txt".to_string()];
+
+        let mut t2 = make_task("t2", "Producer B");
+        t2.status = Status::Done;
+        t2.artifacts = vec!["c.txt".to_string()];
+
+        let mut t3 = make_task("t3", "Consumer");
+        t3.blocked_by = vec!["t1".to_string(), "t2".to_string()];
+        t3.inputs = vec!["a.txt".to_string(), "c.txt".to_string(), "d.txt".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+        save_graph(&graph, &path).unwrap();
+
+        // a.txt and c.txt are available, d.txt is missing
+        let result = run(temp_dir.path(), "t3", false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_context_dependency_with_no_artifacts() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "No artifacts");
+        t1.status = Status::Done;
+        // No artifacts
+
+        let mut t2 = make_task("t2", "Consumer");
+        t2.blocked_by = vec!["t1".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        save_graph(&graph, &path).unwrap();
+
+        let result = run(temp_dir.path(), "t2", false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_context_json_output_structure() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Producer");
+        t1.status = Status::Done;
+        t1.artifacts = vec!["output.txt".to_string()];
+
+        let mut t2 = make_task("t2", "Consumer");
+        t2.blocked_by = vec!["t1".to_string()];
+        t2.inputs = vec!["output.txt".to_string(), "missing.txt".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        save_graph(&graph, &path).unwrap();
+
+        // JSON output should work
+        let result = run(temp_dir.path(), "t2", true);
+        assert!(result.is_ok());
+    }
+
+    // --- run_dependents tests ---
+
+    #[test]
+    fn test_dependents_task_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+        let graph = WorkGraph::new();
+        save_graph(&graph, &path).unwrap();
+
+        let result = run_dependents(temp_dir.path(), "nonexistent", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dependents_no_dependents() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("t1", "Leaf task");
+        graph.add_node(Node::Task(t1));
+        save_graph(&graph, &path).unwrap();
+
+        let result = run_dependents(temp_dir.path(), "t1", false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dependents_multiple_consumers() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Producer");
+        t1.artifacts = vec!["shared.txt".to_string()];
+        t1.deliverables = vec!["shared.txt".to_string()];
+
+        let mut t2 = make_task("t2", "Consumer 1");
+        t2.blocked_by = vec!["t1".to_string()];
+        t2.inputs = vec!["shared.txt".to_string()];
+
+        let mut t3 = make_task("t3", "Consumer 2");
+        t3.blocked_by = vec!["t1".to_string()];
+        t3.inputs = vec!["shared.txt".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+        save_graph(&graph, &path).unwrap();
+
+        let result = run_dependents(temp_dir.path(), "t1", false);
+        assert!(result.is_ok());
+
+        // JSON format
+        let result = run_dependents(temp_dir.path(), "t1", true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_dependents_json_output() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Producer");
+        t1.artifacts = vec!["data.json".to_string()];
+        t1.deliverables = vec!["data.json".to_string()];
+
+        let mut t2 = make_task("t2", "Consumer");
+        t2.blocked_by = vec!["t1".to_string()];
+        t2.inputs = vec!["data.json".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        save_graph(&graph, &path).unwrap();
+
+        let result = run_dependents(temp_dir.path(), "t1", true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_context_no_workgraph() {
+        let temp_dir = TempDir::new().unwrap();
+        // Don't create graph.jsonl
+
+        let result = run(temp_dir.path(), "t1", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dependents_no_workgraph() {
+        let temp_dir = TempDir::new().unwrap();
+
+        let result = run_dependents(temp_dir.path(), "t1", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_context_dependency_not_in_graph() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        // t1 depends on a task that doesn't exist in the graph
+        let mut t1 = make_task("t1", "Has missing dependency");
+        t1.blocked_by = vec!["nonexistent".to_string()];
+        t1.inputs = vec!["file.txt".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        save_graph(&graph, &path).unwrap();
+
+        // Should handle gracefully — the nonexistent dependency is skipped
+        let result = run(temp_dir.path(), "t1", false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_context_empty_graph() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let graph = WorkGraph::new();
+        save_graph(&graph, &path).unwrap();
+
+        // Task not found in empty graph
+        let result = run(temp_dir.path(), "t1", false);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_dependents_deliverables_matching() {
+        let temp_dir = TempDir::new().unwrap();
+        let path = temp_dir.path().join("graph.jsonl");
+
+        let mut graph = WorkGraph::new();
+
+        // t1 has deliverables (expected) and artifacts (produced)
+        let mut t1 = make_task("t1", "Producer");
+        t1.deliverables = vec!["expected.txt".to_string()];
+        t1.artifacts = vec!["extra.txt".to_string()];
+
+        let mut t2 = make_task("t2", "Consumer");
+        t2.blocked_by = vec!["t1".to_string()];
+        t2.inputs = vec!["expected.txt".to_string(), "extra.txt".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        save_graph(&graph, &path).unwrap();
+
+        // Both deliverables and artifacts should be checked for matching
+        let result = run_dependents(temp_dir.path(), "t1", false);
+        assert!(result.is_ok());
+    }
 }

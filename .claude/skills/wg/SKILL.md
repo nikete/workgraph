@@ -44,7 +44,7 @@ wg agents --alive        # Only alive agents
 wg agents --working      # Only working agents
 wg service status        # Service health
 wg status                # Quick one-screen overview
-wg graph                 # ASCII dependency graph
+wg viz                   # ASCII dependency graph
 wg tui                   # Interactive TUI dashboard
 ```
 
@@ -179,13 +179,13 @@ wg show <task-id>           # See loop_iteration and loop edges
 
 | Command | Purpose |
 |---------|---------|
-| `wg graph` | ASCII dependency graph of open tasks |
-| `wg graph --all` | Include done tasks |
-| `wg graph --status done` | Filter by status |
-| `wg graph --dot` | Graphviz DOT output |
-| `wg graph --mermaid` | Mermaid diagram |
-| `wg graph --critical-path` | Highlight critical path |
-| `wg graph --dot -o graph.png` | Render to file |
+| `wg viz` | ASCII dependency graph of open tasks |
+| `wg viz --all` | Include done tasks |
+| `wg viz --status done` | Filter by status |
+| `wg viz --dot` | Graphviz DOT output |
+| `wg viz --mermaid` | Mermaid diagram |
+| `wg viz --critical-path` | Highlight critical path |
+| `wg viz --dot -o graph.png` | Render to file |
 | `wg tui` | Interactive TUI dashboard |
 
 ### Analysis & metrics

@@ -675,4 +675,478 @@ template = "Work on {{task_id}}"
         let result = vars.apply(template);
         assert_eq!(result, "Preamble\n\nTask: task-1");
     }
+
+    // --- Error path tests for ExecutorConfig ---
+
+    #[test]
+    fn test_load_by_name_missing_config_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        fs::create_dir_all(wg_dir.join("executors")).unwrap();
+
+        let result = ExecutorConfig::load_by_name(&wg_dir, "nonexistent");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Executor config not found: nonexistent"),
+            "Expected 'not found' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_load_by_name_missing_executors_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        // .workgraph exists but executors/ subdirectory does not
+        let wg_dir = temp_dir.path().join(".workgraph");
+        fs::create_dir_all(&wg_dir).unwrap();
+
+        let result = ExecutorConfig::load_by_name(&wg_dir, "claude");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Executor config not found"),
+            "Expected 'not found' error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_load_malformed_toml() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("bad.toml");
+        fs::write(&config_path, "this is [not valid {{ toml").unwrap();
+
+        let result = ExecutorConfig::load(&config_path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to parse executor config"),
+            "Expected parse error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_load_missing_required_fields_no_executor_section() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("incomplete.toml");
+        // Valid TOML but missing the [executor] section entirely
+        fs::write(&config_path, "[something_else]\nkey = \"value\"\n").unwrap();
+
+        let result = ExecutorConfig::load(&config_path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to parse executor config"),
+            "Expected parse error for missing section, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_load_missing_required_fields_no_command() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("no_command.toml");
+        // Has [executor] and type, but missing required 'command' field
+        fs::write(&config_path, "[executor]\ntype = \"custom\"\n").unwrap();
+
+        let result = ExecutorConfig::load(&config_path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to parse executor config"),
+            "Expected parse error for missing command, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_load_missing_required_fields_no_type() {
+        let temp_dir = TempDir::new().unwrap();
+        let config_path = temp_dir.path().join("no_type.toml");
+        // Has [executor] and command, but missing required 'type' field
+        fs::write(&config_path, "[executor]\ncommand = \"echo\"\n").unwrap();
+
+        let result = ExecutorConfig::load(&config_path);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to parse executor config"),
+            "Expected parse error for missing type, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_load_nonexistent_file() {
+        let result = ExecutorConfig::load(Path::new("/tmp/does_not_exist_ever_12345.toml"));
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Failed to read executor config"),
+            "Expected read error, got: {}",
+            err_msg
+        );
+    }
+
+    // --- TemplateVars edge case tests ---
+
+    #[test]
+    fn test_template_vars_nonexistent_workgraph_dir() {
+        let task = make_test_task("task-1", "Test");
+        // Pass a path that doesn't exist on disk — canonicalize will fail,
+        // so working_dir should fall back to empty string.
+        let fake_path = Path::new("/tmp/nonexistent_workgraph_dir_xyz_12345");
+        let vars = TemplateVars::from_task(&task, None, Some(fake_path));
+        assert_eq!(vars.working_dir, "");
+    }
+
+    #[test]
+    fn test_template_vars_empty_task_description() {
+        let mut task = make_test_task("task-1", "Test");
+        task.description = None;
+        let vars = TemplateVars::from_task(&task, None, None);
+        assert_eq!(vars.task_description, "");
+    }
+
+    #[test]
+    fn test_template_vars_special_characters() {
+        let mut task = make_test_task("task-with-special", "Title with \"quotes\" & <tags>");
+        task.description = Some("Desc with {{braces}} and $dollars and `backticks`".to_string());
+        let vars = TemplateVars::from_task(&task, Some("Context with\nnewlines\tand\ttabs"), None);
+
+        // Template application should be a literal substitution
+        let result = vars.apply("id={{task_id}} title={{task_title}} desc={{task_description}} ctx={{task_context}}");
+        assert_eq!(
+            result,
+            "id=task-with-special title=Title with \"quotes\" & <tags> desc=Desc with {{braces}} and $dollars and `backticks` ctx=Context with\nnewlines\tand\ttabs"
+        );
+    }
+
+    #[test]
+    fn test_template_apply_missing_variables_passthrough() {
+        let task = make_test_task("task-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, None);
+
+        // Unrecognized placeholders should pass through unchanged
+        let template = "{{task_id}} {{unknown_var}} {{another_unknown}}";
+        let result = vars.apply(template);
+        assert_eq!(result, "task-1 {{unknown_var}} {{another_unknown}}");
+    }
+
+    #[test]
+    fn test_template_apply_no_placeholders() {
+        let task = make_test_task("task-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, None);
+
+        let template = "Just a plain string with no placeholders";
+        let result = vars.apply(template);
+        assert_eq!(result, "Just a plain string with no placeholders");
+    }
+
+    #[test]
+    fn test_template_apply_empty_string() {
+        let task = make_test_task("task-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, None);
+
+        let result = vars.apply("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_template_vars_working_dir_with_real_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        fs::create_dir_all(&wg_dir).unwrap();
+
+        let task = make_test_task("task-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, Some(&wg_dir));
+
+        // working_dir should be the canonical parent of .workgraph
+        let expected = temp_dir.path().canonicalize().unwrap();
+        assert_eq!(vars.working_dir, expected.to_string_lossy().to_string());
+    }
+
+    // --- ExecutorRegistry error path tests ---
+
+    #[test]
+    fn test_registry_unknown_executor() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = ExecutorRegistry::new(temp_dir.path());
+
+        let result = registry.load_config("totally_unknown_executor");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("Unknown executor"),
+            "Expected unknown executor error, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_registry_load_from_file_overrides_default() {
+        let temp_dir = TempDir::new().unwrap();
+        let executors_dir = temp_dir.path().join("executors");
+        fs::create_dir_all(&executors_dir).unwrap();
+
+        // Write a custom claude config that overrides the default
+        let custom_config = r#"
+[executor]
+type = "claude"
+command = "my-custom-claude"
+args = ["--custom-flag"]
+"#;
+        fs::write(executors_dir.join("claude.toml"), custom_config).unwrap();
+
+        let registry = ExecutorRegistry::new(temp_dir.path());
+        let config = registry.load_config("claude").unwrap();
+        assert_eq!(config.executor.command, "my-custom-claude");
+        assert_eq!(config.executor.args, vec!["--custom-flag"]);
+    }
+
+    #[test]
+    fn test_registry_load_malformed_file_returns_error() {
+        let temp_dir = TempDir::new().unwrap();
+        let executors_dir = temp_dir.path().join("executors");
+        fs::create_dir_all(&executors_dir).unwrap();
+        fs::write(executors_dir.join("broken.toml"), "invalid toml {{{").unwrap();
+
+        let registry = ExecutorRegistry::new(temp_dir.path());
+        let result = registry.load_config("broken");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_registry_init_idempotent() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        fs::create_dir_all(&wg_dir).unwrap();
+
+        let registry = ExecutorRegistry::new(&wg_dir);
+
+        // First init
+        registry.init().unwrap();
+        let claude_content_1 =
+            fs::read_to_string(wg_dir.join("executors/claude.toml")).unwrap();
+
+        // Second init should not fail and should not overwrite existing files
+        registry.init().unwrap();
+        let claude_content_2 =
+            fs::read_to_string(wg_dir.join("executors/claude.toml")).unwrap();
+
+        assert_eq!(claude_content_1, claude_content_2);
+    }
+
+    #[test]
+    fn test_registry_default_config_claude_has_prompt_template() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = ExecutorRegistry::new(temp_dir.path());
+        let config = registry.load_config("claude").unwrap();
+
+        assert!(config.executor.prompt_template.is_some());
+        let template = config.executor.prompt_template.unwrap().template;
+        assert!(template.contains("{{task_id}}"));
+        assert!(template.contains("{{task_title}}"));
+        assert!(template.contains("{{task_description}}"));
+        assert!(template.contains("{{task_context}}"));
+        assert!(template.contains("{{task_identity}}"));
+    }
+
+    #[test]
+    fn test_registry_default_config_shell_has_env() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = ExecutorRegistry::new(temp_dir.path());
+        let config = registry.load_config("shell").unwrap();
+
+        assert_eq!(config.executor.env.get("TASK_ID"), Some(&"{{task_id}}".to_string()));
+        assert_eq!(config.executor.env.get("TASK_TITLE"), Some(&"{{task_title}}".to_string()));
+    }
+
+    #[test]
+    fn test_registry_default_config_default_executor() {
+        let temp_dir = TempDir::new().unwrap();
+        let registry = ExecutorRegistry::new(temp_dir.path());
+        let config = registry.load_config("default").unwrap();
+
+        assert_eq!(config.executor.executor_type, "default");
+        assert_eq!(config.executor.command, "echo");
+        assert_eq!(config.executor.args, vec!["Task: {{task_id}}"]);
+    }
+
+    // --- apply_templates edge cases ---
+
+    #[test]
+    fn test_apply_templates_no_prompt_template() {
+        let config = ExecutorConfig {
+            executor: ExecutorSettings {
+                executor_type: "shell".to_string(),
+                command: "bash".to_string(),
+                args: vec!["-c".to_string(), "echo {{task_id}}".to_string()],
+                env: HashMap::new(),
+                prompt_template: None,
+                working_dir: None,
+                timeout: None,
+            },
+        };
+
+        let task = make_test_task("t-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, None);
+        let settings = config.apply_templates(&vars);
+
+        assert!(settings.prompt_template.is_none());
+        assert_eq!(settings.args, vec!["-c", "echo t-1"]);
+    }
+
+    #[test]
+    fn test_apply_templates_no_working_dir() {
+        let config = ExecutorConfig {
+            executor: ExecutorSettings {
+                executor_type: "test".to_string(),
+                command: "cmd".to_string(),
+                args: vec![],
+                env: HashMap::new(),
+                prompt_template: None,
+                working_dir: None,
+                timeout: None,
+            },
+        };
+
+        let task = make_test_task("t-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, None);
+        let settings = config.apply_templates(&vars);
+
+        assert!(settings.working_dir.is_none());
+    }
+
+    #[test]
+    fn test_apply_templates_multiple_env_vars() {
+        let config = ExecutorConfig {
+            executor: ExecutorSettings {
+                executor_type: "test".to_string(),
+                command: "cmd".to_string(),
+                args: vec![],
+                env: {
+                    let mut env = HashMap::new();
+                    env.insert("ID".to_string(), "{{task_id}}".to_string());
+                    env.insert("TITLE".to_string(), "{{task_title}}".to_string());
+                    env.insert("DESC".to_string(), "{{task_description}}".to_string());
+                    env.insert("STATIC".to_string(), "no-template-here".to_string());
+                    env
+                },
+                prompt_template: None,
+                working_dir: None,
+                timeout: None,
+            },
+        };
+
+        let task = make_test_task("t-1", "My Task");
+        let vars = TemplateVars::from_task(&task, None, None);
+        let settings = config.apply_templates(&vars);
+
+        assert_eq!(settings.env.get("ID"), Some(&"t-1".to_string()));
+        assert_eq!(settings.env.get("TITLE"), Some(&"My Task".to_string()));
+        assert_eq!(settings.env.get("DESC"), Some(&"Test description".to_string()));
+        assert_eq!(settings.env.get("STATIC"), Some(&"no-template-here".to_string()));
+    }
+
+    // --- Identity resolution edge cases ---
+
+    #[test]
+    fn test_identity_agent_exists_but_role_missing() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        let roles_dir = wg_dir.join("agency").join("roles");
+        let motivations_dir = wg_dir.join("agency").join("motivations");
+        let agents_dir = wg_dir.join("agency").join("agents");
+        fs::create_dir_all(&roles_dir).unwrap();
+        fs::create_dir_all(&motivations_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        // Create an agent that references a non-existent role
+        let agent = agency::Agent {
+            id: "test-agent-id".to_string(),
+            role_id: "nonexistent-role".to_string(),
+            motivation_id: "nonexistent-motivation".to_string(),
+            name: "Broken Agent".to_string(),
+            performance: agency::PerformanceRecord {
+                task_count: 0,
+                avg_score: None,
+                evaluations: vec![],
+            },
+            lineage: agency::Lineage::default(),
+            capabilities: Vec::new(),
+            rate: None,
+            capacity: None,
+            trust_level: Default::default(),
+            contact: None,
+            executor: "claude".to_string(),
+        };
+        agency::save_agent(&agent, &agents_dir).unwrap();
+
+        let mut task = make_test_task("task-1", "Test");
+        task.agent = Some("test-agent-id".to_string());
+
+        // Should gracefully fall back to empty identity
+        let vars = TemplateVars::from_task(&task, None, Some(&wg_dir));
+        assert_eq!(vars.task_identity, "");
+    }
+
+    #[test]
+    fn test_skills_preamble_empty_when_no_skill_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        fs::create_dir_all(&wg_dir).unwrap();
+
+        let task = make_test_task("task-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, Some(&wg_dir));
+        assert_eq!(vars.skills_preamble, "");
+    }
+
+    #[test]
+    fn test_skills_preamble_loaded_when_skill_file_exists() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        fs::create_dir_all(&wg_dir).unwrap();
+
+        // Create the skill file at project_root/.claude/skills/using-superpowers/SKILL.md
+        let skill_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("using-superpowers");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(skill_dir.join("SKILL.md"), "Use the Skill tool to invoke skills.").unwrap();
+
+        let task = make_test_task("task-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, Some(&wg_dir));
+        assert!(vars.skills_preamble.contains("EXTREMELY_IMPORTANT"));
+        assert!(vars.skills_preamble.contains("Use the Skill tool to invoke skills."));
+    }
+
+    #[test]
+    fn test_skills_preamble_strips_yaml_frontmatter() {
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path().join(".workgraph");
+        fs::create_dir_all(&wg_dir).unwrap();
+
+        let skill_dir = temp_dir
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("using-superpowers");
+        fs::create_dir_all(&skill_dir).unwrap();
+        fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ntitle: Skill\n---\nActual content here.",
+        )
+        .unwrap();
+
+        let task = make_test_task("task-1", "Test");
+        let vars = TemplateVars::from_task(&task, None, Some(&wg_dir));
+        assert!(vars.skills_preamble.contains("Actual content here."));
+        // The frontmatter itself should not appear in the preamble body
+        assert!(!vars.skills_preamble.contains("title: Skill"));
+    }
 }

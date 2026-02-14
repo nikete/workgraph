@@ -531,6 +531,166 @@ mod tests {
         assert!(!result.loop_edge_issues.is_empty());
     }
 
+    // --- Orphan detection tests for blocks, requires, and edge cases ---
+
+    use crate::graph::Resource;
+
+    #[test]
+    fn test_detects_orphan_blocks() {
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t1", "Task 1");
+        task.blocks = vec!["nonexistent".to_string()];
+
+        graph.add_node(Node::Task(task));
+
+        let orphans = check_orphans(&graph);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].from, "t1");
+        assert_eq!(orphans[0].to, "nonexistent");
+        assert_eq!(orphans[0].relation, "blocks");
+    }
+
+    #[test]
+    fn test_no_orphan_blocks_with_valid_ref() {
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task("t1", "Task 1");
+        let mut t2 = make_task("t2", "Task 2");
+        t2.blocks = vec!["t1".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let orphans = check_orphans(&graph);
+        assert!(orphans.is_empty());
+    }
+
+    #[test]
+    fn test_detects_orphan_requires() {
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t1", "Task 1");
+        task.requires = vec!["nonexistent-resource".to_string()];
+
+        graph.add_node(Node::Task(task));
+
+        let orphans = check_orphans(&graph);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].from, "t1");
+        assert_eq!(orphans[0].to, "nonexistent-resource");
+        assert_eq!(orphans[0].relation, "requires");
+    }
+
+    #[test]
+    fn test_no_orphan_requires_with_valid_resource() {
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t1", "Task 1");
+        task.requires = vec!["gpu".to_string()];
+
+        let resource = Resource {
+            id: "gpu".to_string(),
+            name: Some("GPU Compute".to_string()),
+            resource_type: Some("compute".to_string()),
+            available: Some(4.0),
+            unit: Some("GPUs".to_string()),
+        };
+
+        graph.add_node(Node::Task(task));
+        graph.add_node(Node::Resource(resource));
+
+        let orphans = check_orphans(&graph);
+        assert!(orphans.is_empty());
+    }
+
+    #[test]
+    fn test_requires_task_id_is_orphan() {
+        // requires uses get_resource, so a task ID in requires is an orphan
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task("t1", "Task 1");
+        let mut t2 = make_task("t2", "Task 2");
+        t2.requires = vec!["t1".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let orphans = check_orphans(&graph);
+        assert_eq!(orphans.len(), 1);
+        assert_eq!(orphans[0].from, "t2");
+        assert_eq!(orphans[0].to, "t1");
+        assert_eq!(orphans[0].relation, "requires");
+    }
+
+    #[test]
+    fn test_multiple_orphans_in_same_task() {
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t1", "Task 1");
+        task.blocked_by = vec!["ghost-a".to_string()];
+        task.blocks = vec!["ghost-b".to_string()];
+        task.requires = vec!["ghost-resource".to_string()];
+
+        graph.add_node(Node::Task(task));
+
+        let orphans = check_orphans(&graph);
+        assert_eq!(orphans.len(), 3);
+
+        let relations: Vec<&str> = orphans.iter().map(|o| o.relation.as_str()).collect();
+        assert!(relations.contains(&"blocked_by"));
+        assert!(relations.contains(&"blocks"));
+        assert!(relations.contains(&"requires"));
+
+        // All orphans come from t1
+        assert!(orphans.iter().all(|o| o.from == "t1"));
+    }
+
+    #[test]
+    fn test_bidirectional_orphans() {
+        // t1 blocks nonexistent, t2 blocked_by nonexistent — both are orphans
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Task 1");
+        t1.blocks = vec!["phantom".to_string()];
+
+        let mut t2 = make_task("t2", "Task 2");
+        t2.blocked_by = vec!["phantom".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let orphans = check_orphans(&graph);
+        assert_eq!(orphans.len(), 2);
+
+        let from_ids: Vec<&str> = orphans.iter().map(|o| o.from.as_str()).collect();
+        assert!(from_ids.contains(&"t1"));
+        assert!(from_ids.contains(&"t2"));
+    }
+
+    #[test]
+    fn test_blocks_referencing_resource_is_valid() {
+        // blocks uses get_node, so a Resource ID in blocks is NOT an orphan
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t1", "Task 1");
+        task.blocks = vec!["budget".to_string()];
+
+        let resource = Resource {
+            id: "budget".to_string(),
+            name: Some("Budget".to_string()),
+            resource_type: Some("budget".to_string()),
+            available: Some(1000.0),
+            unit: Some("USD".to_string()),
+        };
+
+        graph.add_node(Node::Task(task));
+        graph.add_node(Node::Resource(resource));
+
+        let orphans = check_orphans(&graph);
+        assert!(orphans.is_empty());
+    }
+
     #[test]
     fn test_valid_guard_task_reference() {
         let mut graph = WorkGraph::new();

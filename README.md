@@ -650,7 +650,7 @@ When an agent is spawned on a task inside a loop, it can read `loop_iteration` f
 ```bash
 wg loops               # List all loop edges, their status, and iteration counts
 wg show <task-id>      # Shows loop edges and current iteration on a task
-wg graph               # Loop edges appear as dashed lines in graph output
+wg viz                 # Loop edges appear as dashed lines in graph output
 ```
 
 ## Key concepts
@@ -674,7 +674,7 @@ wg ready              # what can be worked on now?
 wg list               # all tasks (--status to filter)
 wg show <id>          # full task details
 wg status             # quick one-screen overview
-wg graph              # ASCII dependency graph (--all to include done)
+wg viz                # ASCII dependency graph (--all to include done)
 
 wg why-blocked <id>   # trace the blocker chain
 wg impact <id>        # what depends on this?
@@ -690,14 +690,14 @@ wg structure          # entry points, dead ends, high-impact roots
 wg analyze            # comprehensive health report (all of the above)
 ```
 
-See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference including `graph`, `plan`, `coordinate`, `archive`, `reschedule`, and more.
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference including `viz`, `plan`, `coordinate`, `archive`, `reschedule`, and more.
 
 ## Utilities
 
 ```bash
 wg log <id> "message"     # add progress notes to a task
 wg artifact <id> path     # record a file produced by a task
-wg graph --mermaid        # generate DOT/mermaid/ASCII graph
+wg viz --mermaid          # generate DOT/mermaid/ASCII graph
 wg archive                # archive completed tasks
 wg check                  # check graph for cycles and issues
 wg trajectory <id>        # optimal task claim order for agents

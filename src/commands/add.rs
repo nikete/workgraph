@@ -199,3 +199,299 @@ fn generate_id(title: &str, graph: &workgraph::WorkGraph) -> String {
         .unwrap()
         .as_secs())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use workgraph::graph::{LoopGuard, Node, Status, Task};
+    use workgraph::WorkGraph;
+
+    /// Helper: create a minimal task with the given ID for inserting into a WorkGraph.
+    fn stub_task(id: &str) -> Task {
+        Task {
+            id: id.to_string(),
+            title: id.to_string(),
+            description: None,
+            status: Status::Open,
+            assigned: None,
+            estimate: None,
+            blocks: vec![],
+            blocked_by: vec![],
+            requires: vec![],
+            tags: vec![],
+            skills: vec![],
+            inputs: vec![],
+            deliverables: vec![],
+            artifacts: vec![],
+            exec: None,
+            not_before: None,
+            created_at: None,
+            started_at: None,
+            completed_at: None,
+            log: vec![],
+            retry_count: 0,
+            max_retries: None,
+            failure_reason: None,
+            model: None,
+            verify: None,
+            agent: None,
+            loops_to: vec![],
+            loop_iteration: 0,
+            ready_after: None,
+        }
+    }
+
+    // ---- parse_guard_expr tests ----
+
+    #[test]
+    fn guard_always_lowercase() {
+        let g = parse_guard_expr("always").unwrap();
+        assert_eq!(g, LoopGuard::Always);
+    }
+
+    #[test]
+    fn guard_always_mixed_case() {
+        let g = parse_guard_expr("Always").unwrap();
+        assert_eq!(g, LoopGuard::Always);
+    }
+
+    #[test]
+    fn guard_always_uppercase() {
+        let g = parse_guard_expr("ALWAYS").unwrap();
+        assert_eq!(g, LoopGuard::Always);
+    }
+
+    #[test]
+    fn guard_always_with_whitespace() {
+        let g = parse_guard_expr("  always  ").unwrap();
+        assert_eq!(g, LoopGuard::Always);
+    }
+
+    #[test]
+    fn guard_task_status_done() {
+        let g = parse_guard_expr("task:my-task=done").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "my-task".to_string(),
+                status: Status::Done,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_status_open() {
+        let g = parse_guard_expr("task:build-step=open").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "build-step".to_string(),
+                status: Status::Open,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_status_failed() {
+        let g = parse_guard_expr("task:deploy=failed").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "deploy".to_string(),
+                status: Status::Failed,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_status_abandoned() {
+        let g = parse_guard_expr("task:cleanup=abandoned").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "cleanup".to_string(),
+                status: Status::Abandoned,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_status_in_progress() {
+        let g = parse_guard_expr("task:long-running=in-progress").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "long-running".to_string(),
+                status: Status::InProgress,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_status_blocked() {
+        let g = parse_guard_expr("task:waiting=blocked").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "waiting".to_string(),
+                status: Status::Blocked,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_status_pending_review() {
+        let g = parse_guard_expr("task:pr-check=pending-review").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "pr-check".to_string(),
+                status: Status::PendingReview,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_status_case_insensitive() {
+        let g = parse_guard_expr("task:check=Done").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "check".to_string(),
+                status: Status::Done,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_id_with_underscores() {
+        let g = parse_guard_expr("task:my_task_id=done").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "my_task_id".to_string(),
+                status: Status::Done,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_task_id_with_dashes() {
+        let g = parse_guard_expr("task:my-task-id=open").unwrap();
+        assert_eq!(
+            g,
+            LoopGuard::TaskStatus {
+                task: "my-task-id".to_string(),
+                status: Status::Open,
+            }
+        );
+    }
+
+    #[test]
+    fn guard_unknown_status_errors() {
+        let result = parse_guard_expr("task:foo=bogus");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Unknown status"), "got: {msg}");
+    }
+
+    #[test]
+    fn guard_missing_equals_errors() {
+        let result = parse_guard_expr("task:foo");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Invalid guard format"), "got: {msg}");
+    }
+
+    #[test]
+    fn guard_missing_colon_errors() {
+        let result = parse_guard_expr("taskfoo=done");
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Invalid guard expression"), "got: {msg}");
+    }
+
+    #[test]
+    fn guard_empty_string_errors() {
+        let result = parse_guard_expr("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn guard_whitespace_only_errors() {
+        let result = parse_guard_expr("   ");
+        assert!(result.is_err());
+    }
+
+    // ---- generate_id tests ----
+
+    #[test]
+    fn id_slug_from_simple_title() {
+        let graph = WorkGraph::new();
+        let id = generate_id("Build the widget", &graph);
+        assert_eq!(id, "build-the-widget");
+    }
+
+    #[test]
+    fn id_slug_truncates_to_three_words() {
+        let graph = WorkGraph::new();
+        let id = generate_id("Build the amazing super widget", &graph);
+        assert_eq!(id, "build-the-amazing");
+    }
+
+    #[test]
+    fn id_slug_strips_special_chars() {
+        let graph = WorkGraph::new();
+        let id = generate_id("Fix (bug) #123!", &graph);
+        assert_eq!(id, "fix-bug-123");
+    }
+
+    #[test]
+    fn id_slug_collapses_multiple_separators() {
+        let graph = WorkGraph::new();
+        let id = generate_id("a---b   c", &graph);
+        assert_eq!(id, "a-b-c");
+    }
+
+    #[test]
+    fn id_slug_empty_title_gives_task() {
+        let graph = WorkGraph::new();
+        let id = generate_id("", &graph);
+        assert_eq!(id, "task");
+    }
+
+    #[test]
+    fn id_slug_whitespace_title_gives_task() {
+        let graph = WorkGraph::new();
+        let id = generate_id("   ", &graph);
+        assert_eq!(id, "task");
+    }
+
+    #[test]
+    fn id_uniqueness_appends_suffix() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(stub_task("build-it")));
+        let id = generate_id("Build it", &graph);
+        assert_eq!(id, "build-it-2");
+    }
+
+    #[test]
+    fn id_uniqueness_increments_until_free() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(stub_task("build-it")));
+        graph.add_node(Node::Task(stub_task("build-it-2")));
+        graph.add_node(Node::Task(stub_task("build-it-3")));
+        let id = generate_id("Build it", &graph);
+        assert_eq!(id, "build-it-4");
+    }
+
+    #[test]
+    fn id_explicit_no_collision() {
+        // When an explicit id is provided, generate_id is not called;
+        // but the run() function checks uniqueness. Verify generate_id
+        // returns the base slug when no collision exists.
+        let graph = WorkGraph::new();
+        let id = generate_id("Deploy service", &graph);
+        assert_eq!(id, "deploy-service");
+    }
+}

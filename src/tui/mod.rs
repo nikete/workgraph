@@ -1288,7 +1288,7 @@ fn draw_agent_list(frame: &mut Frame, app: &mut App, area: Rect) {
 }
 
 /// Map agent status to a color: green=working, yellow=starting, red=dead, dim=done
-fn agent_status_color(status: &AgentStatus) -> Color {
+pub(crate) fn agent_status_color(status: &AgentStatus) -> Color {
     match status {
         AgentStatus::Working => Color::Green,
         AgentStatus::Starting => Color::Yellow,
@@ -1301,7 +1301,7 @@ fn agent_status_color(status: &AgentStatus) -> Color {
 }
 
 /// Map agent status to a short label
-fn agent_status_label(status: &AgentStatus) -> &'static str {
+pub(crate) fn agent_status_label(status: &AgentStatus) -> &'static str {
     match status {
         AgentStatus::Working => "WORKING",
         AgentStatus::Starting => "STARTING",
@@ -1314,7 +1314,7 @@ fn agent_status_label(status: &AgentStatus) -> &'static str {
 }
 
 /// Map task status to a bracket indicator
-fn status_indicator(status: &Status) -> &'static str {
+pub(crate) fn status_indicator(status: &Status) -> &'static str {
     match status {
         Status::Done => "[x]",
         Status::InProgress => "[~]",
@@ -1327,7 +1327,7 @@ fn status_indicator(status: &Status) -> &'static str {
 }
 
 /// Map task status to a display color
-fn status_color(status: &Status) -> Color {
+pub(crate) fn status_color(status: &Status) -> Color {
     match status {
         Status::Done => Color::Green,
         Status::InProgress => Color::Yellow,

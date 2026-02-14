@@ -92,3 +92,305 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+    use workgraph::graph::{LoopEdge, Node, Task, WorkGraph};
+
+    fn make_task(id: &str, title: &str, status: Status) -> Task {
+        Task {
+            id: id.to_string(),
+            title: title.to_string(),
+            description: None,
+            status,
+            assigned: None,
+            estimate: None,
+            blocks: vec![],
+            blocked_by: vec![],
+            requires: vec![],
+            tags: vec![],
+            skills: vec![],
+            inputs: vec![],
+            deliverables: vec![],
+            artifacts: vec![],
+            exec: None,
+            not_before: None,
+            created_at: None,
+            started_at: None,
+            completed_at: None,
+            log: vec![],
+            retry_count: 0,
+            max_retries: None,
+            failure_reason: None,
+            model: None,
+            verify: None,
+            agent: None,
+            loops_to: vec![],
+            loop_iteration: 0,
+            ready_after: None,
+        }
+    }
+
+    fn setup_workgraph(dir: &Path, tasks: Vec<Task>) -> std::path::PathBuf {
+        fs::create_dir_all(dir).unwrap();
+        let path = graph_path(dir);
+        let mut graph = WorkGraph::new();
+        for task in tasks {
+            graph.add_node(Node::Task(task));
+        }
+        save_graph(&graph, &path).unwrap();
+        path
+    }
+
+    #[test]
+    fn test_done_open_task_transitions_to_done() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+        setup_workgraph(dir_path, vec![make_task("t1", "Test task", Status::Open)]);
+
+        let result = run(dir_path, "t1");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+        let task = graph.get_task("t1").unwrap();
+        assert_eq!(task.status, Status::Done);
+    }
+
+    #[test]
+    fn test_done_in_progress_task_transitions_to_done() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+        setup_workgraph(
+            dir_path,
+            vec![make_task("t1", "Test task", Status::InProgress)],
+        );
+
+        let result = run(dir_path, "t1");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+        let task = graph.get_task("t1").unwrap();
+        assert_eq!(task.status, Status::Done);
+    }
+
+    #[test]
+    fn test_done_already_done_returns_ok() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+        setup_workgraph(dir_path, vec![make_task("t1", "Test task", Status::Done)]);
+
+        // Should return Ok (idempotent) rather than error
+        let result = run(dir_path, "t1");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_done_with_unresolved_blockers_fails() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let blocker = make_task("blocker", "Blocker task", Status::Open);
+        let mut blocked = make_task("blocked", "Blocked task", Status::Open);
+        blocked.blocked_by = vec!["blocker".to_string()];
+
+        setup_workgraph(dir_path, vec![blocker, blocked]);
+
+        let result = run(dir_path, "blocked");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("blocked by"));
+        assert!(err.to_string().contains("unresolved"));
+    }
+
+    #[test]
+    fn test_done_with_resolved_blockers_succeeds() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let blocker = make_task("blocker", "Blocker task", Status::Done);
+        let mut blocked = make_task("blocked", "Blocked task", Status::Open);
+        blocked.blocked_by = vec!["blocker".to_string()];
+
+        setup_workgraph(dir_path, vec![blocker, blocked]);
+
+        let result = run(dir_path, "blocked");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+        let task = graph.get_task("blocked").unwrap();
+        assert_eq!(task.status, Status::Done);
+    }
+
+    #[test]
+    fn test_done_verified_task_rejects_with_submit_hint() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let mut task = make_task("t1", "Verified task", Status::InProgress);
+        task.verify = Some("Check output quality".to_string());
+
+        setup_workgraph(dir_path, vec![task]);
+
+        let result = run(dir_path, "t1");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("requires verification"));
+        assert!(err.to_string().contains("wg submit"));
+    }
+
+    #[test]
+    fn test_done_sets_completed_at_timestamp() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+        setup_workgraph(dir_path, vec![make_task("t1", "Test task", Status::Open)]);
+
+        let before = Utc::now();
+        let result = run(dir_path, "t1");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+        let task = graph.get_task("t1").unwrap();
+        assert!(task.completed_at.is_some());
+
+        // Parse the timestamp and verify it's recent
+        let completed_at: chrono::DateTime<Utc> =
+            task.completed_at.as_ref().unwrap().parse().unwrap();
+        assert!(completed_at >= before);
+    }
+
+    #[test]
+    fn test_done_creates_log_entry() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+
+        let mut task = make_task("t1", "Test task", Status::InProgress);
+        task.assigned = Some("agent-1".to_string());
+        setup_workgraph(dir_path, vec![task]);
+
+        let result = run(dir_path, "t1");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+        let task = graph.get_task("t1").unwrap();
+
+        assert!(!task.log.is_empty());
+        let last_log = task.log.last().unwrap();
+        assert_eq!(last_log.message, "Task marked as done");
+        assert_eq!(last_log.actor, Some("agent-1".to_string()));
+    }
+
+    #[test]
+    fn test_done_evaluates_loop_edges_and_reactivates_target() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+
+        // Create a loop: source -> loops_to -> target
+        let mut source = make_task("source", "Source task", Status::InProgress);
+        source.loops_to = vec![LoopEdge {
+            target: "target".to_string(),
+            guard: None,
+            max_iterations: 3,
+            delay: None,
+        }];
+
+        let mut target = make_task("target", "Target task", Status::Done);
+        target.loop_iteration = 0;
+
+        setup_workgraph(dir_path, vec![source, target]);
+
+        let result = run(dir_path, "source");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+
+        // Source should be Done
+        let source = graph.get_task("source").unwrap();
+        assert_eq!(source.status, Status::Done);
+
+        // Target should be re-activated (Open) with incremented loop_iteration
+        let target = graph.get_task("target").unwrap();
+        assert_eq!(target.status, Status::Open);
+        assert_eq!(target.loop_iteration, 1);
+    }
+
+    #[test]
+    fn test_done_nonexistent_task_fails() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+        setup_workgraph(dir_path, vec![]);
+
+        let result = run(dir_path, "nonexistent");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_done_uninitialized_workgraph_fails() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+        // Don't initialize workgraph
+
+        let result = run(dir_path, "t1");
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("not initialized"));
+    }
+
+    #[test]
+    fn test_done_log_entry_without_assigned_has_none_actor() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+        setup_workgraph(dir_path, vec![make_task("t1", "Test task", Status::Open)]);
+
+        let result = run(dir_path, "t1");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+        let task = graph.get_task("t1").unwrap();
+
+        let last_log = task.log.last().unwrap();
+        assert_eq!(last_log.actor, None);
+    }
+
+    #[test]
+    fn test_done_loop_edge_respects_max_iterations() {
+        let dir = tempdir().unwrap();
+        let dir_path = dir.path();
+
+        // Source has a loop to target, but target is already at max_iterations
+        let mut source = make_task("source", "Source task", Status::InProgress);
+        source.loops_to = vec![LoopEdge {
+            target: "target".to_string(),
+            guard: None,
+            max_iterations: 2,
+            delay: None,
+        }];
+
+        let mut target = make_task("target", "Target task", Status::Done);
+        target.loop_iteration = 2; // Already at max
+
+        setup_workgraph(dir_path, vec![source, target]);
+
+        let result = run(dir_path, "source");
+        assert!(result.is_ok());
+
+        let path = graph_path(dir_path);
+        let graph = load_graph(&path).unwrap();
+
+        // Target should NOT be re-activated (still Done, iteration unchanged)
+        let target = graph.get_task("target").unwrap();
+        assert_eq!(target.status, Status::Done);
+        assert_eq!(target.loop_iteration, 2);
+    }
+}

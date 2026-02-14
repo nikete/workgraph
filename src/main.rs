@@ -303,7 +303,7 @@ enum Commands {
     },
 
     /// Visualize the dependency graph (ASCII tree by default)
-    Graph {
+    Viz {
         /// Include done tasks (default: only open tasks)
         #[arg(long)]
         all: bool,
@@ -461,41 +461,6 @@ enum Commands {
         list: bool,
     },
 
-    /// Alias for 'graph' (deprecated, use 'wg graph' instead)
-    #[command(hide = true)]
-    Viz {
-        /// Include done tasks (default: only open tasks)
-        #[arg(long)]
-        all: bool,
-
-        /// Filter by status (open, in-progress, done, blocked)
-        #[arg(long)]
-        status: Option<String>,
-
-        /// Highlight the critical path in red
-        #[arg(long)]
-        critical_path: bool,
-
-        /// Output format (dot, mermaid, ascii)
-        #[arg(long, default_value = "dot")]
-        format: String,
-
-        /// Render directly to file (requires dot installed)
-        #[arg(long, short)]
-        output: Option<String>,
-    },
-
-    /// Alias for 'graph' (deprecated, use 'wg graph' instead)
-    #[command(hide = true)]
-    Dag {
-        /// Include done tasks (default: only open tasks)
-        #[arg(long)]
-        all: bool,
-
-        /// Filter by status (open, in-progress, done, blocked)
-        #[arg(long)]
-        status: Option<String>,
-    },
 
     /// Manage resources
     Resource {
@@ -1465,7 +1430,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::WhyBlocked { .. } => "why-blocked",
         Commands::Check => "check",
         Commands::List { .. } => "list",
-        Commands::Graph { .. } => "graph",
+        Commands::Viz { .. } => "viz",
         Commands::GraphExport { .. } => "graph-export",
         Commands::Cost { .. } => "cost",
         Commands::Coordinate { .. } => "coordinate",
@@ -1485,8 +1450,6 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Archive { .. } => "archive",
         Commands::Show { .. } => "show",
         Commands::Log { .. } => "log",
-        Commands::Viz { .. } => "viz",
-        Commands::Dag { .. } => "dag",
         Commands::Resource { .. } => "resource",
         Commands::Skill { .. } => "skill",
         Commands::Agency { .. } => "agency",
@@ -1629,7 +1592,7 @@ fn main() -> Result<()> {
         Commands::WhyBlocked { id } => commands::why_blocked::run(&workgraph_dir, &id, cli.json),
         Commands::Check => commands::check::run(&workgraph_dir),
         Commands::List { status } => commands::list::run(&workgraph_dir, status.as_deref(), cli.json),
-        Commands::Graph {
+        Commands::Viz {
             all,
             status,
             critical_path,
@@ -1694,33 +1657,6 @@ fn main() -> Result<()> {
             } else {
                 commands::log::run_add(&workgraph_dir, &id, message.as_deref().unwrap(), actor.as_deref())
             }
-        }
-        Commands::Viz {
-            all,
-            status,
-            critical_path,
-            format,
-            output,
-        } => {
-            let fmt = format.parse().map_err(|e: String| anyhow::anyhow!(e))?;
-            let options = commands::viz::VizOptions {
-                all,
-                status,
-                critical_path,
-                format: fmt,
-                output,
-            };
-            commands::viz::run(&workgraph_dir, options)
-        }
-        Commands::Dag { all, status } => {
-            let options = commands::viz::VizOptions {
-                all,
-                status,
-                critical_path: false,
-                format: commands::viz::OutputFormat::Ascii,
-                output: None,
-            };
-            commands::viz::run(&workgraph_dir, options)
         }
         Commands::Resource { command } => match command {
             ResourceCommands::Add {

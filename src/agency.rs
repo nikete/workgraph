@@ -2858,4 +2858,636 @@ performance:
         assert_eq!(missing, vec!["coding"]);
     }
 
+    // -- Agent I/O roundtrip tests -------------------------------------------
+
+    fn sample_agent() -> Agent {
+        let role = sample_role();
+        let motivation = sample_motivation();
+        let id = content_hash_agent(&role.id, &motivation.id);
+        Agent {
+            id,
+            role_id: role.id,
+            motivation_id: motivation.id,
+            name: "Test Agent".into(),
+            performance: sample_performance(),
+            lineage: Lineage::default(),
+            capabilities: vec!["rust".into(), "testing".into()],
+            rate: Some(50.0),
+            capacity: Some(3.0),
+            trust_level: TrustLevel::Verified,
+            contact: Some("agent@example.com".into()),
+            executor: "matrix".into(),
+        }
+    }
+
+    #[test]
+    fn test_agent_roundtrip_all_fields() {
+        let tmp = TempDir::new().unwrap();
+        let agent = sample_agent();
+        let path = save_agent(&agent, tmp.path()).unwrap();
+        assert!(path.exists());
+        assert_eq!(
+            path.file_name().unwrap().to_str().unwrap(),
+            format!("{}.yaml", agent.id)
+        );
+
+        let loaded = load_agent(&path).unwrap();
+        assert_eq!(loaded.id, agent.id);
+        assert_eq!(loaded.role_id, agent.role_id);
+        assert_eq!(loaded.motivation_id, agent.motivation_id);
+        assert_eq!(loaded.name, agent.name);
+        assert_eq!(loaded.performance.task_count, 0);
+        assert!(loaded.performance.avg_score.is_none());
+        assert_eq!(loaded.capabilities, vec!["rust", "testing"]);
+        assert_eq!(loaded.rate, Some(50.0));
+        assert_eq!(loaded.capacity, Some(3.0));
+        assert_eq!(loaded.trust_level, TrustLevel::Verified);
+        assert_eq!(loaded.contact, Some("agent@example.com".into()));
+        assert_eq!(loaded.executor, "matrix");
+    }
+
+    #[test]
+    fn test_agent_roundtrip_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let role = sample_role();
+        let motivation = sample_motivation();
+        let id = content_hash_agent(&role.id, &motivation.id);
+        let agent = Agent {
+            id,
+            role_id: role.id,
+            motivation_id: motivation.id,
+            name: "Default Agent".into(),
+            performance: sample_performance(),
+            lineage: Lineage::default(),
+            capabilities: vec![],
+            rate: None,
+            capacity: None,
+            trust_level: TrustLevel::Provisional,
+            contact: None,
+            executor: "claude".into(),
+        };
+        let path = save_agent(&agent, tmp.path()).unwrap();
+        let loaded = load_agent(&path).unwrap();
+        assert_eq!(loaded.capabilities, Vec::<String>::new());
+        assert_eq!(loaded.rate, None);
+        assert_eq!(loaded.capacity, None);
+        assert_eq!(loaded.trust_level, TrustLevel::Provisional);
+        assert_eq!(loaded.contact, None);
+        assert_eq!(loaded.executor, "claude");
+    }
+
+    #[test]
+    fn test_load_all_agents_sorted() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+
+        let r1 = build_role("R1", "Role 1", vec![], "O1");
+        let r2 = build_role("R2", "Role 2", vec![], "O2");
+        let m = sample_motivation();
+
+        let a1 = Agent {
+            id: content_hash_agent(&r1.id, &m.id),
+            role_id: r1.id.clone(),
+            motivation_id: m.id.clone(),
+            name: "Agent 1".into(),
+            performance: sample_performance(),
+            lineage: Lineage::default(),
+            capabilities: vec![],
+            rate: None,
+            capacity: None,
+            trust_level: TrustLevel::Provisional,
+            contact: None,
+            executor: "claude".into(),
+        };
+        let a2 = Agent {
+            id: content_hash_agent(&r2.id, &m.id),
+            role_id: r2.id.clone(),
+            motivation_id: m.id.clone(),
+            name: "Agent 2".into(),
+            performance: sample_performance(),
+            lineage: Lineage::default(),
+            capabilities: vec![],
+            rate: None,
+            capacity: None,
+            trust_level: TrustLevel::Provisional,
+            contact: None,
+            executor: "claude".into(),
+        };
+
+        save_agent(&a1, dir).unwrap();
+        save_agent(&a2, dir).unwrap();
+
+        let all = load_all_agents(dir).unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all[0].id < all[1].id, "Agents should be sorted by ID");
+    }
+
+    #[test]
+    fn test_load_all_agents_empty_dir() {
+        let tmp = TempDir::new().unwrap();
+        let agents = load_all_agents(tmp.path()).unwrap();
+        assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn test_load_all_agents_nonexistent_dir() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("no-such-dir");
+        let agents = load_all_agents(&missing).unwrap();
+        assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn test_save_agent_creates_dir() {
+        let tmp = TempDir::new().unwrap();
+        let nested = tmp.path().join("deep").join("agents");
+        let agent = sample_agent();
+        let path = save_agent(&agent, &nested).unwrap();
+        assert!(path.exists());
+        assert!(nested.is_dir());
+    }
+
+    // -- Builder function tests (content-hash ID, field immutability) --------
+
+    #[test]
+    fn test_build_role_content_hash_deterministic() {
+        let r1 = build_role("Name A", "Desc", vec![SkillRef::Name("s".into())], "Outcome");
+        let r2 = build_role("Name B", "Desc", vec![SkillRef::Name("s".into())], "Outcome");
+        // Same immutable content (skills, desired_outcome, description) => same ID
+        assert_eq!(r1.id, r2.id);
+        assert_eq!(r1.id.len(), 64);
+    }
+
+    #[test]
+    fn test_build_role_different_description_different_id() {
+        let r1 = build_role("R", "Description A", vec![], "Outcome");
+        let r2 = build_role("R", "Description B", vec![], "Outcome");
+        assert_ne!(r1.id, r2.id);
+    }
+
+    #[test]
+    fn test_build_role_different_skills_different_id() {
+        let r1 = build_role("R", "Desc", vec![SkillRef::Name("a".into())], "Outcome");
+        let r2 = build_role("R", "Desc", vec![SkillRef::Name("b".into())], "Outcome");
+        assert_ne!(r1.id, r2.id);
+    }
+
+    #[test]
+    fn test_build_role_different_desired_outcome_different_id() {
+        let r1 = build_role("R", "Desc", vec![], "Outcome A");
+        let r2 = build_role("R", "Desc", vec![], "Outcome B");
+        assert_ne!(r1.id, r2.id);
+    }
+
+    #[test]
+    fn test_build_role_name_does_not_affect_id() {
+        let r1 = build_role("Alpha", "Same desc", vec![], "Same outcome");
+        let r2 = build_role("Beta", "Same desc", vec![], "Same outcome");
+        // name is mutable — should NOT be part of hash
+        assert_eq!(r1.id, r2.id);
+    }
+
+    #[test]
+    fn test_build_role_fresh_performance() {
+        let r = build_role("R", "D", vec![], "O");
+        assert_eq!(r.performance.task_count, 0);
+        assert!(r.performance.avg_score.is_none());
+        assert!(r.performance.evaluations.is_empty());
+    }
+
+    #[test]
+    fn test_build_role_default_lineage() {
+        let r = build_role("R", "D", vec![], "O");
+        assert!(r.lineage.parent_ids.is_empty());
+        assert_eq!(r.lineage.generation, 0);
+        assert_eq!(r.lineage.created_by, "human");
+    }
+
+    #[test]
+    fn test_build_motivation_content_hash_deterministic() {
+        let m1 = build_motivation("Name A", "Desc", vec!["a".into()], vec!["b".into()]);
+        let m2 = build_motivation("Name B", "Desc", vec!["a".into()], vec!["b".into()]);
+        // Same immutable content => same ID
+        assert_eq!(m1.id, m2.id);
+        assert_eq!(m1.id.len(), 64);
+    }
+
+    #[test]
+    fn test_build_motivation_different_description_different_id() {
+        let m1 = build_motivation("M", "Desc A", vec![], vec![]);
+        let m2 = build_motivation("M", "Desc B", vec![], vec![]);
+        assert_ne!(m1.id, m2.id);
+    }
+
+    #[test]
+    fn test_build_motivation_different_acceptable_different_id() {
+        let m1 = build_motivation("M", "D", vec!["x".into()], vec![]);
+        let m2 = build_motivation("M", "D", vec!["y".into()], vec![]);
+        assert_ne!(m1.id, m2.id);
+    }
+
+    #[test]
+    fn test_build_motivation_different_unacceptable_different_id() {
+        let m1 = build_motivation("M", "D", vec![], vec!["x".into()]);
+        let m2 = build_motivation("M", "D", vec![], vec!["y".into()]);
+        assert_ne!(m1.id, m2.id);
+    }
+
+    #[test]
+    fn test_build_motivation_name_does_not_affect_id() {
+        let m1 = build_motivation("Alpha", "Same", vec!["a".into()], vec!["b".into()]);
+        let m2 = build_motivation("Beta", "Same", vec!["a".into()], vec!["b".into()]);
+        assert_eq!(m1.id, m2.id);
+    }
+
+    #[test]
+    fn test_build_motivation_fresh_performance() {
+        let m = build_motivation("M", "D", vec![], vec![]);
+        assert_eq!(m.performance.task_count, 0);
+        assert!(m.performance.avg_score.is_none());
+        assert!(m.performance.evaluations.is_empty());
+    }
+
+    #[test]
+    fn test_build_motivation_default_lineage() {
+        let m = build_motivation("M", "D", vec![], vec![]);
+        assert!(m.lineage.parent_ids.is_empty());
+        assert_eq!(m.lineage.generation, 0);
+        assert_eq!(m.lineage.created_by, "human");
+    }
+
+    // -- find_*_by_prefix tests ----------------------------------------------
+
+    #[test]
+    fn test_find_role_by_prefix_exact_match() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let role = sample_role();
+        save_role(&role, dir).unwrap();
+
+        let found = find_role_by_prefix(dir, &role.id).unwrap();
+        assert_eq!(found.id, role.id);
+        assert_eq!(found.name, role.name);
+    }
+
+    #[test]
+    fn test_find_role_by_prefix_short_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let role = sample_role();
+        save_role(&role, dir).unwrap();
+
+        // Use first 8 chars as prefix
+        let prefix = &role.id[..8];
+        let found = find_role_by_prefix(dir, prefix).unwrap();
+        assert_eq!(found.id, role.id);
+    }
+
+    #[test]
+    fn test_find_role_by_prefix_no_match() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let role = sample_role();
+        save_role(&role, dir).unwrap();
+
+        let result = find_role_by_prefix(dir, "zzzznotfound");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("No role matching"));
+    }
+
+    #[test]
+    fn test_find_role_by_prefix_ambiguous() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        // Create two roles — their SHA-256 IDs will both start with hex digits
+        let r1 = build_role("R1", "First", vec![], "O1");
+        let r2 = build_role("R2", "Second", vec![], "O2");
+        save_role(&r1, dir).unwrap();
+        save_role(&r2, dir).unwrap();
+
+        // Single-char prefix that's a hex digit — likely matches both
+        // Find a common prefix
+        let common_len = r1
+            .id
+            .chars()
+            .zip(r2.id.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        if common_len > 0 {
+            let prefix = &r1.id[..common_len];
+            let result = find_role_by_prefix(dir, prefix);
+            assert!(result.is_err());
+            let err = result.unwrap_err().to_string();
+            assert!(err.contains("matches"));
+        }
+        // If no common prefix, the two IDs diverge at char 0 — skip ambiguity test
+    }
+
+    #[test]
+    fn test_find_role_by_prefix_single_char() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let role = sample_role();
+        save_role(&role, dir).unwrap();
+
+        // Single-char prefix from the role's ID
+        let prefix = &role.id[..1];
+        let found = find_role_by_prefix(dir, prefix).unwrap();
+        assert_eq!(found.id, role.id);
+    }
+
+    #[test]
+    fn test_find_role_by_prefix_empty_dir() {
+        let tmp = TempDir::new().unwrap();
+        let result = find_role_by_prefix(tmp.path(), "abc");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No role matching"));
+    }
+
+    #[test]
+    fn test_find_motivation_by_prefix_exact_match() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let m = sample_motivation();
+        save_motivation(&m, dir).unwrap();
+
+        let found = find_motivation_by_prefix(dir, &m.id).unwrap();
+        assert_eq!(found.id, m.id);
+        assert_eq!(found.name, m.name);
+    }
+
+    #[test]
+    fn test_find_motivation_by_prefix_short_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let m = sample_motivation();
+        save_motivation(&m, dir).unwrap();
+
+        let prefix = &m.id[..8];
+        let found = find_motivation_by_prefix(dir, prefix).unwrap();
+        assert_eq!(found.id, m.id);
+    }
+
+    #[test]
+    fn test_find_motivation_by_prefix_no_match() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let m = sample_motivation();
+        save_motivation(&m, dir).unwrap();
+
+        let result = find_motivation_by_prefix(dir, "zzzznotfound");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No motivation matching"));
+    }
+
+    #[test]
+    fn test_find_motivation_by_prefix_ambiguous() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let m1 = build_motivation("M1", "First", vec!["a".into()], vec![]);
+        let m2 = build_motivation("M2", "Second", vec!["b".into()], vec![]);
+        save_motivation(&m1, dir).unwrap();
+        save_motivation(&m2, dir).unwrap();
+
+        let common_len = m1
+            .id
+            .chars()
+            .zip(m2.id.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        if common_len > 0 {
+            let prefix = &m1.id[..common_len];
+            let result = find_motivation_by_prefix(dir, prefix);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("matches"));
+        }
+    }
+
+    #[test]
+    fn test_find_agent_by_prefix_exact_match() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let agent = sample_agent();
+        save_agent(&agent, dir).unwrap();
+
+        let found = find_agent_by_prefix(dir, &agent.id).unwrap();
+        assert_eq!(found.id, agent.id);
+        assert_eq!(found.name, agent.name);
+        assert_eq!(found.executor, "matrix");
+    }
+
+    #[test]
+    fn test_find_agent_by_prefix_short_prefix() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let agent = sample_agent();
+        save_agent(&agent, dir).unwrap();
+
+        let prefix = &agent.id[..8];
+        let found = find_agent_by_prefix(dir, prefix).unwrap();
+        assert_eq!(found.id, agent.id);
+    }
+
+    #[test]
+    fn test_find_agent_by_prefix_no_match() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let agent = sample_agent();
+        save_agent(&agent, dir).unwrap();
+
+        let result = find_agent_by_prefix(dir, "zzzznotfound");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No agent matching"));
+    }
+
+    #[test]
+    fn test_find_agent_by_prefix_ambiguous() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let r1 = build_role("R1", "D1", vec![], "O1");
+        let r2 = build_role("R2", "D2", vec![], "O2");
+        let m = sample_motivation();
+
+        let a1 = Agent {
+            id: content_hash_agent(&r1.id, &m.id),
+            role_id: r1.id,
+            motivation_id: m.id.clone(),
+            name: "A1".into(),
+            performance: sample_performance(),
+            lineage: Lineage::default(),
+            capabilities: vec![],
+            rate: None,
+            capacity: None,
+            trust_level: TrustLevel::Provisional,
+            contact: None,
+            executor: "claude".into(),
+        };
+        let a2 = Agent {
+            id: content_hash_agent(&r2.id, &m.id),
+            role_id: r2.id,
+            motivation_id: m.id.clone(),
+            name: "A2".into(),
+            performance: sample_performance(),
+            lineage: Lineage::default(),
+            capabilities: vec![],
+            rate: None,
+            capacity: None,
+            trust_level: TrustLevel::Provisional,
+            contact: None,
+            executor: "claude".into(),
+        };
+
+        save_agent(&a1, dir).unwrap();
+        save_agent(&a2, dir).unwrap();
+
+        let common_len = a1
+            .id
+            .chars()
+            .zip(a2.id.chars())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        if common_len > 0 {
+            let prefix = &a1.id[..common_len];
+            let result = find_agent_by_prefix(dir, prefix);
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("matches"));
+        }
+    }
+
+    #[test]
+    fn test_find_role_by_prefix_special_characters() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let role = sample_role();
+        save_role(&role, dir).unwrap();
+
+        // Prefix with special regex chars — should not cause panic, just no match
+        let result = find_role_by_prefix(dir, ".*+?[]()");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No role matching"));
+    }
+
+    #[test]
+    fn test_find_motivation_by_prefix_special_characters() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let m = sample_motivation();
+        save_motivation(&m, dir).unwrap();
+
+        let result = find_motivation_by_prefix(dir, "^$\\{|}");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No motivation matching"));
+    }
+
+    #[test]
+    fn test_find_agent_by_prefix_special_characters() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        let agent = sample_agent();
+        save_agent(&agent, dir).unwrap();
+
+        let result = find_agent_by_prefix(dir, "!@#$%");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No agent matching"));
+    }
+
+    // -- is_human_executor / Agent.is_human tests ----------------------------
+
+    #[test]
+    fn test_is_human_executor_matrix() {
+        assert!(is_human_executor("matrix"));
+    }
+
+    #[test]
+    fn test_is_human_executor_email() {
+        assert!(is_human_executor("email"));
+    }
+
+    #[test]
+    fn test_is_human_executor_shell() {
+        assert!(is_human_executor("shell"));
+    }
+
+    #[test]
+    fn test_is_human_executor_claude_is_not_human() {
+        assert!(!is_human_executor("claude"));
+    }
+
+    #[test]
+    fn test_is_human_executor_empty_string() {
+        assert!(!is_human_executor(""));
+    }
+
+    #[test]
+    fn test_is_human_executor_unknown_string() {
+        assert!(!is_human_executor("custom-ai-backend"));
+    }
+
+    #[test]
+    fn test_agent_is_human_with_matrix_executor() {
+        let mut agent = sample_agent();
+        agent.executor = "matrix".into();
+        assert!(agent.is_human());
+    }
+
+    #[test]
+    fn test_agent_is_human_with_email_executor() {
+        let mut agent = sample_agent();
+        agent.executor = "email".into();
+        assert!(agent.is_human());
+    }
+
+    #[test]
+    fn test_agent_is_human_with_shell_executor() {
+        let mut agent = sample_agent();
+        agent.executor = "shell".into();
+        assert!(agent.is_human());
+    }
+
+    #[test]
+    fn test_agent_is_not_human_with_claude_executor() {
+        let mut agent = sample_agent();
+        agent.executor = "claude".into();
+        assert!(!agent.is_human());
+    }
+
+    #[test]
+    fn test_agent_is_not_human_with_default_executor() {
+        let role = sample_role();
+        let motivation = sample_motivation();
+        let id = content_hash_agent(&role.id, &motivation.id);
+        let agent = Agent {
+            id,
+            role_id: role.id,
+            motivation_id: motivation.id,
+            name: "Default".into(),
+            performance: sample_performance(),
+            lineage: Lineage::default(),
+            capabilities: vec![],
+            rate: None,
+            capacity: None,
+            trust_level: TrustLevel::Provisional,
+            contact: None,
+            executor: default_executor(),
+        };
+        // default_executor() returns "claude" which is not human
+        assert!(!agent.is_human());
+    }
+
 }

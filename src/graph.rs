@@ -864,4 +864,319 @@ mod tests {
         assert!(json.contains("\"agent\":\"abc123\""));
         assert!(!json.contains("\"identity\""));
     }
+
+    // ── parse_delay tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_parse_delay_seconds() {
+        assert_eq!(parse_delay("30s"), Some(30));
+        assert_eq!(parse_delay("1s"), Some(1));
+    }
+
+    #[test]
+    fn test_parse_delay_minutes() {
+        assert_eq!(parse_delay("5m"), Some(300));
+        assert_eq!(parse_delay("1m"), Some(60));
+    }
+
+    #[test]
+    fn test_parse_delay_hours() {
+        assert_eq!(parse_delay("2h"), Some(7200));
+        assert_eq!(parse_delay("1h"), Some(3600));
+    }
+
+    #[test]
+    fn test_parse_delay_days() {
+        assert_eq!(parse_delay("1d"), Some(86400));
+        assert_eq!(parse_delay("7d"), Some(604800));
+    }
+
+    #[test]
+    fn test_parse_delay_empty_string() {
+        assert_eq!(parse_delay(""), None);
+    }
+
+    #[test]
+    fn test_parse_delay_whitespace_only() {
+        assert_eq!(parse_delay("   "), None);
+    }
+
+    #[test]
+    fn test_parse_delay_whitespace_around_value() {
+        assert_eq!(parse_delay("  10s  "), Some(10));
+        assert_eq!(parse_delay("\t5m\t"), Some(300));
+    }
+
+    #[test]
+    fn test_parse_delay_invalid_unit() {
+        assert_eq!(parse_delay("10x"), None);
+        assert_eq!(parse_delay("5w"), None);
+        assert_eq!(parse_delay("3y"), None);
+    }
+
+    #[test]
+    fn test_parse_delay_missing_numeric_prefix() {
+        assert_eq!(parse_delay("s"), None);
+        assert_eq!(parse_delay("m"), None);
+        assert_eq!(parse_delay("h"), None);
+        assert_eq!(parse_delay("d"), None);
+    }
+
+    #[test]
+    fn test_parse_delay_zero_duration() {
+        assert_eq!(parse_delay("0s"), Some(0));
+        assert_eq!(parse_delay("0m"), Some(0));
+        assert_eq!(parse_delay("0h"), Some(0));
+        assert_eq!(parse_delay("0d"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_delay_large_values() {
+        assert_eq!(parse_delay("999999s"), Some(999999));
+        assert_eq!(parse_delay("100000m"), Some(6_000_000));
+    }
+
+    #[test]
+    #[should_panic(expected = "attempt to multiply with overflow")]
+    fn test_parse_delay_overflow_panics() {
+        // u64::MAX / 86400 < 213_503_982_334_601, so this day value overflows
+        // The function panics on overflow due to unchecked multiplication
+        let _ = parse_delay("213503982334602d");
+    }
+
+    #[test]
+    fn test_parse_delay_fractional_number() {
+        // parse::<u64> fails on fractional input
+        assert_eq!(parse_delay("1.5s"), None);
+        assert_eq!(parse_delay("2.0m"), None);
+    }
+
+    #[test]
+    fn test_parse_delay_negative_number() {
+        assert_eq!(parse_delay("-5s"), None);
+    }
+
+    #[test]
+    fn test_parse_delay_no_unit_just_number() {
+        // Last char is a digit, not a valid unit
+        assert_eq!(parse_delay("10"), None);
+    }
+
+    // ── find_intermediate_tasks tests ────────────────────────────────
+
+    #[test]
+    fn test_find_intermediate_empty_graph() {
+        let graph = WorkGraph::new();
+        let result = find_intermediate_tasks(&graph, "a", "b");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_intermediate_linear_chain() {
+        // A -> B -> C (B blocked_by A, C blocked_by B)
+        // from=A, to=C: intermediate should be [B]
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocks = vec!["b".to_string()];
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.blocks = vec!["c".to_string()];
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["b".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+
+        let result = find_intermediate_tasks(&graph, "a", "c");
+        assert_eq!(result, vec!["b"]);
+    }
+
+    #[test]
+    fn test_find_intermediate_branching_dependencies() {
+        // A -> B -> D, A -> C -> D
+        // from=A, to=D: intermediates should contain B and C
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocks = vec!["b".to_string(), "c".to_string()];
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.blocks = vec!["d".to_string()];
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["a".to_string()];
+        c.blocks = vec!["d".to_string()];
+        let mut d = make_task("d", "D");
+        d.blocked_by = vec!["b".to_string(), "c".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+
+        let mut result = find_intermediate_tasks(&graph, "a", "d");
+        result.sort();
+        assert_eq!(result, vec!["b", "c"]);
+    }
+
+    #[test]
+    fn test_find_intermediate_no_path() {
+        // A and B are independent tasks with no dependency path
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("a", "A")));
+        graph.add_node(Node::Task(make_task("b", "B")));
+
+        let result = find_intermediate_tasks(&graph, "a", "b");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_intermediate_nonexistent_nodes() {
+        let graph = WorkGraph::new();
+        let result = find_intermediate_tasks(&graph, "nonexistent-from", "nonexistent-to");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_intermediate_missing_from_node() {
+        // Only 'to' exists in the graph
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("b", "B")));
+
+        let result = find_intermediate_tasks(&graph, "missing", "b");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_intermediate_missing_to_node() {
+        // Only 'from' exists, and it has a dependent that isn't 'to'
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocks = vec!["b".to_string()];
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+
+        // Looking for path from a to "missing" — b is reachable but "missing" is never found
+        let result = find_intermediate_tasks(&graph, "a", "missing");
+        // b is traversed and collected as an intermediate (never reaches "missing" to stop)
+        assert_eq!(result, vec!["b"]);
+    }
+
+    #[test]
+    fn test_find_intermediate_self_referential() {
+        // from == to: should return nothing since the source is skipped
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocked_by = vec!["a".to_string()]; // self-dependency
+        graph.add_node(Node::Task(a));
+
+        let result = find_intermediate_tasks(&graph, "a", "a");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_intermediate_diamond() {
+        // Diamond: A -> B, A -> C, B -> D, C -> D
+        // from=A, to=D: intermediates should be B and C
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocks = vec!["b".to_string(), "c".to_string()];
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.blocks = vec!["d".to_string()];
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["a".to_string()];
+        c.blocks = vec!["d".to_string()];
+        let mut d = make_task("d", "D");
+        d.blocked_by = vec!["b".to_string(), "c".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+
+        let mut result = find_intermediate_tasks(&graph, "a", "d");
+        result.sort();
+        assert_eq!(result, vec!["b", "c"]);
+    }
+
+    #[test]
+    fn test_find_intermediate_excludes_source_and_target() {
+        // A -> B -> C: from=A, to=C
+        // Result should be [B], not include A or C
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocks = vec!["b".to_string()];
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.blocks = vec!["c".to_string()];
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["b".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+
+        let result = find_intermediate_tasks(&graph, "a", "c");
+        assert!(!result.contains(&"a".to_string()));
+        assert!(!result.contains(&"c".to_string()));
+        assert_eq!(result, vec!["b"]);
+    }
+
+    #[test]
+    fn test_find_intermediate_direct_edge_no_intermediates() {
+        // A -> B directly: from=A, to=B — no intermediates
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocks = vec!["b".to_string()];
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+
+        let result = find_intermediate_tasks(&graph, "a", "b");
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_find_intermediate_longer_chain() {
+        // A -> B -> C -> D -> E: from=A, to=E
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.blocks = vec!["b".to_string()];
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.blocks = vec!["c".to_string()];
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["b".to_string()];
+        c.blocks = vec!["d".to_string()];
+        let mut d = make_task("d", "D");
+        d.blocked_by = vec!["c".to_string()];
+        d.blocks = vec!["e".to_string()];
+        let mut e = make_task("e", "E");
+        e.blocked_by = vec!["d".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+        graph.add_node(Node::Task(e));
+
+        let result = find_intermediate_tasks(&graph, "a", "e");
+        assert_eq!(result.len(), 3);
+        assert!(result.contains(&"b".to_string()));
+        assert!(result.contains(&"c".to_string()));
+        assert!(result.contains(&"d".to_string()));
+    }
 }

@@ -1129,4 +1129,1112 @@ mod tests {
         assert!(dead_ends.contains(&"t3".to_string()));
         assert!(!dead_ends.contains(&"deploy".to_string()));
     }
+
+    // --- Expanded tests for compute_summary ---
+
+    #[test]
+    fn test_compute_summary_single_task() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("t1", "Only task")));
+        let summary = compute_summary(&graph);
+
+        assert_eq!(summary.total_tasks, 1);
+        assert_eq!(summary.open, 1);
+        assert_eq!(summary.ready, 1);
+        assert_eq!(summary.blocked, 0);
+    }
+
+    #[test]
+    fn test_compute_summary_blocked_task_counted() {
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task("t1", "Blocker");
+        let mut t2 = make_task("t2", "Blocked");
+        t2.blocked_by = vec!["t1".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let summary = compute_summary(&graph);
+        // t2 is open but not ready, so it should be counted as blocked
+        assert_eq!(summary.blocked, 1);
+        assert_eq!(summary.ready, 1);
+        assert_eq!(summary.open, 2);
+    }
+
+    #[test]
+    fn test_compute_summary_explicit_blocked_status() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Explicitly blocked");
+        t1.status = Status::Blocked;
+        t1.estimate = Some(Estimate {
+            hours: Some(3.0),
+            cost: Some(100.0),
+        });
+        graph.add_node(Node::Task(t1));
+
+        let summary = compute_summary(&graph);
+        assert_eq!(summary.blocked, 1);
+        assert_eq!(summary.estimated_hours, 3.0);
+        assert_eq!(summary.estimated_cost, 100.0);
+    }
+
+    #[test]
+    fn test_compute_summary_failed_abandoned_not_counted() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Failed");
+        t1.status = Status::Failed;
+        t1.estimate = Some(Estimate {
+            hours: Some(10.0),
+            cost: Some(500.0),
+        });
+
+        let mut t2 = make_task("t2", "Abandoned");
+        t2.status = Status::Abandoned;
+        t2.estimate = Some(Estimate {
+            hours: Some(20.0),
+            cost: Some(1000.0),
+        });
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let summary = compute_summary(&graph);
+        assert_eq!(summary.total_tasks, 2);
+        assert_eq!(summary.open, 0);
+        assert_eq!(summary.in_progress, 0);
+        assert_eq!(summary.done, 0);
+        // Failed/abandoned don't contribute to estimates
+        assert_eq!(summary.estimated_hours, 0.0);
+        assert_eq!(summary.estimated_cost, 0.0);
+    }
+
+    #[test]
+    fn test_compute_summary_pending_review_counted_as_in_progress() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Pending review");
+        t1.status = Status::PendingReview;
+        t1.estimate = Some(Estimate {
+            hours: Some(5.0),
+            cost: Some(200.0),
+        });
+        graph.add_node(Node::Task(t1));
+
+        let summary = compute_summary(&graph);
+        assert_eq!(summary.in_progress, 1);
+        assert_eq!(summary.estimated_hours, 5.0);
+        assert_eq!(summary.estimated_cost, 200.0);
+    }
+
+    #[test]
+    fn test_compute_summary_no_estimates() {
+        let mut graph = WorkGraph::new();
+        // Tasks with no estimates at all
+        graph.add_node(Node::Task(make_task("t1", "No estimate 1")));
+        graph.add_node(Node::Task(make_task("t2", "No estimate 2")));
+
+        let summary = compute_summary(&graph);
+        assert_eq!(summary.estimated_hours, 0.0);
+        assert_eq!(summary.estimated_cost, 0.0);
+    }
+
+    // --- Expanded tests for compute_bottlenecks ---
+
+    #[test]
+    fn test_compute_bottlenecks_empty_graph() {
+        let graph = WorkGraph::new();
+        let now = Utc::now();
+        let bottlenecks = compute_bottlenecks(&graph, &now);
+        assert!(bottlenecks.is_empty());
+    }
+
+    #[test]
+    fn test_compute_bottlenecks_no_dependencies() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        // Independent tasks don't create bottlenecks
+        graph.add_node(Node::Task(make_task("t1", "Task 1")));
+        graph.add_node(Node::Task(make_task("t2", "Task 2")));
+        graph.add_node(Node::Task(make_task("t3", "Task 3")));
+
+        let bottlenecks = compute_bottlenecks(&graph, &now);
+        assert!(bottlenecks.is_empty());
+    }
+
+    #[test]
+    fn test_compute_bottlenecks_fan_out() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        // t1 blocks 4 tasks directly
+        let t1 = make_task("t1", "Root");
+        for i in 2..=5 {
+            let mut t = make_task(&format!("t{}", i), &format!("Task {}", i));
+            t.blocked_by = vec!["t1".to_string()];
+            graph.add_node(Node::Task(t));
+        }
+        graph.add_node(Node::Task(t1));
+
+        let bottlenecks = compute_bottlenecks(&graph, &now);
+        assert_eq!(bottlenecks.len(), 1);
+        assert_eq!(bottlenecks[0].id, "t1");
+        assert_eq!(bottlenecks[0].transitive_blocks, 4);
+    }
+
+    #[test]
+    fn test_compute_bottlenecks_done_task_severity_ok() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        let mut t1 = make_task("t1", "Done root");
+        t1.status = Status::Done;
+        for i in 2..=5 {
+            let mut t = make_task(&format!("t{}", i), &format!("Task {}", i));
+            t.blocked_by = vec!["t1".to_string()];
+            graph.add_node(Node::Task(t));
+        }
+        graph.add_node(Node::Task(t1));
+
+        let bottlenecks = compute_bottlenecks(&graph, &now);
+        assert!(!bottlenecks.is_empty());
+        assert_eq!(bottlenecks[0].severity, Severity::Ok);
+    }
+
+    #[test]
+    fn test_compute_bottlenecks_in_progress_with_days() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        let mut t1 = make_task("t1", "In progress root");
+        t1.status = Status::InProgress;
+        t1.started_at = Some((now - Duration::days(5)).to_rfc3339());
+        for i in 2..=5 {
+            let mut t = make_task(&format!("t{}", i), &format!("Task {}", i));
+            t.blocked_by = vec!["t1".to_string()];
+            graph.add_node(Node::Task(t));
+        }
+        graph.add_node(Node::Task(t1));
+
+        let bottlenecks = compute_bottlenecks(&graph, &now);
+        assert!(!bottlenecks.is_empty());
+        assert_eq!(bottlenecks[0].days_in_progress, Some(5));
+    }
+
+    #[test]
+    fn test_compute_bottlenecks_truncated_to_5() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        // Create 8 independent bottlenecks each blocking 3 tasks
+        for root_idx in 0..8 {
+            let root_id = format!("root{}", root_idx);
+            graph.add_node(Node::Task(make_task(&root_id, &format!("Root {}", root_idx))));
+            for child_idx in 0..3 {
+                let child_id = format!("child{}_{}", root_idx, child_idx);
+                let mut t = make_task(&child_id, &format!("Child {}-{}", root_idx, child_idx));
+                t.blocked_by = vec![root_id.clone()];
+                graph.add_node(Node::Task(t));
+            }
+        }
+
+        let bottlenecks = compute_bottlenecks(&graph, &now);
+        assert!(bottlenecks.len() <= 5);
+    }
+
+    #[test]
+    fn test_compute_bottlenecks_severity_critical_for_large_open() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        // One open task blocking 20%+ of the graph -> Critical
+        let t1 = make_task("blocker", "Big blocker");
+        graph.add_node(Node::Task(t1));
+        // Total: 1 root + 4 children = 5, blocker blocks 4/5 = 80%
+        for i in 0..4 {
+            let mut t = make_task(&format!("c{}", i), &format!("Child {}", i));
+            t.blocked_by = vec!["blocker".to_string()];
+            graph.add_node(Node::Task(t));
+        }
+
+        let bottlenecks = compute_bottlenecks(&graph, &now);
+        assert!(!bottlenecks.is_empty());
+        assert_eq!(bottlenecks[0].severity, Severity::Critical);
+    }
+
+    // --- Expanded tests for compute_workload ---
+
+    #[test]
+    fn test_compute_workload_empty_graph() {
+        let graph = WorkGraph::new();
+        let workload = compute_workload(&graph);
+        assert_eq!(workload.total_actors, 0);
+        assert!(workload.overloaded.is_empty());
+    }
+
+    #[test]
+    fn test_compute_workload_done_tasks_excluded() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Done task");
+        t1.status = Status::Done;
+        t1.assigned = Some("alice".to_string());
+        t1.estimate = Some(Estimate {
+            hours: Some(100.0),
+            cost: None,
+        });
+        graph.add_node(Node::Task(t1));
+
+        let workload = compute_workload(&graph);
+        // Done tasks are not counted in actor workload
+        assert_eq!(workload.total_actors, 0);
+    }
+
+    #[test]
+    fn test_compute_workload_multiple_actors() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Alice task");
+        t1.assigned = Some("alice".to_string());
+        t1.estimate = Some(Estimate {
+            hours: Some(10.0),
+            cost: None,
+        });
+
+        let mut t2 = make_task("t2", "Bob task");
+        t2.assigned = Some("bob".to_string());
+        t2.estimate = Some(Estimate {
+            hours: Some(20.0),
+            cost: None,
+        });
+
+        let mut t3 = make_task("t3", "Alice task 2");
+        t3.assigned = Some("alice".to_string());
+        t3.estimate = Some(Estimate {
+            hours: Some(15.0),
+            cost: None,
+        });
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+
+        let workload = compute_workload(&graph);
+        assert_eq!(workload.total_actors, 2);
+    }
+
+    #[test]
+    fn test_compute_workload_unassigned_not_counted() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("t1", "Unassigned")));
+
+        let workload = compute_workload(&graph);
+        assert_eq!(workload.total_actors, 0);
+    }
+
+    // --- Expanded tests for compute_aging ---
+
+    #[test]
+    fn test_compute_aging_empty_graph() {
+        let graph = WorkGraph::new();
+        let now = Utc::now();
+        let aging = compute_aging(&graph, &now);
+
+        assert_eq!(aging.old_open_count, 0);
+        assert_eq!(aging.stale_in_progress_count, 0);
+        assert!(aging.issues.is_empty());
+    }
+
+    #[test]
+    fn test_compute_aging_recent_task_not_flagged() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        let mut t1 = make_task("t1", "Recent task");
+        t1.created_at = Some((now - Duration::days(10)).to_rfc3339());
+        graph.add_node(Node::Task(t1));
+
+        let aging = compute_aging(&graph, &now);
+        assert_eq!(aging.old_open_count, 0);
+        assert!(aging.issues.is_empty());
+    }
+
+    #[test]
+    fn test_compute_aging_stale_in_progress() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        let mut t1 = make_task("t1", "Stale in-progress");
+        t1.status = Status::InProgress;
+        t1.started_at = Some((now - Duration::days(20)).to_rfc3339());
+        graph.add_node(Node::Task(t1));
+
+        let aging = compute_aging(&graph, &now);
+        assert_eq!(aging.stale_in_progress_count, 1);
+        assert_eq!(aging.issues.len(), 1);
+        assert_eq!(aging.issues[0].issue_type, "stale_in_progress");
+        assert!(aging.issues[0].days >= 20);
+    }
+
+    #[test]
+    fn test_compute_aging_in_progress_not_stale() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        let mut t1 = make_task("t1", "Fresh in-progress");
+        t1.status = Status::InProgress;
+        t1.started_at = Some((now - Duration::days(5)).to_rfc3339());
+        graph.add_node(Node::Task(t1));
+
+        let aging = compute_aging(&graph, &now);
+        assert_eq!(aging.stale_in_progress_count, 0);
+    }
+
+    #[test]
+    fn test_compute_aging_issues_sorted_by_days_desc() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        let mut t1 = make_task("t1", "100 days old");
+        t1.created_at = Some((now - Duration::days(100)).to_rfc3339());
+
+        let mut t2 = make_task("t2", "200 days old");
+        t2.created_at = Some((now - Duration::days(200)).to_rfc3339());
+
+        let mut t3 = make_task("t3", "150 days old");
+        t3.created_at = Some((now - Duration::days(150)).to_rfc3339());
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+
+        let aging = compute_aging(&graph, &now);
+        assert_eq!(aging.old_open_count, 3);
+        // Should be sorted descending by days
+        assert!(aging.issues[0].days >= aging.issues[1].days);
+        if aging.issues.len() > 2 {
+            assert!(aging.issues[1].days >= aging.issues[2].days);
+        }
+    }
+
+    #[test]
+    fn test_compute_aging_truncated_to_5() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        // Create 8 old tasks
+        for i in 0..8 {
+            let mut t = make_task(&format!("t{}", i), &format!("Old task {}", i));
+            t.created_at = Some((now - Duration::days(100 + i as i64)).to_rfc3339());
+            graph.add_node(Node::Task(t));
+        }
+
+        let aging = compute_aging(&graph, &now);
+        assert_eq!(aging.old_open_count, 8);
+        assert!(aging.issues.len() <= 5);
+    }
+
+    #[test]
+    fn test_compute_aging_no_created_at_ignored() {
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        // Task with no created_at timestamp
+        let t1 = make_task("t1", "No timestamp");
+        graph.add_node(Node::Task(t1));
+
+        let aging = compute_aging(&graph, &now);
+        assert_eq!(aging.old_open_count, 0);
+    }
+
+    // --- Expanded tests for compute_structural_health ---
+
+    #[test]
+    fn test_structural_health_dead_end_tasks() {
+        let mut graph = WorkGraph::new();
+
+        // t1 and t2 are dead-end open tasks (nothing depends on them)
+        let t1 = make_task("orphan1", "Orphan 1");
+        let t2 = make_task("orphan2", "Orphan 2");
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let structural = compute_structural_health(&graph);
+
+        let dead_end_warning = structural
+            .issues
+            .iter()
+            .any(|i| i.severity == Severity::Warning && i.message.contains("dead-end"));
+        assert!(dead_end_warning);
+    }
+
+    #[test]
+    fn test_structural_health_done_tasks_not_dead_end() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Done task");
+        t1.status = Status::Done;
+        graph.add_node(Node::Task(t1));
+
+        let structural = compute_structural_health(&graph);
+
+        // Done tasks should not be flagged as dead-end
+        let dead_end_warning = structural
+            .issues
+            .iter()
+            .any(|i| i.severity == Severity::Warning && i.message.contains("dead-end"));
+        assert!(!dead_end_warning);
+    }
+
+    #[test]
+    fn test_structural_health_deploy_not_dead_end() {
+        let mut graph = WorkGraph::new();
+
+        // Deliverable-like task names should not be flagged
+        let t1 = make_task("deploy-prod", "Deploy to production");
+        let t2 = make_task("release-v2", "Release version 2");
+        let t3 = make_task("final-review", "Final review");
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+
+        let dead_ends = find_dead_end_open_tasks(&graph);
+        assert!(!dead_ends.contains(&"deploy-prod".to_string()));
+        assert!(!dead_ends.contains(&"release-v2".to_string()));
+        assert!(!dead_ends.contains(&"final-review".to_string()));
+    }
+
+    // --- Expanded tests for generate_recommendations ---
+
+    #[test]
+    fn test_recommendations_stale_in_progress_bottleneck() {
+        let summary = Summary {
+            total_tasks: 5,
+            open: 2,
+            in_progress: 1,
+            done: 2,
+            blocked: 1,
+            ready: 1,
+            estimated_hours: 0.0,
+            estimated_cost: 0.0,
+        };
+        let structural = StructuralHealth { issues: vec![] };
+        let bottlenecks = vec![BottleneckInfo {
+            id: "stale-task".to_string(),
+            transitive_blocks: 3,
+            status: Status::InProgress,
+            assigned: Some("alice".to_string()),
+            severity: Severity::Warning,
+            days_in_progress: Some(20),
+        }];
+        let workload = WorkloadSection {
+            total_actors: 1,
+            balanced_actors: 1,
+            overloaded: vec![],
+        };
+        let aging = AgingSection {
+            old_open_count: 0,
+            stale_in_progress_count: 0,
+            issues: vec![],
+        };
+
+        let recs = generate_recommendations(&summary, &structural, &bottlenecks, &workload, &aging);
+        assert!(!recs.is_empty());
+        let stale_rec = recs.iter().find(|r| r.action == "check_on");
+        assert!(stale_rec.is_some());
+        assert!(stale_rec.unwrap().reason.contains("20 days"));
+    }
+
+    #[test]
+    fn test_recommendations_old_open_tasks() {
+        let summary = Summary {
+            total_tasks: 5,
+            open: 3,
+            in_progress: 0,
+            done: 2,
+            blocked: 0,
+            ready: 3,
+            estimated_hours: 0.0,
+            estimated_cost: 0.0,
+        };
+        let structural = StructuralHealth { issues: vec![] };
+        let bottlenecks = vec![];
+        let workload = WorkloadSection {
+            total_actors: 0,
+            balanced_actors: 0,
+            overloaded: vec![],
+        };
+        let aging = AgingSection {
+            old_open_count: 2,
+            stale_in_progress_count: 0,
+            issues: vec![
+                AgingIssue {
+                    task_id: "old1".to_string(),
+                    days: 120,
+                    issue_type: "old_open".to_string(),
+                    assigned: None,
+                },
+                AgingIssue {
+                    task_id: "old2".to_string(),
+                    days: 95,
+                    issue_type: "old_open".to_string(),
+                    assigned: None,
+                },
+            ],
+        };
+
+        let recs = generate_recommendations(&summary, &structural, &bottlenecks, &workload, &aging);
+        let review_recs: Vec<_> = recs.iter().filter(|r| r.action == "review").collect();
+        assert_eq!(review_recs.len(), 2);
+    }
+
+    #[test]
+    fn test_recommendations_structural_critical() {
+        let summary = Summary {
+            total_tasks: 1,
+            open: 1,
+            in_progress: 0,
+            done: 0,
+            blocked: 0,
+            ready: 1,
+            estimated_hours: 0.0,
+            estimated_cost: 0.0,
+        };
+        let structural = StructuralHealth {
+            issues: vec![StructuralIssue {
+                severity: Severity::Critical,
+                message: "3 orphan reference(s) found".to_string(),
+                details: None,
+            }],
+        };
+        let bottlenecks = vec![];
+        let workload = WorkloadSection {
+            total_actors: 0,
+            balanced_actors: 0,
+            overloaded: vec![],
+        };
+        let aging = AgingSection {
+            old_open_count: 0,
+            stale_in_progress_count: 0,
+            issues: vec![],
+        };
+
+        let recs = generate_recommendations(&summary, &structural, &bottlenecks, &workload, &aging);
+        let fix_recs: Vec<_> = recs.iter().filter(|r| r.action == "fix_structural").collect();
+        assert_eq!(fix_recs.len(), 1);
+        assert!(fix_recs[0].reason.contains("orphan"));
+    }
+
+    #[test]
+    fn test_recommendations_overloaded_actor() {
+        let summary = Summary {
+            total_tasks: 5,
+            open: 3,
+            in_progress: 1,
+            done: 1,
+            blocked: 0,
+            ready: 3,
+            estimated_hours: 0.0,
+            estimated_cost: 0.0,
+        };
+        let structural = StructuralHealth { issues: vec![] };
+        let bottlenecks = vec![];
+        let workload = WorkloadSection {
+            total_actors: 2,
+            balanced_actors: 1,
+            overloaded: vec![WorkloadInfo {
+                id: "alice".to_string(),
+                load_percent: Some(150.0),
+                is_overloaded: true,
+            }],
+        };
+        let aging = AgingSection {
+            old_open_count: 0,
+            stale_in_progress_count: 0,
+            issues: vec![],
+        };
+
+        let recs = generate_recommendations(&summary, &structural, &bottlenecks, &workload, &aging);
+        let redistribute_recs: Vec<_> = recs.iter().filter(|r| r.action == "redistribute").collect();
+        assert_eq!(redistribute_recs.len(), 1);
+        assert!(redistribute_recs[0].reason.contains("alice"));
+        assert!(redistribute_recs[0].reason.contains("150"));
+    }
+
+    #[test]
+    fn test_recommendations_truncated_to_5() {
+        let summary = Summary {
+            total_tasks: 20,
+            open: 15,
+            in_progress: 0,
+            done: 5,
+            blocked: 0,
+            ready: 15,
+            estimated_hours: 0.0,
+            estimated_cost: 0.0,
+        };
+        let structural = StructuralHealth {
+            issues: vec![
+                StructuralIssue {
+                    severity: Severity::Critical,
+                    message: "issue 1".to_string(),
+                    details: None,
+                },
+                StructuralIssue {
+                    severity: Severity::Critical,
+                    message: "issue 2".to_string(),
+                    details: None,
+                },
+            ],
+        };
+        let bottlenecks = vec![
+            BottleneckInfo {
+                id: "b1".to_string(),
+                transitive_blocks: 10,
+                status: Status::Open,
+                assigned: None,
+                severity: Severity::Critical,
+                days_in_progress: None,
+            },
+            BottleneckInfo {
+                id: "b2".to_string(),
+                transitive_blocks: 8,
+                status: Status::Open,
+                assigned: None,
+                severity: Severity::Critical,
+                days_in_progress: None,
+            },
+        ];
+        let workload = WorkloadSection {
+            total_actors: 1,
+            balanced_actors: 0,
+            overloaded: vec![WorkloadInfo {
+                id: "alice".to_string(),
+                load_percent: Some(200.0),
+                is_overloaded: true,
+            }],
+        };
+        let aging = AgingSection {
+            old_open_count: 3,
+            stale_in_progress_count: 0,
+            issues: vec![
+                AgingIssue {
+                    task_id: "old1".to_string(),
+                    days: 200,
+                    issue_type: "old_open".to_string(),
+                    assigned: None,
+                },
+                AgingIssue {
+                    task_id: "old2".to_string(),
+                    days: 150,
+                    issue_type: "old_open".to_string(),
+                    assigned: None,
+                },
+                AgingIssue {
+                    task_id: "old3".to_string(),
+                    days: 120,
+                    issue_type: "old_open".to_string(),
+                    assigned: None,
+                },
+            ],
+        };
+
+        let recs = generate_recommendations(&summary, &structural, &bottlenecks, &workload, &aging);
+        assert!(recs.len() <= 5);
+    }
+
+    #[test]
+    fn test_recommendations_empty_when_all_clear() {
+        let summary = Summary {
+            total_tasks: 3,
+            open: 0,
+            in_progress: 0,
+            done: 3,
+            blocked: 0,
+            ready: 0,
+            estimated_hours: 0.0,
+            estimated_cost: 0.0,
+        };
+        let structural = StructuralHealth { issues: vec![] };
+        let bottlenecks = vec![];
+        let workload = WorkloadSection {
+            total_actors: 0,
+            balanced_actors: 0,
+            overloaded: vec![],
+        };
+        let aging = AgingSection {
+            old_open_count: 0,
+            stale_in_progress_count: 0,
+            issues: vec![],
+        };
+
+        let recs = generate_recommendations(&summary, &structural, &bottlenecks, &workload, &aging);
+        assert!(recs.is_empty());
+    }
+
+    // --- JSON output tests ---
+
+    #[test]
+    fn test_analysis_output_json_serialization() {
+        let output = AnalysisOutput {
+            summary: Summary {
+                total_tasks: 3,
+                open: 1,
+                in_progress: 1,
+                done: 1,
+                blocked: 0,
+                ready: 1,
+                estimated_hours: 10.0,
+                estimated_cost: 500.0,
+            },
+            structural: StructuralHealth {
+                issues: vec![StructuralIssue {
+                    severity: Severity::Ok,
+                    message: "No orphan references".to_string(),
+                    details: None,
+                }],
+            },
+            bottlenecks: vec![BottleneckInfo {
+                id: "t1".to_string(),
+                transitive_blocks: 5,
+                status: Status::Open,
+                assigned: Some("alice".to_string()),
+                severity: Severity::Warning,
+                days_in_progress: None,
+            }],
+            workload: WorkloadSection {
+                total_actors: 1,
+                balanced_actors: 1,
+                overloaded: vec![],
+            },
+            aging: AgingSection {
+                old_open_count: 0,
+                stale_in_progress_count: 0,
+                issues: vec![],
+            },
+            recommendations: vec![Recommendation {
+                priority: 1,
+                action: "assign_and_start".to_string(),
+                task: Some("t1".to_string()),
+                reason: "critical bottleneck".to_string(),
+            }],
+        };
+
+        let json = serde_json::to_string_pretty(&output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(parsed["summary"]["total_tasks"], 3);
+        assert_eq!(parsed["summary"]["estimated_hours"], 10.0);
+        assert_eq!(parsed["structural"]["issues"][0]["severity"], "ok");
+        assert_eq!(parsed["bottlenecks"][0]["id"], "t1");
+        assert_eq!(parsed["bottlenecks"][0]["assigned"], "alice");
+        assert_eq!(parsed["workload"]["total_actors"], 1);
+        assert_eq!(parsed["recommendations"][0]["action"], "assign_and_start");
+    }
+
+    #[test]
+    fn test_analysis_output_json_skips_none_fields() {
+        let output = AnalysisOutput {
+            summary: Summary {
+                total_tasks: 0,
+                open: 0,
+                in_progress: 0,
+                done: 0,
+                blocked: 0,
+                ready: 0,
+                estimated_hours: 0.0,
+                estimated_cost: 0.0,
+            },
+            structural: StructuralHealth {
+                issues: vec![StructuralIssue {
+                    severity: Severity::Ok,
+                    message: "test".to_string(),
+                    details: None,
+                }],
+            },
+            bottlenecks: vec![BottleneckInfo {
+                id: "t1".to_string(),
+                transitive_blocks: 3,
+                status: Status::Open,
+                assigned: None,
+                severity: Severity::Ok,
+                days_in_progress: None,
+            }],
+            workload: WorkloadSection {
+                total_actors: 0,
+                balanced_actors: 0,
+                overloaded: vec![],
+            },
+            aging: AgingSection {
+                old_open_count: 0,
+                stale_in_progress_count: 0,
+                issues: vec![],
+            },
+            recommendations: vec![],
+        };
+
+        let json = serde_json::to_string(&output).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        // "details" should be skipped (None)
+        assert!(parsed["structural"]["issues"][0].get("details").is_none());
+        // "assigned" should be skipped (None)
+        assert!(parsed["bottlenecks"][0].get("assigned").is_none());
+        // "days_in_progress" should be skipped (None)
+        assert!(parsed["bottlenecks"][0].get("days_in_progress").is_none());
+    }
+
+    // --- classify_cycle tests ---
+
+    #[test]
+    fn test_classify_cycle_intentional_with_recurring_tag() {
+        let mut graph = WorkGraph::new();
+        let mut t1 = make_task("t1", "Recurring task");
+        t1.tags = vec!["recurring".to_string()];
+        let t2 = make_task("t2", "Task 2");
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let cycle = vec!["t1".to_string(), "t2".to_string()];
+        let classified = classify_cycle(&cycle, &graph);
+        assert_eq!(classified.classification, CycleClassification::Intentional);
+    }
+
+    #[test]
+    fn test_classify_cycle_intentional_with_cycle_tag() {
+        let mut graph = WorkGraph::new();
+        let mut t1 = make_task("t1", "Task 1");
+        t1.tags = vec!["cycle:intentional".to_string()];
+        let t2 = make_task("t2", "Task 2");
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let cycle = vec!["t1".to_string(), "t2".to_string()];
+        let classified = classify_cycle(&cycle, &graph);
+        assert_eq!(classified.classification, CycleClassification::Intentional);
+    }
+
+    #[test]
+    fn test_classify_cycle_short_without_tag_is_warning() {
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("t1", "Task 1");
+        let t2 = make_task("t2", "Task 2");
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let cycle = vec!["t1".to_string(), "t2".to_string()];
+        let classified = classify_cycle(&cycle, &graph);
+        assert_eq!(classified.classification, CycleClassification::Warning);
+    }
+
+    #[test]
+    fn test_classify_cycle_long_is_warning() {
+        let mut graph = WorkGraph::new();
+        let mut cycle = vec![];
+        for i in 0..6 {
+            let id = format!("t{}", i);
+            graph.add_node(Node::Task(make_task(&id, &format!("Task {}", i))));
+            cycle.push(id);
+        }
+
+        let classified = classify_cycle(&cycle, &graph);
+        assert_eq!(classified.classification, CycleClassification::Warning);
+        assert!(classified.reason.contains("Long cycle"));
+    }
+
+    #[test]
+    fn test_classify_cycle_medium_is_info() {
+        let mut graph = WorkGraph::new();
+        let mut cycle = vec![];
+        for i in 0..3 {
+            let id = format!("t{}", i);
+            graph.add_node(Node::Task(make_task(&id, &format!("Task {}", i))));
+            cycle.push(id);
+        }
+
+        let classified = classify_cycle(&cycle, &graph);
+        assert_eq!(classified.classification, CycleClassification::Info);
+        assert!(classified.reason.contains("Medium cycle"));
+    }
+
+    // --- collect_transitive_dependents tests ---
+
+    #[test]
+    fn test_collect_transitive_dependents_deep_chain() {
+        let mut reverse_index: HashMap<String, Vec<String>> = HashMap::new();
+        // Chain: t1 <- t2 <- t3 <- t4 <- t5
+        reverse_index.insert("t1".to_string(), vec!["t2".to_string()]);
+        reverse_index.insert("t2".to_string(), vec!["t3".to_string()]);
+        reverse_index.insert("t3".to_string(), vec!["t4".to_string()]);
+        reverse_index.insert("t4".to_string(), vec!["t5".to_string()]);
+
+        let mut visited = HashSet::new();
+        collect_transitive_dependents(&reverse_index, "t1", &mut visited);
+        assert_eq!(visited.len(), 4);
+        assert!(visited.contains("t2"));
+        assert!(visited.contains("t5"));
+    }
+
+    #[test]
+    fn test_collect_transitive_dependents_diamond() {
+        let mut reverse_index: HashMap<String, Vec<String>> = HashMap::new();
+        // Diamond: t1 <- t2, t1 <- t3, t2 <- t4, t3 <- t4
+        reverse_index.insert("t1".to_string(), vec!["t2".to_string(), "t3".to_string()]);
+        reverse_index.insert("t2".to_string(), vec!["t4".to_string()]);
+        reverse_index.insert("t3".to_string(), vec!["t4".to_string()]);
+
+        let mut visited = HashSet::new();
+        collect_transitive_dependents(&reverse_index, "t1", &mut visited);
+        // t2, t3, t4 — but t4 counted once
+        assert_eq!(visited.len(), 3);
+    }
+
+    #[test]
+    fn test_collect_transitive_dependents_no_dependents() {
+        let reverse_index: HashMap<String, Vec<String>> = HashMap::new();
+        let mut visited = HashSet::new();
+        collect_transitive_dependents(&reverse_index, "t1", &mut visited);
+        assert!(visited.is_empty());
+    }
+
+    // --- run() integration tests ---
+
+    #[test]
+    fn test_run_single_task_graph() {
+        let (_tmp, graph_file) = setup_test_graph();
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("t1", "Only task")));
+        save_graph(&graph, &graph_file).unwrap();
+
+        let result = run(graph_file.parent().unwrap(), false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_complex_graph_json() {
+        let (_tmp, graph_file) = setup_test_graph();
+        let mut graph = WorkGraph::new();
+        let now = Utc::now();
+
+        let mut t1 = make_task("t1", "Root task");
+        t1.estimate = Some(Estimate {
+            hours: Some(10.0),
+            cost: Some(500.0),
+        });
+        t1.assigned = Some("alice".to_string());
+
+        let mut t2 = make_task("t2", "Child task");
+        t2.blocked_by = vec!["t1".to_string()];
+        t2.estimate = Some(Estimate {
+            hours: Some(5.0),
+            cost: Some(200.0),
+        });
+
+        let mut t3 = make_task("t3", "Old task");
+        t3.created_at = Some((now - Duration::days(100)).to_rfc3339());
+
+        let mut t4 = make_task("t4", "Done task");
+        t4.status = Status::Done;
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+        graph.add_node(Node::Task(t4));
+        save_graph(&graph, &graph_file).unwrap();
+
+        let result = run(graph_file.parent().unwrap(), true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_graph_with_all_statuses() {
+        let (_tmp, graph_file) = setup_test_graph();
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task("t1", "Open");
+
+        let mut t2 = make_task("t2", "In progress");
+        t2.status = Status::InProgress;
+
+        let mut t3 = make_task("t3", "Done");
+        t3.status = Status::Done;
+
+        let mut t4 = make_task("t4", "Blocked");
+        t4.status = Status::Blocked;
+
+        let mut t5 = make_task("t5", "Failed");
+        t5.status = Status::Failed;
+
+        let mut t6 = make_task("t6", "Abandoned");
+        t6.status = Status::Abandoned;
+
+        let mut t7 = make_task("t7", "Pending review");
+        t7.status = Status::PendingReview;
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+        graph.add_node(Node::Task(t4));
+        graph.add_node(Node::Task(t5));
+        graph.add_node(Node::Task(t6));
+        graph.add_node(Node::Task(t7));
+        save_graph(&graph, &graph_file).unwrap();
+
+        // Both human and JSON output should succeed
+        let result_human = run(graph_file.parent().unwrap(), false);
+        assert!(result_human.is_ok());
+        let result_json = run(graph_file.parent().unwrap(), true);
+        assert!(result_json.is_ok());
+    }
+
+    // --- Severity serialization tests ---
+
+    #[test]
+    fn test_severity_serialization() {
+        assert_eq!(serde_json::to_string(&Severity::Ok).unwrap(), "\"ok\"");
+        assert_eq!(
+            serde_json::to_string(&Severity::Warning).unwrap(),
+            "\"warning\""
+        );
+        assert_eq!(
+            serde_json::to_string(&Severity::Critical).unwrap(),
+            "\"critical\""
+        );
+    }
+
+    // --- find_dead_end_open_tasks edge cases ---
+
+    #[test]
+    fn test_dead_end_empty_graph() {
+        let graph = WorkGraph::new();
+        let dead_ends = find_dead_end_open_tasks(&graph);
+        assert!(dead_ends.is_empty());
+    }
+
+    #[test]
+    fn test_dead_end_all_done() {
+        let mut graph = WorkGraph::new();
+        let mut t1 = make_task("t1", "Done 1");
+        t1.status = Status::Done;
+        let mut t2 = make_task("t2", "Done 2");
+        t2.status = Status::Done;
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let dead_ends = find_dead_end_open_tasks(&graph);
+        assert!(dead_ends.is_empty());
+    }
+
+    #[test]
+    fn test_dead_end_doc_excluded() {
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("write-docs", "Write documentation for API");
+        graph.add_node(Node::Task(t1));
+
+        let dead_ends = find_dead_end_open_tasks(&graph);
+        assert!(!dead_ends.contains(&"write-docs".to_string()));
+    }
 }

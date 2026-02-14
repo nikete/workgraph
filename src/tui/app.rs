@@ -1364,3 +1364,770 @@ impl App {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::dag_layout::DagLayout;
+    use ratatui::style::Color;
+    use workgraph::graph::Status;
+    use workgraph::AgentStatus;
+
+    // ── Helpers ──────────────────────────────────────────────────────
+
+    /// Build a minimal GraphExplorer without filesystem access.
+    fn make_graph_explorer(rows: Vec<GraphRow>) -> GraphExplorer {
+        GraphExplorer {
+            rows,
+            selected: 0,
+            collapsed_ids: HashSet::new(),
+            show_detail: false,
+            detail_scroll: 0,
+            detail_task: None,
+            agent_map: HashMap::new(),
+            agent_active_indices: Vec::new(),
+            view_mode: GraphViewMode::Tree,
+            dag_layout: None,
+            dag_selected: 0,
+            dag_scroll_x: 0,
+            dag_scroll_y: 0,
+        }
+    }
+
+    fn make_row(id: &str, status: Status) -> GraphRow {
+        GraphRow {
+            task_id: id.to_string(),
+            title: id.to_string(),
+            status,
+            assigned: None,
+            depth: 0,
+            collapsed: false,
+            critical: false,
+            back_ref: None,
+            active_agent_count: 0,
+            active_agent_ids: Vec::new(),
+        }
+    }
+
+    /// Build a LogViewer with pre-loaded lines (no file I/O).
+    fn make_log_viewer(lines: Vec<&str>) -> LogViewer {
+        LogViewer {
+            agent: AgentInfo {
+                id: "test-agent".to_string(),
+                task_id: "test-task".to_string(),
+                executor: "test".to_string(),
+                pid: 0,
+                uptime: "0s".to_string(),
+                status: AgentStatus::Working,
+                process_alive: false,
+                output_file: String::new(),
+            },
+            lines: lines.into_iter().map(|s| s.to_string()).collect(),
+            scroll_offset: 0,
+            auto_scroll: true,
+            file_pos: 0,
+            last_poll: Instant::now(),
+        }
+    }
+
+    /// Build a minimal App without filesystem access.
+    fn make_app() -> App {
+        App {
+            view: View::Dashboard,
+            log_viewer: None,
+            graph_explorer: None,
+            selected_panel: Panel::Tasks,
+            task_selected: 0,
+            agent_selected: 0,
+            workgraph_dir: PathBuf::from("/tmp/nonexistent-wg-test"),
+            should_quit: false,
+            tasks: Vec::new(),
+            task_counts: TaskCounts::default(),
+            agents: Vec::new(),
+            agent_counts: (0, 0, 0),
+            highlighted_tasks: HashMap::new(),
+            highlighted_agents: HashMap::new(),
+            prev_task_snapshots: HashMap::new(),
+            prev_agent_snapshots: HashMap::new(),
+            prev_task_ids: HashSet::new(),
+            prev_agent_ids: HashSet::new(),
+            last_refresh: Instant::now(),
+            last_refresh_display: String::from("--:--:--"),
+            poll_interval: Duration::from_secs(999),
+            show_help: false,
+            first_load: false,
+        }
+    }
+
+    fn sample_tasks() -> Vec<TaskEntry> {
+        vec![
+            TaskEntry { id: "a".into(), title: "Alpha".into(), status: Status::InProgress, assigned: None },
+            TaskEntry { id: "b".into(), title: "Beta".into(), status: Status::Open, assigned: None },
+            TaskEntry { id: "c".into(), title: "Gamma".into(), status: Status::Done, assigned: None },
+        ]
+    }
+
+    fn sample_agents() -> Vec<AgentInfo> {
+        vec![
+            AgentInfo {
+                id: "agent-1".into(), task_id: "a".into(), executor: "claude".into(),
+                pid: 1, uptime: "1m".into(), status: AgentStatus::Working,
+                process_alive: true, output_file: String::new(),
+            },
+            AgentInfo {
+                id: "agent-2".into(), task_id: "b".into(), executor: "claude".into(),
+                pid: 2, uptime: "2m".into(), status: AgentStatus::Done,
+                process_alive: false, output_file: String::new(),
+            },
+        ]
+    }
+
+    // ── TaskEntry::sort_key ─────────────────────────────────────────
+
+    #[test]
+    fn task_entry_sort_key_ordering() {
+        let statuses = [
+            (Status::InProgress, 0u8),
+            (Status::Open, 1),
+            (Status::PendingReview, 2),
+            (Status::Failed, 3),
+            (Status::Blocked, 4),
+            (Status::Done, 5),
+            (Status::Abandoned, 6),
+        ];
+        for (status, expected) in &statuses {
+            let entry = TaskEntry {
+                id: "x".into(),
+                title: "x".into(),
+                status: status.clone(),
+                assigned: None,
+            };
+            assert_eq!(entry.sort_key(), *expected, "sort_key mismatch for {:?}", status);
+        }
+    }
+
+    #[test]
+    fn task_entry_sort_key_is_monotonic() {
+        let ordered = [
+            Status::InProgress, Status::Open, Status::PendingReview,
+            Status::Failed, Status::Blocked, Status::Done, Status::Abandoned,
+        ];
+        for w in ordered.windows(2) {
+            let a = TaskEntry { id: "x".into(), title: "x".into(), status: w[0].clone(), assigned: None };
+            let b = TaskEntry { id: "x".into(), title: "x".into(), status: w[1].clone(), assigned: None };
+            assert!(a.sort_key() < b.sort_key(), "{:?} should sort before {:?}", w[0], w[1]);
+        }
+    }
+
+    // ── Pure functions from tui::mod ────────────────────────────────
+
+    #[test]
+    fn agent_status_color_all_variants() {
+        use super::super::agent_status_color;
+        assert_eq!(agent_status_color(&AgentStatus::Working), Color::Green);
+        assert_eq!(agent_status_color(&AgentStatus::Starting), Color::Yellow);
+        assert_eq!(agent_status_color(&AgentStatus::Idle), Color::Cyan);
+        assert_eq!(agent_status_color(&AgentStatus::Stopping), Color::Yellow);
+        assert_eq!(agent_status_color(&AgentStatus::Dead), Color::Red);
+        assert_eq!(agent_status_color(&AgentStatus::Failed), Color::Red);
+        assert_eq!(agent_status_color(&AgentStatus::Done), Color::DarkGray);
+    }
+
+    #[test]
+    fn status_color_all_variants() {
+        use super::super::status_color;
+        assert_eq!(status_color(&Status::Done), Color::Green);
+        assert_eq!(status_color(&Status::InProgress), Color::Yellow);
+        assert_eq!(status_color(&Status::Open), Color::White);
+        assert_eq!(status_color(&Status::Failed), Color::Red);
+        assert_eq!(status_color(&Status::Blocked), Color::DarkGray);
+        assert_eq!(status_color(&Status::PendingReview), Color::Cyan);
+        assert_eq!(status_color(&Status::Abandoned), Color::DarkGray);
+    }
+
+    #[test]
+    fn status_indicator_all_variants() {
+        use super::super::status_indicator;
+        assert_eq!(status_indicator(&Status::Done), "[x]");
+        assert_eq!(status_indicator(&Status::InProgress), "[~]");
+        assert_eq!(status_indicator(&Status::Open), "[ ]");
+        assert_eq!(status_indicator(&Status::Failed), "[!]");
+        assert_eq!(status_indicator(&Status::Blocked), "[B]");
+        assert_eq!(status_indicator(&Status::PendingReview), "[?]");
+        assert_eq!(status_indicator(&Status::Abandoned), "[-]");
+    }
+
+    #[test]
+    fn agent_status_label_all_variants() {
+        use super::super::agent_status_label;
+        assert_eq!(agent_status_label(&AgentStatus::Working), "WORKING");
+        assert_eq!(agent_status_label(&AgentStatus::Starting), "STARTING");
+        assert_eq!(agent_status_label(&AgentStatus::Idle), "IDLE");
+        assert_eq!(agent_status_label(&AgentStatus::Stopping), "STOPPING");
+        assert_eq!(agent_status_label(&AgentStatus::Dead), "DEAD");
+        assert_eq!(agent_status_label(&AgentStatus::Failed), "FAILED");
+        assert_eq!(agent_status_label(&AgentStatus::Done), "DONE");
+    }
+
+    // ── GraphExplorer state mutations ───────────────────────────────
+
+    #[test]
+    fn graph_explorer_scroll_up_at_zero_stays_zero() {
+        let mut ex = make_graph_explorer(vec![make_row("a", Status::Open)]);
+        ex.scroll_up();
+        assert_eq!(ex.selected, 0);
+    }
+
+    #[test]
+    fn graph_explorer_scroll_down_advances() {
+        let rows = vec![make_row("a", Status::Open), make_row("b", Status::Open), make_row("c", Status::Open)];
+        let mut ex = make_graph_explorer(rows);
+        ex.scroll_down();
+        assert_eq!(ex.selected, 1);
+        ex.scroll_down();
+        assert_eq!(ex.selected, 2);
+    }
+
+    #[test]
+    fn graph_explorer_scroll_down_clamps_at_end() {
+        let rows = vec![make_row("a", Status::Open), make_row("b", Status::Open)];
+        let mut ex = make_graph_explorer(rows);
+        ex.scroll_down();
+        ex.scroll_down();
+        ex.scroll_down();
+        assert_eq!(ex.selected, 1);
+    }
+
+    #[test]
+    fn graph_explorer_scroll_down_empty_noop() {
+        let mut ex = make_graph_explorer(vec![]);
+        ex.scroll_down();
+        assert_eq!(ex.selected, 0);
+    }
+
+    #[test]
+    fn graph_explorer_scroll_up_decrements() {
+        let rows = vec![make_row("a", Status::Open), make_row("b", Status::Open)];
+        let mut ex = make_graph_explorer(rows);
+        ex.selected = 1;
+        ex.scroll_up();
+        assert_eq!(ex.selected, 0);
+    }
+
+    #[test]
+    fn graph_explorer_collapse_adds_to_collapsed_ids() {
+        let rows = vec![make_row("task-1", Status::Open)];
+        let mut ex = make_graph_explorer(rows);
+        ex.collapse();
+        assert!(ex.collapsed_ids.contains("task-1"));
+    }
+
+    #[test]
+    fn graph_explorer_expand_removes_from_collapsed_ids() {
+        let rows = vec![make_row("task-1", Status::Open)];
+        let mut ex = make_graph_explorer(rows);
+        ex.collapsed_ids.insert("task-1".to_string());
+        ex.expand();
+        assert!(!ex.collapsed_ids.contains("task-1"));
+    }
+
+    #[test]
+    fn graph_explorer_collapse_back_ref_is_noop() {
+        let mut row = make_row("task-1", Status::Open);
+        row.back_ref = Some("task-1".to_string());
+        let mut ex = make_graph_explorer(vec![row]);
+        ex.collapse();
+        assert!(!ex.collapsed_ids.contains("task-1"));
+    }
+
+    #[test]
+    fn graph_explorer_detail_scroll() {
+        let mut ex = make_graph_explorer(vec![make_row("a", Status::Open)]);
+        ex.show_detail = true;
+        ex.detail_scroll = 5;
+        ex.detail_scroll_up();
+        assert_eq!(ex.detail_scroll, 4);
+        ex.detail_scroll_down();
+        ex.detail_scroll_down();
+        assert_eq!(ex.detail_scroll, 6);
+    }
+
+    #[test]
+    fn graph_explorer_detail_scroll_up_at_zero() {
+        let mut ex = make_graph_explorer(vec![make_row("a", Status::Open)]);
+        ex.detail_scroll = 0;
+        ex.detail_scroll_up();
+        assert_eq!(ex.detail_scroll, 0);
+    }
+
+    #[test]
+    fn graph_explorer_toggle_view_mode() {
+        let mut ex = make_graph_explorer(vec![]);
+        assert_eq!(ex.view_mode, GraphViewMode::Tree);
+        ex.toggle_view_mode();
+        assert_eq!(ex.view_mode, GraphViewMode::Dag);
+        ex.toggle_view_mode();
+        assert_eq!(ex.view_mode, GraphViewMode::Tree);
+    }
+
+    #[test]
+    fn graph_explorer_cycle_to_next_agent_task_empty() {
+        let mut ex = make_graph_explorer(vec![make_row("a", Status::Open)]);
+        // agent_active_indices is empty
+        ex.cycle_to_next_agent_task();
+        assert_eq!(ex.selected, 0); // unchanged
+    }
+
+    #[test]
+    fn graph_explorer_cycle_to_next_agent_task_wraps() {
+        let rows = vec![
+            make_row("a", Status::Open),
+            make_row("b", Status::InProgress),
+            make_row("c", Status::Open),
+            make_row("d", Status::InProgress),
+        ];
+        let mut ex = make_graph_explorer(rows);
+        ex.agent_active_indices = vec![1, 3]; // b and d have agents
+        ex.selected = 0;
+        ex.cycle_to_next_agent_task();
+        assert_eq!(ex.selected, 1);
+        ex.cycle_to_next_agent_task();
+        assert_eq!(ex.selected, 3);
+        // Now at end — should wrap to first
+        ex.cycle_to_next_agent_task();
+        assert_eq!(ex.selected, 1);
+    }
+
+    fn make_dag_layout(task_ids: &[&str]) -> DagLayout {
+        use super::super::dag_layout::LayoutNode;
+        let nodes: Vec<LayoutNode> = task_ids.iter().enumerate().map(|(i, id)| {
+            LayoutNode {
+                task_id: id.to_string(),
+                title: id.to_string(),
+                status: Status::Open,
+                assigned: None,
+                critical: false,
+                active_agent_count: 0,
+                active_agent_ids: vec![],
+                layer: i,
+                order: 0,
+                x: 0,
+                y: i * 4,
+                w: 10,
+                h: 3,
+            }
+        }).collect();
+        let id_to_idx = task_ids.iter().enumerate().map(|(i, id)| (id.to_string(), i)).collect();
+        DagLayout {
+            nodes,
+            edges: vec![],
+            back_edges: vec![],
+            loop_edges: vec![],
+            width: 20,
+            height: task_ids.len() * 4,
+            id_to_idx,
+            has_cycles: false,
+        }
+    }
+
+    #[test]
+    fn graph_explorer_dag_select_next_and_prev() {
+        let mut ex = make_graph_explorer(vec![]);
+        ex.dag_layout = Some(make_dag_layout(&["a", "b", "c"]));
+        ex.dag_selected = 0;
+
+        ex.dag_select_next();
+        assert_eq!(ex.dag_selected, 1);
+        ex.dag_select_next();
+        assert_eq!(ex.dag_selected, 2);
+        // Clamp at end
+        ex.dag_select_next();
+        assert_eq!(ex.dag_selected, 2);
+        // Go back
+        ex.dag_select_prev();
+        assert_eq!(ex.dag_selected, 1);
+        ex.dag_select_prev();
+        assert_eq!(ex.dag_selected, 0);
+        // Clamp at start
+        ex.dag_select_prev();
+        assert_eq!(ex.dag_selected, 0);
+    }
+
+    #[test]
+    fn graph_explorer_dag_scroll_left_right() {
+        let mut ex = make_graph_explorer(vec![]);
+        assert_eq!(ex.dag_scroll_x, 0);
+        ex.dag_scroll_right();
+        assert_eq!(ex.dag_scroll_x, 4);
+        ex.dag_scroll_right();
+        assert_eq!(ex.dag_scroll_x, 8);
+        ex.dag_scroll_left();
+        assert_eq!(ex.dag_scroll_x, 4);
+        ex.dag_scroll_left();
+        assert_eq!(ex.dag_scroll_x, 0);
+        // Saturating at 0
+        ex.dag_scroll_left();
+        assert_eq!(ex.dag_scroll_x, 0);
+    }
+
+    #[test]
+    fn graph_explorer_dag_selected_task_id() {
+        let mut ex = make_graph_explorer(vec![]);
+        // No layout → None
+        assert!(ex.dag_selected_task_id().is_none());
+
+        ex.dag_layout = Some(make_dag_layout(&["my-task"]));
+        ex.dag_selected = 0;
+        assert_eq!(ex.dag_selected_task_id(), Some("my-task"));
+    }
+
+    #[test]
+    fn graph_explorer_selected_task_first_agent_tree_mode() {
+        let mut row = make_row("a", Status::InProgress);
+        row.active_agent_count = 1;
+        row.active_agent_ids = vec!["agent-x".to_string()];
+        let mut ex = make_graph_explorer(vec![row]);
+        ex.view_mode = GraphViewMode::Tree;
+        assert_eq!(ex.selected_task_first_agent(), Some("agent-x".to_string()));
+    }
+
+    #[test]
+    fn graph_explorer_selected_task_first_agent_tree_no_agents() {
+        let ex = make_graph_explorer(vec![make_row("a", Status::Open)]);
+        assert_eq!(ex.selected_task_first_agent(), None);
+    }
+
+    // ── LogViewer state ─────────────────────────────────────────────
+
+    #[test]
+    fn log_viewer_line_count() {
+        let viewer = make_log_viewer(vec!["line1", "line2", "line3"]);
+        assert_eq!(viewer.lines.len(), 3);
+    }
+
+    #[test]
+    fn log_viewer_scroll_up_at_zero() {
+        let mut viewer = make_log_viewer(vec!["a", "b", "c"]);
+        viewer.scroll_offset = 0;
+        viewer.scroll_up();
+        assert_eq!(viewer.scroll_offset, 0);
+    }
+
+    #[test]
+    fn log_viewer_scroll_up_decrements_and_disables_auto() {
+        let mut viewer = make_log_viewer(vec!["a", "b", "c"]);
+        viewer.scroll_offset = 2;
+        viewer.auto_scroll = true;
+        viewer.scroll_up();
+        assert_eq!(viewer.scroll_offset, 1);
+        assert!(!viewer.auto_scroll);
+    }
+
+    #[test]
+    fn log_viewer_scroll_down_increments() {
+        let mut viewer = make_log_viewer(vec!["a", "b", "c", "d", "e"]);
+        viewer.scroll_offset = 0;
+        viewer.scroll_down(3); // viewport_height=3, max_offset=5-3=2
+        assert_eq!(viewer.scroll_offset, 1);
+    }
+
+    #[test]
+    fn log_viewer_scroll_down_clamps_and_enables_auto() {
+        let mut viewer = make_log_viewer(vec!["a", "b", "c", "d", "e"]);
+        viewer.scroll_offset = 1;
+        viewer.auto_scroll = false;
+        viewer.scroll_down(3); // max_offset=2
+        assert_eq!(viewer.scroll_offset, 2);
+        assert!(viewer.auto_scroll); // re-enabled at bottom
+    }
+
+    #[test]
+    fn log_viewer_scroll_down_already_at_max() {
+        let mut viewer = make_log_viewer(vec!["a", "b"]);
+        viewer.scroll_offset = 0;
+        // viewport larger than lines → max_offset=0
+        viewer.scroll_down(10);
+        assert_eq!(viewer.scroll_offset, 0);
+        assert!(viewer.auto_scroll);
+    }
+
+    #[test]
+    fn log_viewer_page_up() {
+        let mut viewer = make_log_viewer((0..50).map(|i| "line").collect());
+        viewer.scroll_offset = 20;
+        viewer.auto_scroll = true;
+        viewer.page_up(20); // jump = 10
+        assert_eq!(viewer.scroll_offset, 10);
+        assert!(!viewer.auto_scroll);
+    }
+
+    #[test]
+    fn log_viewer_page_up_saturates_at_zero() {
+        let mut viewer = make_log_viewer((0..10).map(|_| "x").collect());
+        viewer.scroll_offset = 3;
+        viewer.page_up(20); // jump=10, saturating_sub → 0
+        assert_eq!(viewer.scroll_offset, 0);
+        assert!(!viewer.auto_scroll);
+    }
+
+    #[test]
+    fn log_viewer_page_down() {
+        let mut viewer = make_log_viewer((0..50).map(|_| "x").collect());
+        viewer.scroll_offset = 0;
+        viewer.auto_scroll = false;
+        viewer.page_down(20); // jump=10, max_offset=30
+        assert_eq!(viewer.scroll_offset, 10);
+        assert!(!viewer.auto_scroll);
+    }
+
+    #[test]
+    fn log_viewer_page_down_clamps_and_enables_auto() {
+        let mut viewer = make_log_viewer((0..50).map(|_| "x").collect());
+        viewer.scroll_offset = 28;
+        viewer.auto_scroll = false;
+        viewer.page_down(20); // jump=10, new=38, max_offset=30 → clamped to 30
+        assert_eq!(viewer.scroll_offset, 30);
+        assert!(viewer.auto_scroll);
+    }
+
+    #[test]
+    fn log_viewer_apply_auto_scroll_when_enabled() {
+        let mut viewer = make_log_viewer((0..50).map(|_| "x").collect());
+        viewer.scroll_offset = 0;
+        viewer.auto_scroll = true;
+        viewer.apply_auto_scroll(20);
+        assert_eq!(viewer.scroll_offset, 30); // 50 - 20
+    }
+
+    #[test]
+    fn log_viewer_apply_auto_scroll_when_disabled() {
+        let mut viewer = make_log_viewer((0..50).map(|_| "x").collect());
+        viewer.scroll_offset = 5;
+        viewer.auto_scroll = false;
+        viewer.apply_auto_scroll(20);
+        assert_eq!(viewer.scroll_offset, 5); // unchanged
+    }
+
+    // ── App panel switching ─────────────────────────────────────────
+
+    #[test]
+    fn app_toggle_panel() {
+        let mut app = make_app();
+        assert_eq!(app.selected_panel, Panel::Tasks);
+        app.toggle_panel();
+        assert_eq!(app.selected_panel, Panel::Agents);
+        app.toggle_panel();
+        assert_eq!(app.selected_panel, Panel::Tasks);
+    }
+
+    // ── App scroll up/down ──────────────────────────────────────────
+
+    #[test]
+    fn app_scroll_tasks_panel() {
+        let mut app = make_app();
+        app.tasks = sample_tasks();
+        app.selected_panel = Panel::Tasks;
+        app.task_selected = 0;
+
+        app.scroll_down();
+        assert_eq!(app.task_selected, 1);
+        app.scroll_down();
+        assert_eq!(app.task_selected, 2);
+        // Clamp at end
+        app.scroll_down();
+        assert_eq!(app.task_selected, 2);
+        // Go up
+        app.scroll_up();
+        assert_eq!(app.task_selected, 1);
+        app.scroll_up();
+        assert_eq!(app.task_selected, 0);
+        // Saturate at 0
+        app.scroll_up();
+        assert_eq!(app.task_selected, 0);
+    }
+
+    #[test]
+    fn app_scroll_agents_panel() {
+        let mut app = make_app();
+        app.agents = sample_agents();
+        app.selected_panel = Panel::Agents;
+        app.agent_selected = 0;
+
+        app.scroll_down();
+        assert_eq!(app.agent_selected, 1);
+        // Clamp
+        app.scroll_down();
+        assert_eq!(app.agent_selected, 1);
+        app.scroll_up();
+        assert_eq!(app.agent_selected, 0);
+        app.scroll_up();
+        assert_eq!(app.agent_selected, 0);
+    }
+
+    #[test]
+    fn app_scroll_empty_tasks_is_noop() {
+        let mut app = make_app();
+        app.selected_panel = Panel::Tasks;
+        app.scroll_down();
+        assert_eq!(app.task_selected, 0);
+    }
+
+    #[test]
+    fn app_scroll_empty_agents_is_noop() {
+        let mut app = make_app();
+        app.selected_panel = Panel::Agents;
+        app.scroll_down();
+        assert_eq!(app.agent_selected, 0);
+    }
+
+    // ── App view transitions ────────────────────────────────────────
+
+    #[test]
+    fn app_close_log_viewer_returns_to_dashboard() {
+        let mut app = make_app();
+        app.view = View::LogView;
+        app.log_viewer = Some(make_log_viewer(vec!["hello"]));
+        app.close_log_viewer();
+        assert_eq!(app.view, View::Dashboard);
+        assert!(app.log_viewer.is_none());
+    }
+
+    #[test]
+    fn app_close_graph_explorer_returns_to_dashboard() {
+        let mut app = make_app();
+        app.view = View::GraphExplorer;
+        app.graph_explorer = Some(make_graph_explorer(vec![]));
+        app.close_graph_explorer();
+        assert_eq!(app.view, View::Dashboard);
+        assert!(app.graph_explorer.is_none());
+    }
+
+    #[test]
+    fn app_open_log_viewer_requires_agents_panel() {
+        let mut app = make_app();
+        app.selected_panel = Panel::Tasks;
+        app.agents = sample_agents();
+        app.open_log_viewer();
+        // Should not open because panel is Tasks
+        assert_eq!(app.view, View::Dashboard);
+        assert!(app.log_viewer.is_none());
+    }
+
+    #[test]
+    fn app_open_log_viewer_requires_agents() {
+        let mut app = make_app();
+        app.selected_panel = Panel::Agents;
+        // No agents loaded
+        app.open_log_viewer();
+        assert_eq!(app.view, View::Dashboard);
+        assert!(app.log_viewer.is_none());
+    }
+
+    // ── App help overlay toggle ─────────────────────────────────────
+
+    #[test]
+    fn app_help_toggle() {
+        let mut app = make_app();
+        assert!(!app.show_help);
+        app.show_help = true;
+        assert!(app.show_help);
+        app.show_help = false;
+        assert!(!app.show_help);
+    }
+
+    // ── App view_label and key_hints ────────────────────────────────
+
+    #[test]
+    fn app_view_label() {
+        let mut app = make_app();
+        assert_eq!(app.view_label(), "Dashboard");
+        app.view = View::LogView;
+        assert_eq!(app.view_label(), "Log Viewer");
+        app.view = View::GraphExplorer;
+        assert_eq!(app.view_label(), "Graph Explorer");
+    }
+
+    #[test]
+    fn app_key_hints_per_view() {
+        let mut app = make_app();
+        assert!(app.key_hints().contains("quit"));
+        app.view = View::LogView;
+        assert!(app.key_hints().contains("scroll"));
+        app.view = View::GraphExplorer;
+        assert!(app.key_hints().contains("toggle view"));
+    }
+
+    // ── AgentInfo helpers ───────────────────────────────────────────
+
+    #[test]
+    fn agent_info_is_alive() {
+        let mut info = AgentInfo {
+            id: "a".into(), task_id: "t".into(), executor: "e".into(),
+            pid: 1, uptime: "1s".into(), status: AgentStatus::Working,
+            process_alive: true, output_file: String::new(),
+        };
+        assert!(info.is_alive());
+        info.status = AgentStatus::Starting;
+        assert!(info.is_alive());
+        info.status = AgentStatus::Idle;
+        assert!(info.is_alive());
+        info.status = AgentStatus::Stopping;
+        assert!(!info.is_alive());
+        info.status = AgentStatus::Done;
+        assert!(!info.is_alive());
+        info.status = AgentStatus::Dead;
+        assert!(!info.is_alive());
+        info.status = AgentStatus::Failed;
+        assert!(!info.is_alive());
+    }
+
+    #[test]
+    fn agent_info_is_dead() {
+        let mut info = AgentInfo {
+            id: "a".into(), task_id: "t".into(), executor: "e".into(),
+            pid: 1, uptime: "1s".into(), status: AgentStatus::Dead,
+            process_alive: false, output_file: String::new(),
+        };
+        assert!(info.is_dead());
+        info.status = AgentStatus::Failed;
+        assert!(info.is_dead());
+        info.status = AgentStatus::Working;
+        assert!(!info.is_dead());
+        info.status = AgentStatus::Done;
+        assert!(!info.is_dead());
+    }
+
+    // ── App drill_in ────────────────────────────────────────────────
+
+    #[test]
+    fn app_drill_in_agents_panel_no_agents_is_noop() {
+        let mut app = make_app();
+        app.selected_panel = Panel::Agents;
+        app.drill_in();
+        assert_eq!(app.view, View::Dashboard);
+    }
+
+    // ── Panel and View equality ─────────────────────────────────────
+
+    #[test]
+    fn panel_eq() {
+        assert_eq!(Panel::Tasks, Panel::Tasks);
+        assert_eq!(Panel::Agents, Panel::Agents);
+        assert_ne!(Panel::Tasks, Panel::Agents);
+    }
+
+    #[test]
+    fn view_eq() {
+        assert_eq!(View::Dashboard, View::Dashboard);
+        assert_eq!(View::LogView, View::LogView);
+        assert_eq!(View::GraphExplorer, View::GraphExplorer);
+        assert_ne!(View::Dashboard, View::LogView);
+    }
+
+    #[test]
+    fn graph_view_mode_eq() {
+        assert_eq!(GraphViewMode::Tree, GraphViewMode::Tree);
+        assert_eq!(GraphViewMode::Dag, GraphViewMode::Dag);
+        assert_ne!(GraphViewMode::Tree, GraphViewMode::Dag);
+    }
+}

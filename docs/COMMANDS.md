@@ -695,14 +695,6 @@ wg coordinate --max-parallel 3
 
 ---
 
-### `wg dag` *(hidden alias)*
-
-Alias for `wg graph`. Kept for backward compatibility.
-
-```bash
-wg dag [--all] [--status <STATUS>]
-```
-
 ---
 
 ## Agent and Resource Management
@@ -1438,12 +1430,12 @@ wg check
 
 ---
 
-### `wg graph`
+### `wg viz`
 
 Visualize the dependency graph (ASCII tree by default).
 
 ```bash
-wg graph [OPTIONS]
+wg viz [OPTIONS]
 ```
 
 **Options:**
@@ -1458,27 +1450,26 @@ wg graph [OPTIONS]
 
 **Example:**
 ```bash
-wg graph
+wg viz
 # ASCII dependency tree of active tasks
 
-wg graph --all
+wg viz --all
 # Include completed tasks
 
-wg graph --dot
+wg viz --dot
 # Graphviz DOT output
 
-wg graph --mermaid
+wg viz --mermaid
 # Mermaid diagram output
 
-wg graph --dot -o graph.png
+wg viz --dot -o graph.png
 # Render to PNG file (requires graphviz)
 
-wg graph --critical-path
+wg viz --critical-path
 # Highlight the longest dependency chain
 ```
 
-> **Note:** `wg dag` and `wg viz` are hidden aliases for backward compatibility.
-> `wg graph-export` provides the old `wg graph` behavior (full DOT output with archive support).
+> **Note:** `wg graph-export` provides full DOT output with archive support.
 
 ---
 

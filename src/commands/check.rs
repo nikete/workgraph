@@ -75,3 +75,158 @@ pub fn run(dir: &Path) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+    use workgraph::graph::{LoopEdge, Node, Status, Task};
+    use workgraph::parser::save_graph;
+
+    fn make_task(id: &str, title: &str) -> Task {
+        Task {
+            id: id.to_string(),
+            title: title.to_string(),
+            description: None,
+            status: Status::Open,
+            assigned: None,
+            estimate: None,
+            blocks: vec![],
+            blocked_by: vec![],
+            requires: vec![],
+            tags: vec![],
+            skills: vec![],
+            inputs: vec![],
+            deliverables: vec![],
+            artifacts: vec![],
+            exec: None,
+            not_before: None,
+            created_at: None,
+            started_at: None,
+            completed_at: None,
+            log: vec![],
+            retry_count: 0,
+            max_retries: None,
+            failure_reason: None,
+            model: None,
+            verify: None,
+            agent: None,
+            loops_to: vec![],
+            loop_iteration: 0,
+            ready_after: None,
+        }
+    }
+
+    fn setup_graph(dir: &Path, graph: &workgraph::graph::WorkGraph) {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = graph_path(dir);
+        save_graph(graph, &path).unwrap();
+    }
+
+    #[test]
+    fn test_check_ok_clean_graph() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".workgraph");
+
+        let mut graph = workgraph::graph::WorkGraph::new();
+        graph.add_node(Node::Task(make_task("t1", "Task 1")));
+        graph.add_node(Node::Task(make_task("t2", "Task 2")));
+        setup_graph(&dir, &graph);
+
+        let result = run(&dir);
+        assert!(result.is_ok(), "clean graph should pass check");
+    }
+
+    #[test]
+    fn test_check_fails_on_orphan_refs() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".workgraph");
+
+        let mut graph = workgraph::graph::WorkGraph::new();
+        let mut t1 = make_task("t1", "Task 1");
+        t1.blocked_by = vec!["nonexistent".to_string()];
+        graph.add_node(Node::Task(t1));
+        setup_graph(&dir, &graph);
+
+        let result = run(&dir);
+        assert!(result.is_err(), "orphan refs should fail check");
+    }
+
+    #[test]
+    fn test_check_warns_on_cycles_but_no_error_alone() {
+        // Cycles are treated as warnings, not errors, in the command layer.
+        // However, cycles in blocked_by also create orphan-like issues only
+        // if the target doesn't exist. With valid nodes that have cycles,
+        // the check should still succeed (cycles are just warnings).
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".workgraph");
+
+        let mut graph = workgraph::graph::WorkGraph::new();
+        let mut t1 = make_task("t1", "Task 1");
+        t1.blocked_by = vec!["t2".to_string()];
+        let mut t2 = make_task("t2", "Task 2");
+        t2.blocked_by = vec!["t1".to_string()];
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        setup_graph(&dir, &graph);
+
+        // Cycles are warnings, not errors — run should succeed
+        // (the command only bails on errors > 0, not warnings)
+        let result = run(&dir);
+        assert!(result.is_ok(), "cycles alone should not cause check failure (they are warnings)");
+    }
+
+    #[test]
+    fn test_check_fails_on_loop_edge_issues() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".workgraph");
+
+        let mut graph = workgraph::graph::WorkGraph::new();
+        let mut t1 = make_task("t1", "Task 1");
+        t1.loops_to = vec![LoopEdge {
+            target: "nonexistent".to_string(),
+            guard: None,
+            max_iterations: 3,
+            delay: None,
+        }];
+        graph.add_node(Node::Task(t1));
+        setup_graph(&dir, &graph);
+
+        let result = run(&dir);
+        assert!(result.is_err(), "loop edge issues should fail check");
+    }
+
+    #[test]
+    fn test_check_fails_when_not_initialized() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".workgraph");
+        // Don't create anything — dir doesn't even exist
+
+        let result = run(&dir);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("not initialized"));
+    }
+
+    #[test]
+    fn test_check_ok_with_valid_loop_edges() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().join(".workgraph");
+
+        let mut graph = workgraph::graph::WorkGraph::new();
+        let t1 = make_task("t1", "Task 1");
+        let mut t2 = make_task("t2", "Task 2");
+        t2.loops_to = vec![LoopEdge {
+            target: "t1".to_string(),
+            guard: None,
+            max_iterations: 5,
+            delay: None,
+        }];
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        setup_graph(&dir, &graph);
+
+        let result = run(&dir);
+        assert!(result.is_ok(), "valid loop edges should pass check");
+    }
+}

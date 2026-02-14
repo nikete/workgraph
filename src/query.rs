@@ -773,4 +773,645 @@ mod tests {
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id, "t1");
     }
+
+    // ========== Transitive blocker tests ==========
+
+    #[test]
+    fn test_ready_tasks_transitive_blockers_3_levels() {
+        // A blocked by B, B blocked by C — only C should be ready
+        let mut graph = WorkGraph::new();
+
+        let c = make_task("c", "Level 0 (root)");
+        let mut b = make_task("b", "Level 1");
+        b.blocked_by = vec!["c".to_string()];
+        let mut a = make_task("a", "Level 2");
+        a.blocked_by = vec!["b".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+
+        let ready = ready_tasks(&graph);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, "c");
+    }
+
+    #[test]
+    fn test_ready_tasks_transitive_blockers_4_levels() {
+        // d -> c -> b -> a: only d should be ready
+        let mut graph = WorkGraph::new();
+
+        let d = make_task("d", "Level 0");
+        let mut c = make_task("c", "Level 1");
+        c.blocked_by = vec!["d".to_string()];
+        let mut b = make_task("b", "Level 2");
+        b.blocked_by = vec!["c".to_string()];
+        let mut a = make_task("a", "Level 3");
+        a.blocked_by = vec!["b".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+
+        let ready = ready_tasks(&graph);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, "d");
+    }
+
+    #[test]
+    fn test_ready_tasks_transitive_partial_done() {
+        // d(Done) -> c -> b -> a: c should be ready now
+        let mut graph = WorkGraph::new();
+
+        let mut d = make_task("d", "Level 0");
+        d.status = Status::Done;
+        let mut c = make_task("c", "Level 1");
+        c.blocked_by = vec!["d".to_string()];
+        let mut b = make_task("b", "Level 2");
+        b.blocked_by = vec!["c".to_string()];
+        let mut a = make_task("a", "Level 3");
+        a.blocked_by = vec!["b".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+
+        let ready = ready_tasks(&graph);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, "c");
+    }
+
+    // ========== Multiple blockers with mixed states ==========
+
+    #[test]
+    fn test_ready_tasks_multiple_blockers_some_done() {
+        // Task blocked by b1(Done) and b2(Open) — should NOT be ready
+        let mut graph = WorkGraph::new();
+
+        let mut b1 = make_task("b1", "Blocker 1");
+        b1.status = Status::Done;
+        let b2 = make_task("b2", "Blocker 2");
+        let mut task = make_task("t", "Blocked task");
+        task.blocked_by = vec!["b1".to_string(), "b2".to_string()];
+
+        graph.add_node(Node::Task(b1));
+        graph.add_node(Node::Task(b2));
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        let ready_ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
+        assert!(ready_ids.contains(&"b2"), "b2 should be ready");
+        assert!(!ready_ids.contains(&"t"), "t should NOT be ready (b2 still open)");
+    }
+
+    #[test]
+    fn test_ready_tasks_multiple_blockers_all_done() {
+        // Task blocked by b1(Done) and b2(Done) — SHOULD be ready
+        let mut graph = WorkGraph::new();
+
+        let mut b1 = make_task("b1", "Blocker 1");
+        b1.status = Status::Done;
+        let mut b2 = make_task("b2", "Blocker 2");
+        b2.status = Status::Done;
+        let mut task = make_task("t", "Blocked task");
+        task.blocked_by = vec!["b1".to_string(), "b2".to_string()];
+
+        graph.add_node(Node::Task(b1));
+        graph.add_node(Node::Task(b2));
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id, "t");
+    }
+
+    #[test]
+    fn test_ready_tasks_multiple_blockers_mixed_statuses() {
+        // Task blocked by done, in-progress, and failed tasks
+        let mut graph = WorkGraph::new();
+
+        let mut b_done = make_task("b-done", "Done blocker");
+        b_done.status = Status::Done;
+        let mut b_ip = make_task("b-ip", "InProgress blocker");
+        b_ip.status = Status::InProgress;
+        let mut b_failed = make_task("b-failed", "Failed blocker");
+        b_failed.status = Status::Failed;
+
+        let mut task = make_task("t", "Blocked task");
+        task.blocked_by = vec![
+            "b-done".to_string(),
+            "b-ip".to_string(),
+            "b-failed".to_string(),
+        ];
+
+        graph.add_node(Node::Task(b_done));
+        graph.add_node(Node::Task(b_ip));
+        graph.add_node(Node::Task(b_failed));
+        graph.add_node(Node::Task(task));
+
+        // Only Done counts as unblocked — InProgress and Failed don't
+        let ready = ready_tasks(&graph);
+        let ready_ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
+        assert!(!ready_ids.contains(&"t"), "t should NOT be ready");
+    }
+
+    // ========== Orphan blocker tests ==========
+
+    #[test]
+    fn test_ready_tasks_orphan_blocker_nonexistent() {
+        // Task references a blocker that doesn't exist in the graph
+        // Current behavior: nonexistent blocker treated as done (unwrap_or(true))
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t", "Task with ghost blocker");
+        task.blocked_by = vec!["nonexistent".to_string()];
+
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        assert_eq!(ready.len(), 1, "Task with nonexistent blocker should be ready");
+        assert_eq!(ready[0].id, "t");
+    }
+
+    #[test]
+    fn test_ready_tasks_mix_real_and_orphan_blockers() {
+        // One real open blocker + one nonexistent blocker
+        let mut graph = WorkGraph::new();
+
+        let real_blocker = make_task("real", "Real blocker");
+        let mut task = make_task("t", "Mixed blockers");
+        task.blocked_by = vec!["real".to_string(), "ghost".to_string()];
+
+        graph.add_node(Node::Task(real_blocker));
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        let ready_ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
+        // "real" is Open so "t" is still blocked
+        assert!(ready_ids.contains(&"real"));
+        assert!(!ready_ids.contains(&"t"));
+    }
+
+    #[test]
+    fn test_blocked_by_with_orphan_blocker() {
+        // blocked_by() should silently skip nonexistent blockers
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t", "Task");
+        task.blocked_by = vec!["ghost1".to_string(), "ghost2".to_string()];
+
+        graph.add_node(Node::Task(task));
+
+        let blockers = blocked_by(&graph, "t");
+        assert!(blockers.is_empty(), "Nonexistent blockers should be filtered out");
+    }
+
+    #[test]
+    fn test_blocked_by_nonexistent_task() {
+        let graph = WorkGraph::new();
+        let blockers = blocked_by(&graph, "no-such-task");
+        assert!(blockers.is_empty());
+    }
+
+    // ========== build_reverse_index() direct tests ==========
+
+    #[test]
+    fn test_build_reverse_index_empty_graph() {
+        let graph = WorkGraph::new();
+        let index = build_reverse_index(&graph);
+        assert!(index.is_empty());
+    }
+
+    #[test]
+    fn test_build_reverse_index_no_dependencies() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("a", "A")));
+        graph.add_node(Node::Task(make_task("b", "B")));
+
+        let index = build_reverse_index(&graph);
+        assert!(index.is_empty(), "No dependencies means empty reverse index");
+    }
+
+    #[test]
+    fn test_build_reverse_index_linear_chain() {
+        // a -> b -> c (c blocked_by b, b blocked_by a)
+        let mut graph = WorkGraph::new();
+
+        let a = make_task("a", "A");
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["b".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+
+        let index = build_reverse_index(&graph);
+        // "a" is depended on by "b"
+        assert_eq!(index.get("a").unwrap(), &vec!["b".to_string()]);
+        // "b" is depended on by "c"
+        assert_eq!(index.get("b").unwrap(), &vec!["c".to_string()]);
+        // "c" is not depended on by anything
+        assert!(index.get("c").is_none());
+    }
+
+    #[test]
+    fn test_build_reverse_index_branching() {
+        // "root" has two dependents: "left" and "right"
+        let mut graph = WorkGraph::new();
+
+        let root = make_task("root", "Root");
+        let mut left = make_task("left", "Left");
+        left.blocked_by = vec!["root".to_string()];
+        let mut right = make_task("right", "Right");
+        right.blocked_by = vec!["root".to_string()];
+
+        graph.add_node(Node::Task(root));
+        graph.add_node(Node::Task(left));
+        graph.add_node(Node::Task(right));
+
+        let index = build_reverse_index(&graph);
+        let dependents = index.get("root").unwrap();
+        assert_eq!(dependents.len(), 2);
+        assert!(dependents.contains(&"left".to_string()));
+        assert!(dependents.contains(&"right".to_string()));
+    }
+
+    #[test]
+    fn test_build_reverse_index_diamond() {
+        // Diamond: a -> b, a -> c, b -> d, c -> d
+        let mut graph = WorkGraph::new();
+
+        let a = make_task("a", "A");
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["a".to_string()];
+        let mut d = make_task("d", "D");
+        d.blocked_by = vec!["b".to_string(), "c".to_string()];
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+
+        let index = build_reverse_index(&graph);
+        let a_deps = index.get("a").unwrap();
+        assert_eq!(a_deps.len(), 2);
+        assert!(a_deps.contains(&"b".to_string()));
+        assert!(a_deps.contains(&"c".to_string()));
+
+        assert_eq!(index.get("b").unwrap(), &vec!["d".to_string()]);
+        assert_eq!(index.get("c").unwrap(), &vec!["d".to_string()]);
+        assert!(index.get("d").is_none());
+    }
+
+    // ========== tasks_within_constraint() edge cases ==========
+
+    #[test]
+    fn test_tasks_within_budget_zero_budget() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Task 1");
+        t1.estimate = Some(Estimate {
+            hours: Some(1.0),
+            cost: Some(100.0),
+        });
+
+        graph.add_node(Node::Task(t1));
+
+        let result = tasks_within_budget(&graph, 0.0);
+        // Zero-cost tasks would fit (100 > 0), so t1 should exceed
+        assert!(result.fits.is_empty());
+        assert_eq!(result.exceeds.len(), 1);
+        assert_eq!(result.remaining, 0.0);
+    }
+
+    #[test]
+    fn test_tasks_within_budget_zero_cost_task_zero_budget() {
+        // A task with no estimate (defaults to 0 cost) should fit in zero budget
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task("t1", "No estimate task");
+        graph.add_node(Node::Task(t1));
+
+        let result = tasks_within_budget(&graph, 0.0);
+        assert_eq!(result.fits.len(), 1, "Zero-cost task should fit in zero budget");
+        assert_eq!(result.fits[0].id, "t1");
+        assert_eq!(result.remaining, 0.0);
+    }
+
+    #[test]
+    fn test_tasks_within_budget_negative_budget() {
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task("t1", "Task");
+        graph.add_node(Node::Task(t1));
+
+        let result = tasks_within_budget(&graph, -10.0);
+        // Even zero-cost task: 0.0 <= -10.0 is false, so nothing fits
+        assert!(result.fits.is_empty());
+        assert_eq!(result.remaining, -10.0);
+    }
+
+    #[test]
+    fn test_tasks_within_budget_none_estimates() {
+        // Tasks with None estimates should default to 0 cost and always fit
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task("t1", "No estimate");
+        let mut t2 = make_task("t2", "Partial estimate");
+        t2.estimate = Some(Estimate {
+            hours: Some(5.0),
+            cost: None, // cost is None
+        });
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let result = tasks_within_budget(&graph, 50.0);
+        // Both should fit: t1 costs 0, t2 costs 0 (None -> 0.0)
+        assert_eq!(result.fits.len(), 2);
+        assert_eq!(result.remaining, 50.0);
+    }
+
+    #[test]
+    fn test_tasks_within_hours_none_estimates() {
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Only cost");
+        t1.estimate = Some(Estimate {
+            hours: None,
+            cost: Some(999.0),
+        });
+
+        graph.add_node(Node::Task(t1));
+
+        let result = tasks_within_hours(&graph, 10.0);
+        // hours is None -> 0.0, so it fits
+        assert_eq!(result.fits.len(), 1);
+        assert_eq!(result.remaining, 10.0);
+    }
+
+    #[test]
+    fn test_tasks_within_budget_exact_fit() {
+        // Task cost exactly equals remaining budget
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Exact fit");
+        t1.estimate = Some(Estimate {
+            hours: None,
+            cost: Some(500.0),
+        });
+
+        graph.add_node(Node::Task(t1));
+
+        let result = tasks_within_budget(&graph, 500.0);
+        assert_eq!(result.fits.len(), 1);
+        assert_eq!(result.remaining, 0.0);
+    }
+
+    #[test]
+    fn test_tasks_within_budget_tiny_overshoot() {
+        // Budget is just barely less than cost (floating point boundary)
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task("t1", "Tiny overshoot");
+        t1.estimate = Some(Estimate {
+            hours: None,
+            cost: Some(100.0),
+        });
+
+        graph.add_node(Node::Task(t1));
+
+        // Budget is 99.99999999 — just under 100
+        let result = tasks_within_budget(&graph, 99.99999999);
+        assert_eq!(result.exceeds.len(), 1, "100.0 > 99.99999999, should not fit");
+        assert!(result.fits.is_empty());
+    }
+
+    #[test]
+    fn test_tasks_within_budget_cascading_unblock() {
+        // a (ready) -> b (blocked by a) -> c (blocked by b)
+        // All should fit if budget allows, since completing a unblocks b, which unblocks c
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.estimate = Some(Estimate { hours: None, cost: Some(10.0) });
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.estimate = Some(Estimate { hours: None, cost: Some(20.0) });
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["b".to_string()];
+        c.estimate = Some(Estimate { hours: None, cost: Some(30.0) });
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+
+        let result = tasks_within_budget(&graph, 100.0);
+        assert_eq!(result.fits.len(), 3, "All three should fit within cascading plan");
+        assert_eq!(result.fits[0].id, "a");
+        assert_eq!(result.fits[1].id, "b");
+        assert_eq!(result.fits[2].id, "c");
+        assert_eq!(result.remaining, 40.0);
+    }
+
+    // ========== cost_of() edge cases ==========
+
+    #[test]
+    fn test_cost_of_nonexistent_dep_in_chain() {
+        // Task references a nonexistent dependency
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("t", "Task");
+        task.blocked_by = vec!["ghost".to_string()];
+        task.estimate = Some(Estimate {
+            hours: None,
+            cost: Some(100.0),
+        });
+
+        graph.add_node(Node::Task(task));
+
+        // "ghost" doesn't exist -> cost_of returns 0 for it
+        assert_eq!(cost_of(&graph, "t"), 100.0);
+    }
+
+    #[test]
+    fn test_cost_of_self_blocking() {
+        // Task references itself as a blocker (degenerate cycle of length 1)
+        let mut graph = WorkGraph::new();
+
+        let mut task = make_task("self", "Self-blocking");
+        task.blocked_by = vec!["self".to_string()];
+        task.estimate = Some(Estimate {
+            hours: None,
+            cost: Some(50.0),
+        });
+
+        graph.add_node(Node::Task(task));
+
+        // Should not infinite loop; visited set catches it
+        let cost = cost_of(&graph, "self");
+        assert_eq!(cost, 50.0);
+    }
+
+    #[test]
+    fn test_cost_of_deep_chain() {
+        // Chain of 5: e -> d -> c -> b -> a, each costs 10
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.estimate = Some(Estimate { hours: None, cost: Some(10.0) });
+
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.estimate = Some(Estimate { hours: None, cost: Some(10.0) });
+
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["b".to_string()];
+        c.estimate = Some(Estimate { hours: None, cost: Some(10.0) });
+
+        let mut d = make_task("d", "D");
+        d.blocked_by = vec!["c".to_string()];
+        d.estimate = Some(Estimate { hours: None, cost: Some(10.0) });
+
+        let mut e = make_task("e", "E");
+        e.blocked_by = vec!["d".to_string()];
+        e.estimate = Some(Estimate { hours: None, cost: Some(10.0) });
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+        graph.add_node(Node::Task(e));
+
+        assert_eq!(cost_of(&graph, "e"), 50.0);
+    }
+
+    #[test]
+    fn test_cost_of_diamond_no_double_count() {
+        // Diamond: a -> b, a -> c, b -> d, c -> d
+        // d should count a,b,c,d each once
+        let mut graph = WorkGraph::new();
+
+        let mut a = make_task("a", "A");
+        a.estimate = Some(Estimate { hours: None, cost: Some(10.0) });
+
+        let mut b = make_task("b", "B");
+        b.blocked_by = vec!["a".to_string()];
+        b.estimate = Some(Estimate { hours: None, cost: Some(20.0) });
+
+        let mut c = make_task("c", "C");
+        c.blocked_by = vec!["a".to_string()];
+        c.estimate = Some(Estimate { hours: None, cost: Some(30.0) });
+
+        let mut d = make_task("d", "D");
+        d.blocked_by = vec!["b".to_string(), "c".to_string()];
+        d.estimate = Some(Estimate { hours: None, cost: Some(40.0) });
+
+        graph.add_node(Node::Task(a));
+        graph.add_node(Node::Task(b));
+        graph.add_node(Node::Task(c));
+        graph.add_node(Node::Task(d));
+
+        // d(40) + b(20) + c(30) + a(10) = 100 (a counted only once)
+        assert_eq!(cost_of(&graph, "d"), 100.0);
+    }
+
+    #[test]
+    fn test_cost_of_no_estimate() {
+        // Task with no estimate should contribute 0
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("t", "No estimate")));
+        assert_eq!(cost_of(&graph, "t"), 0.0);
+    }
+
+    // ========== ready_tasks with various terminal statuses ==========
+
+    #[test]
+    fn test_ready_tasks_excludes_in_progress() {
+        let mut graph = WorkGraph::new();
+        let mut task = make_task("t", "In progress");
+        task.status = Status::InProgress;
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        assert!(ready.is_empty(), "InProgress tasks should not be ready");
+    }
+
+    #[test]
+    fn test_ready_tasks_excludes_failed() {
+        let mut graph = WorkGraph::new();
+        let mut task = make_task("t", "Failed");
+        task.status = Status::Failed;
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        assert!(ready.is_empty(), "Failed tasks should not be ready");
+    }
+
+    #[test]
+    fn test_ready_tasks_excludes_abandoned() {
+        let mut graph = WorkGraph::new();
+        let mut task = make_task("t", "Abandoned");
+        task.status = Status::Abandoned;
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        assert!(ready.is_empty(), "Abandoned tasks should not be ready");
+    }
+
+    #[test]
+    fn test_ready_tasks_excludes_pending_review() {
+        let mut graph = WorkGraph::new();
+        let mut task = make_task("t", "Pending review");
+        task.status = Status::PendingReview;
+        graph.add_node(Node::Task(task));
+
+        let ready = ready_tasks(&graph);
+        assert!(ready.is_empty(), "PendingReview tasks should not be ready");
+    }
+
+    // ========== is_time_ready with ready_after ==========
+
+    #[test]
+    fn test_is_time_ready_future_ready_after() {
+        let mut task = make_task("t", "Task");
+        task.ready_after = Some("2099-01-01T00:00:00Z".to_string());
+        assert!(!is_time_ready(&task), "Future ready_after should block");
+    }
+
+    #[test]
+    fn test_is_time_ready_past_ready_after() {
+        let mut task = make_task("t", "Task");
+        task.ready_after = Some("2020-01-01T00:00:00Z".to_string());
+        assert!(is_time_ready(&task), "Past ready_after should be ready");
+    }
+
+    #[test]
+    fn test_is_time_ready_invalid_ready_after() {
+        let mut task = make_task("t", "Task");
+        task.ready_after = Some("garbage".to_string());
+        assert!(is_time_ready(&task), "Invalid ready_after should be treated as ready");
+    }
+
+    #[test]
+    fn test_is_time_ready_both_timestamps_past() {
+        let mut task = make_task("t", "Task");
+        task.not_before = Some("2020-01-01T00:00:00Z".to_string());
+        task.ready_after = Some("2020-06-01T00:00:00Z".to_string());
+        assert!(is_time_ready(&task));
+    }
+
+    #[test]
+    fn test_is_time_ready_not_before_past_ready_after_future() {
+        let mut task = make_task("t", "Task");
+        task.not_before = Some("2020-01-01T00:00:00Z".to_string());
+        task.ready_after = Some("2099-01-01T00:00:00Z".to_string());
+        assert!(!is_time_ready(&task), "Future ready_after should still block");
+    }
 }
