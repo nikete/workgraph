@@ -658,17 +658,17 @@ fn test_retry_lifecycle_fail_retry_claim_done() {
 
     // Claim the task
     wg_ok(&wg_dir, &["claim", "t1"]);
-    let graph = load_graph(&wg_dir.join("graph.jsonl")).unwrap();
+    let graph = load_graph(wg_dir.join("graph.jsonl")).unwrap();
     assert_eq!(graph.get_task("t1").unwrap().status, Status::InProgress);
 
     // Fail the task
     wg_ok(&wg_dir, &["fail", "t1", "--reason", "timeout"]);
-    let graph = load_graph(&wg_dir.join("graph.jsonl")).unwrap();
+    let graph = load_graph(wg_dir.join("graph.jsonl")).unwrap();
     assert_eq!(graph.get_task("t1").unwrap().status, Status::Failed);
 
     // Retry the task
     wg_ok(&wg_dir, &["retry", "t1"]);
-    let graph = load_graph(&wg_dir.join("graph.jsonl")).unwrap();
+    let graph = load_graph(wg_dir.join("graph.jsonl")).unwrap();
     let task = graph.get_task("t1").unwrap();
     assert_eq!(task.status, Status::Open);
     assert_eq!(task.retry_count, 1);
@@ -676,7 +676,7 @@ fn test_retry_lifecycle_fail_retry_claim_done() {
     // Claim again and complete
     wg_ok(&wg_dir, &["claim", "t1"]);
     wg_ok(&wg_dir, &["done", "t1"]);
-    let graph = load_graph(&wg_dir.join("graph.jsonl")).unwrap();
+    let graph = load_graph(wg_dir.join("graph.jsonl")).unwrap();
     assert_eq!(graph.get_task("t1").unwrap().status, Status::Done);
 }
 

@@ -88,6 +88,34 @@ pub fn collect_transitive_dependents(
     }
 }
 
+/// Best-effort notification to the service daemon that the graph has changed.
+/// Silently ignores all errors (daemon not running, socket unavailable, etc.)
+pub fn notify_graph_changed(dir: &Path) {
+    let _ = service::send_request(dir, service::IpcRequest::GraphChanged);
+}
+
+/// Check service status and print a hint for the user/agent.
+/// Returns true if the service is running.
+pub fn print_service_hint(dir: &Path) -> bool {
+    match service::ServiceState::load(dir) {
+        Ok(Some(state)) if service::is_service_alive(state.pid) => {
+            if service::is_service_paused(dir) {
+                eprintln!(
+                    "Service: running (paused). New tasks won't be dispatched until resumed. Use `wg service resume`."
+                );
+            } else {
+                eprintln!("Service: running. The coordinator will dispatch this automatically.");
+            }
+            true
+        }
+        _ => {
+            eprintln!("Warning: No service running. Tasks won't be dispatched automatically.");
+            eprintln!("  Start the coordinator with: wg service start");
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,33 +186,5 @@ mod tests {
             graph_path(dir),
             std::path::PathBuf::from("/tmp/test-wg/graph.jsonl")
         );
-    }
-}
-
-/// Best-effort notification to the service daemon that the graph has changed.
-/// Silently ignores all errors (daemon not running, socket unavailable, etc.)
-pub fn notify_graph_changed(dir: &Path) {
-    let _ = service::send_request(dir, service::IpcRequest::GraphChanged);
-}
-
-/// Check service status and print a hint for the user/agent.
-/// Returns true if the service is running.
-pub fn print_service_hint(dir: &Path) -> bool {
-    match service::ServiceState::load(dir) {
-        Ok(Some(state)) if service::is_service_alive(state.pid) => {
-            if service::is_service_paused(dir) {
-                eprintln!(
-                    "Service: running (paused). New tasks won't be dispatched until resumed. Use `wg service resume`."
-                );
-            } else {
-                eprintln!("Service: running. The coordinator will dispatch this automatically.");
-            }
-            true
-        }
-        _ => {
-            eprintln!("Warning: No service running. Tasks won't be dispatched automatically.");
-            eprintln!("  Start the coordinator with: wg service start");
-            false
-        }
     }
 }
