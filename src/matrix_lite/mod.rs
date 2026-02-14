@@ -166,7 +166,13 @@ impl MatrixClient {
 
     fn save_access_token_static(state_dir: &Path, token: &str) {
         let path = state_dir.join("access_token");
-        let _ = std::fs::write(path, token);
+        if let Err(e) = std::fs::write(&path, token) {
+            eprintln!(
+                "Warning: failed to cache access token to {}: {}",
+                path.display(),
+                e
+            );
+        }
     }
 
     /// Create a new client by logging in with password (ignores cached/config tokens)

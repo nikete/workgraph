@@ -408,6 +408,7 @@ Begin working on the task now."#.to_string(),
     }
 
     /// Ensure the executors directory exists and has default configs.
+    #[cfg(test)]
     pub fn init(&self) -> Result<()> {
         if !self.config_dir.exists() {
             fs::create_dir_all(&self.config_dir).with_context(|| {

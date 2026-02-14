@@ -509,13 +509,6 @@ enum Commands {
         command: MotivationCommands,
     },
 
-    /// Alias for 'motivation'
-    #[command(hide = true)]
-    Mot {
-        #[command(subcommand)]
-        command: MotivationCommands,
-    },
-
     /// Assign an agent to a task
     Assign {
         /// Task ID to assign agent to
@@ -1487,7 +1480,6 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Agency { .. } => "agency",
         Commands::Role { .. } => "role",
         Commands::Motivation { .. } => "motivation",
-        Commands::Mot { .. } => "motivation",
         Commands::Assign { .. } => "assign",
         Commands::Match { .. } => "match",
         Commands::Heartbeat { .. } => "heartbeat",
@@ -1778,7 +1770,7 @@ fn main() -> Result<()> {
                 commands::role::run_lineage(&workgraph_dir, &id, cli.json)
             }
         },
-        Commands::Motivation { command } | Commands::Mot { command } => match command {
+        Commands::Motivation { command } => match command {
             MotivationCommands::Add {
                 name,
                 accept,

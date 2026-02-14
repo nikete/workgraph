@@ -20,7 +20,12 @@ pub fn run(dir: &Path, status_filter: Option<&str>, json: bool) -> Result<()> {
         Some("done") => Some(Status::Done),
         Some("in-progress") => Some(Status::InProgress),
         Some("blocked") => Some(Status::Blocked),
-        Some(s) => anyhow::bail!("Unknown status: {}", s),
+        Some("failed") => Some(Status::Failed),
+        Some("abandoned") => Some(Status::Abandoned),
+        Some(s) => anyhow::bail!(
+            "Unknown status: '{}'. Valid values: open, in-progress, done, blocked, failed, abandoned",
+            s
+        ),
         None => None,
     };
 
@@ -407,6 +412,72 @@ mod tests {
 
         // ready_after should not be present
         assert!(obj.get("ready_after").is_none());
+    }
+
+    #[test]
+    fn test_run_status_filter_failed() {
+        let dir = tempdir().unwrap();
+        setup_workgraph(
+            dir.path(),
+            vec![
+                make_task("t1", "Failed task", Status::Failed),
+                make_task("t2", "Open task", Status::Open),
+            ],
+        );
+        let result = run(dir.path(), Some("failed"), false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_run_status_filter_abandoned() {
+        let dir = tempdir().unwrap();
+        setup_workgraph(
+            dir.path(),
+            vec![
+                make_task("t1", "Abandoned task", Status::Abandoned),
+                make_task("t2", "Open task", Status::Open),
+            ],
+        );
+        let result = run(dir.path(), Some("abandoned"), false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_unknown_status_error_lists_valid_values() {
+        let dir = tempdir().unwrap();
+        setup_workgraph(dir.path(), vec![make_task("t1", "Task", Status::Open)]);
+        let result = run(dir.path(), Some("bogus"), false);
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("Valid values:"));
+        assert!(msg.contains("failed"));
+        assert!(msg.contains("abandoned"));
+    }
+
+    #[test]
+    fn test_status_filter_logic_failed_and_abandoned() {
+        let dir = tempdir().unwrap();
+        let tasks = vec![
+            make_task("t-open", "Open", Status::Open),
+            make_task("t-failed", "Failed", Status::Failed),
+            make_task("t-abandoned", "Abandoned", Status::Abandoned),
+        ];
+        let path = setup_workgraph(dir.path(), tasks);
+        let graph = load_graph(&path).unwrap();
+
+        let failed: Vec<_> = graph
+            .tasks()
+            .filter(|t| t.status == Status::Failed)
+            .collect();
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].id, "t-failed");
+
+        let abandoned: Vec<_> = graph
+            .tasks()
+            .filter(|t| t.status == Status::Abandoned)
+            .collect();
+        assert_eq!(abandoned.len(), 1);
+        assert_eq!(abandoned[0].id, "t-abandoned");
     }
 
     #[test]
