@@ -102,10 +102,12 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
     }
 
     // Find the overall longest path
-    let (critical_path, total_hours) = if let Some((_, (hours, path))) = memo
-        .iter()
-        .max_by(|a, b| a.1.0.partial_cmp(&b.1.0).unwrap())
-    {
+    let (critical_path, total_hours) = if let Some((_, (hours, path))) =
+        memo.iter().max_by(|a, b| {
+            a.1.0
+                .partial_cmp(&b.1.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
         (path.clone(), *hours)
     } else {
         (vec![], 0.0)
@@ -309,7 +311,7 @@ fn calculate_longest_path<'a>(
             .map(|child_id| {
                 calculate_longest_path(child_id, graph, forward_index, memo, cycle_nodes)
             })
-            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or((0.0, vec![]))
     } else {
         (0.0, vec![])
@@ -652,5 +654,61 @@ mod tests {
         assert_eq!(t1_blocks.len(), 2);
         assert!(t1_blocks.contains(&"t2"));
         assert!(t1_blocks.contains(&"t3"));
+    }
+
+    #[test]
+    fn test_nan_estimate_does_not_panic() {
+        let mut graph = WorkGraph::new();
+
+        // Create tasks where one has NaN hours (simulates corrupt estimate)
+        let t1 = make_task_with_hours("t1", "Task 1", f64::NAN);
+        let t2 = make_task_with_hours("t2", "Task 2", 4.0);
+        let mut t3 = make_task_with_hours("t3", "Task 3", 2.0);
+        t3.blocked_by = vec!["t1".to_string(), "t2".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+        graph.add_node(Node::Task(t3));
+
+        let active_ids: HashSet<&str> = vec!["t1", "t2", "t3"].into_iter().collect();
+        let cycle_nodes: HashSet<&str> = HashSet::new();
+        let forward_index = build_forward_index(&graph, &active_ids, &cycle_nodes);
+        let mut memo = HashMap::new();
+
+        // Should not panic — NaN comparison falls back to Equal
+        for entry in &["t1", "t2"] {
+            calculate_longest_path(entry, &graph, &forward_index, &mut memo, &cycle_nodes);
+        }
+
+        let result = memo.iter().max_by(|a, b| {
+            a.1.0
+                .partial_cmp(&b.1.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        // Just verify we don't crash — the exact result with NaN is implementation-defined
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_orphan_blocker_in_critical_path() {
+        // A task references a blocker that doesn't exist in the graph
+        let mut graph = WorkGraph::new();
+
+        let mut t1 = make_task_with_hours("t1", "Task 1", 8.0);
+        t1.blocked_by = vec!["ghost".to_string()]; // orphan reference
+
+        graph.add_node(Node::Task(t1));
+
+        let active_ids: HashSet<&str> = vec!["t1"].into_iter().collect();
+        let cycle_nodes: HashSet<&str> = HashSet::new();
+        let forward_index = build_forward_index(&graph, &active_ids, &cycle_nodes);
+        let mut memo = HashMap::new();
+
+        // Should not panic even with orphan blocker references
+        let (hours, path) =
+            calculate_longest_path("t1", &graph, &forward_index, &mut memo, &cycle_nodes);
+
+        assert_eq!(hours, 8.0);
+        assert_eq!(path, vec!["t1".to_string()]);
     }
 }

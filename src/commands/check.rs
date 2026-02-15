@@ -20,18 +20,18 @@ pub fn run(dir: &Path) -> Result<()> {
 
     // Cycles are warnings (allowed for recurring tasks)
     if !result.cycles.is_empty() {
-        println!("Warning: Cycles detected (this is OK for recurring tasks):");
+        eprintln!("Warning: Cycles detected (this is OK for recurring tasks):");
         for cycle in &result.cycles {
-            println!("  {}", cycle.join(" -> "));
+            eprintln!("  {}", cycle.join(" -> "));
             warnings += 1;
         }
     }
 
     // Orphan references are errors
     if !result.orphan_refs.is_empty() {
-        println!("Error: Orphan references:");
+        eprintln!("Error: Orphan references:");
         for orphan in &result.orphan_refs {
-            println!(
+            eprintln!(
                 "  {} --[{}]--> {} (not found)",
                 orphan.from, orphan.relation, orphan.to
             );
@@ -41,7 +41,7 @@ pub fn run(dir: &Path) -> Result<()> {
 
     // Loop edge issues are errors
     if !result.loop_edge_issues.is_empty() {
-        println!("Error: Loop edge issues:");
+        eprintln!("Error: Loop edge issues:");
         for issue in &result.loop_edge_issues {
             let desc = match &issue.kind {
                 LoopEdgeIssueKind::TargetNotFound => {
@@ -69,7 +69,7 @@ pub fn run(dir: &Path) -> Result<()> {
                     )
                 }
             };
-            println!("  {}", desc);
+            eprintln!("  {}", desc);
             errors += 1;
         }
     }

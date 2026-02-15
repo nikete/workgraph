@@ -523,7 +523,7 @@ pub fn run_performance(workgraph_dir: &Path, id: &str, json: bool) -> Result<()>
 
     // Load all evaluations and filter to this agent's role+motivation pair
     let evals_dir = agency_dir.join("evaluations");
-    let all_evals = agency::load_all_evaluations(&evals_dir).unwrap_or_default();
+    let all_evals = agency::load_all_evaluations_or_warn(&evals_dir);
 
     let agent_evals: Vec<_> = all_evals
         .iter()

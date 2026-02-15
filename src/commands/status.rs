@@ -175,7 +175,7 @@ fn gather_coordinator_info(dir: &Path) -> CoordinatorInfo {
 }
 
 fn gather_agent_summary(dir: &Path) -> Result<AgentSummaryInfo> {
-    let registry = AgentRegistry::load(dir).unwrap_or_default();
+    let registry = AgentRegistry::load_or_warn(dir);
     let agents = registry.list_agents();
 
     let mut alive = 0;

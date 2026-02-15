@@ -143,7 +143,7 @@ pub fn run(
     // reflection of a role+motivation prompt, so including them would pollute
     // the evolution signal.
     let agents_dir = agency_dir.join("agents");
-    let agents = agency::load_all_agents(&agents_dir).unwrap_or_default();
+    let agents = agency::load_all_agents_or_warn(&agents_dir);
     let human_agent_ids: HashSet<&str> = agents
         .iter()
         .filter(|a| a.is_human())

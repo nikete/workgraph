@@ -420,7 +420,7 @@ fn calculate_critical_path(graph: &WorkGraph, active_ids: &HashSet<&str>) -> Has
 
     // Find the overall longest path
     memo.into_values()
-        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+        .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(_, path)| path.into_iter().collect())
         .unwrap_or_default()
 }
@@ -455,7 +455,7 @@ fn calc_longest_path<'a>(
             children
                 .iter()
                 .map(|child_id| calc_longest_path(child_id, graph, forward_index, memo, visited))
-                .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap())
+                .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
                 .unwrap_or((0.0, vec![]))
         } else {
             (0.0, vec![])
@@ -665,9 +665,10 @@ fn generate_ascii(
 
     // Sort components deterministically by their first root's name
     let mut component_list: Vec<Vec<&str>> = components.into_values().collect();
+    component_list.retain(|c| !c.is_empty());
     component_list.sort_by(|a, b| {
-        let a_min = a.iter().min().unwrap();
-        let b_min = b.iter().min().unwrap();
+        let a_min = a.iter().min().expect("non-empty after retain");
+        let b_min = b.iter().min().expect("non-empty after retain");
         a_min.cmp(b_min)
     });
 
@@ -1207,5 +1208,32 @@ mod tests {
         assert!(result_lines[0].contains("a"));
         // Nested nodes should have tree characters
         assert!(result.contains("└→"));
+    }
+
+    #[test]
+    fn test_calculate_critical_path_with_nan_hours() {
+        let mut graph = WorkGraph::new();
+
+        let t1 = make_task_with_hours("t1", "Task 1", f64::NAN);
+        let mut t2 = make_task_with_hours("t2", "Task 2", 4.0);
+        t2.blocked_by = vec!["t1".to_string()];
+
+        graph.add_node(Node::Task(t1));
+        graph.add_node(Node::Task(t2));
+
+        let active_ids: HashSet<&str> = vec!["t1", "t2"].into_iter().collect();
+
+        // Should not panic with NaN estimates
+        let path = calculate_critical_path(&graph, &active_ids);
+        // Path should still contain tasks (exact ordering with NaN is unspecified)
+        assert!(!path.is_empty());
+    }
+
+    #[test]
+    fn test_calculate_critical_path_empty_graph() {
+        let graph = WorkGraph::new();
+        let active_ids: HashSet<&str> = HashSet::new();
+        let path = calculate_critical_path(&graph, &active_ids);
+        assert!(path.is_empty());
     }
 }

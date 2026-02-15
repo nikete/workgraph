@@ -142,6 +142,20 @@ impl AgentRegistry {
         Ok(registry)
     }
 
+    /// Load registry from disk, falling back to empty with a warning on errors.
+    ///
+    /// Unlike `.load().unwrap_or_default()`, this emits a stderr warning
+    /// when the registry file exists but is corrupt.
+    pub fn load_or_warn(workgraph_dir: &Path) -> Self {
+        match Self::load(workgraph_dir) {
+            Ok(registry) => registry,
+            Err(e) => {
+                eprintln!("Warning: {}, using empty registry", e);
+                Self::new()
+            }
+        }
+    }
+
     /// Save registry to disk atomically
     ///
     /// Uses a write-to-temp-then-rename strategy for atomic updates.

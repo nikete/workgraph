@@ -788,6 +788,24 @@ pub fn load_all_evaluations(dir: &Path) -> Result<Vec<Evaluation>, AgencyError> 
     Ok(evals)
 }
 
+/// Load all evaluations, falling back to empty with a warning on errors.
+///
+/// Unlike `.load_all_evaluations().unwrap_or_default()`, this emits a stderr
+/// warning when the evaluations directory exists but contains corrupt data.
+pub fn load_all_evaluations_or_warn(dir: &Path) -> Vec<Evaluation> {
+    match load_all_evaluations(dir) {
+        Ok(evals) => evals,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to load evaluations from {}: {}",
+                dir.display(),
+                e
+            );
+            Vec::new()
+        }
+    }
+}
+
 // -- Agents (YAML) -----------------------------------------------------------
 
 /// Load a single agent from a YAML file.
@@ -821,6 +839,24 @@ pub fn load_all_agents(dir: &Path) -> Result<Vec<Agent>, AgencyError> {
     }
     agents.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(agents)
+}
+
+/// Load all agents, falling back to empty with a warning on errors.
+///
+/// Unlike `.load_all_agents().unwrap_or_default()`, this emits a stderr
+/// warning when the agents directory exists but contains corrupt data.
+pub fn load_all_agents_or_warn(dir: &Path) -> Vec<Agent> {
+    match load_all_agents(dir) {
+        Ok(agents) => agents,
+        Err(e) => {
+            eprintln!(
+                "Warning: failed to load agents from {}: {}",
+                dir.display(),
+                e
+            );
+            Vec::new()
+        }
+    }
 }
 
 /// Find an agent in a directory by full ID or unique prefix match.
@@ -1367,7 +1403,14 @@ fn capture_git_diff(output_dir: &Path, task: &crate::graph::Task) {
         Some(root) => root.to_path_buf(),
         None => {
             // Not a git repo — write an empty patch with explanation
-            let _ = fs::write(&patch_path, "# Not a git repository — no diff captured\n");
+            if let Err(e) = fs::write(&patch_path, "# Not a git repository — no diff captured\n")
+            {
+                eprintln!(
+                    "Warning: failed to write patch file {}: {}",
+                    patch_path.display(),
+                    e
+                );
+            }
             return;
         }
     };
@@ -1427,20 +1470,42 @@ fn capture_git_diff(output_dir: &Path, task: &crate::graph::Task) {
         Ok(out) if out.status.success() => {
             let diff = String::from_utf8_lossy(&out.stdout);
             if diff.is_empty() {
-                let _ = fs::write(&patch_path, "# No changes detected in git diff\n");
-            } else {
-                let _ = fs::write(&patch_path, diff.as_bytes());
+                if let Err(e) = fs::write(&patch_path, "# No changes detected in git diff\n") {
+                    eprintln!(
+                        "Warning: failed to write patch file {}: {}",
+                        patch_path.display(),
+                        e
+                    );
+                }
+            } else if let Err(e) = fs::write(&patch_path, diff.as_bytes()) {
+                eprintln!(
+                    "Warning: failed to write patch file {}: {}",
+                    patch_path.display(),
+                    e
+                );
             }
         }
         Ok(out) => {
             let stderr = String::from_utf8_lossy(&out.stderr);
-            let _ = fs::write(
+            if let Err(e) = fs::write(
                 &patch_path,
                 format!("# git diff failed: {}\n", stderr.trim()),
-            );
+            ) {
+                eprintln!(
+                    "Warning: failed to write patch file {}: {}",
+                    patch_path.display(),
+                    e
+                );
+            }
         }
         Err(e) => {
-            let _ = fs::write(&patch_path, format!("# git diff failed: {}\n", e));
+            if let Err(write_err) = fs::write(&patch_path, format!("# git diff failed: {}\n", e)) {
+                eprintln!(
+                    "Warning: failed to write patch file {}: {}",
+                    patch_path.display(),
+                    write_err
+                );
+            }
         }
     }
 }
@@ -1480,7 +1545,13 @@ fn capture_artifact_manifest(output_dir: &Path, task: &crate::graph::Task) {
 
     match serde_json::to_string_pretty(&entries) {
         Ok(json) => {
-            let _ = fs::write(&manifest_path, json);
+            if let Err(e) = fs::write(&manifest_path, json) {
+                eprintln!(
+                    "Warning: failed to write artifact manifest {}: {}",
+                    manifest_path.display(),
+                    e
+                );
+            }
         }
         Err(e) => {
             eprintln!("Warning: failed to serialize artifact manifest: {}", e);
@@ -1494,7 +1565,13 @@ fn capture_log_snapshot(output_dir: &Path, task: &crate::graph::Task) {
 
     match serde_json::to_string_pretty(&task.log) {
         Ok(json) => {
-            let _ = fs::write(&log_path, json);
+            if let Err(e) = fs::write(&log_path, json) {
+                eprintln!(
+                    "Warning: failed to write log snapshot {}: {}",
+                    log_path.display(),
+                    e
+                );
+            }
         }
         Err(e) => {
             eprintln!("Warning: failed to serialize log snapshot: {}", e);

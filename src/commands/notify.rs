@@ -178,7 +178,9 @@ async fn send_notification(
         .context("Failed to connect to Matrix")?;
 
     // Try to join the room first (in case we're not in it)
-    let _ = client.join_room(room).await;
+    if let Err(e) = client.join_room(room).await {
+        eprintln!("Warning: failed to join room {}: {}", room, e);
+    }
 
     // Send the formatted message
     client

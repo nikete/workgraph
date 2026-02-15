@@ -31,7 +31,13 @@ pub fn claim(dir: &Path, id: &str, actor: Option<&str>) -> Result<()> {
                 .unwrap_or_default();
             match &task.assigned {
                 Some(assigned) => {
-                    anyhow::bail!("Task '{}' is already claimed by @{}{}", id, assigned, since);
+                    anyhow::bail!(
+                        "Task '{}' is already claimed by @{}{}. Use 'wg unclaim {}' to release it first.",
+                        id,
+                        assigned,
+                        since,
+                        id
+                    );
                 }
                 None => {
                     anyhow::bail!("Task '{}' is already in progress{}", id, since);

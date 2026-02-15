@@ -1469,6 +1469,62 @@ fn command_name(cmd: &Commands) -> &'static str {
     }
 }
 
+/// Returns true if the command supports `--json` output.
+fn supports_json(cmd: &Commands) -> bool {
+    matches!(
+        cmd,
+        Commands::Ready
+            | Commands::Blocked { .. }
+            | Commands::WhyBlocked { .. }
+            | Commands::List { .. }
+            | Commands::Coordinate { .. }
+            | Commands::Plan { .. }
+            | Commands::Impact { .. }
+            | Commands::Loops
+            | Commands::Structure
+            | Commands::Bottlenecks
+            | Commands::Velocity { .. }
+            | Commands::Aging
+            | Commands::Forecast
+            | Commands::Workload
+            | Commands::Resources
+            | Commands::CriticalPath
+            | Commands::Analyze
+            | Commands::Show { .. }
+            | Commands::Log { .. }
+            | Commands::Resource { .. }
+            | Commands::Skill { .. }
+            | Commands::Agency { .. }
+            | Commands::Role { .. }
+            | Commands::Motivation { .. }
+            | Commands::Match { .. }
+            | Commands::Heartbeat { .. }
+            | Commands::Artifact { .. }
+            | Commands::Context { .. }
+            | Commands::Next { .. }
+            | Commands::Trajectory { .. }
+            | Commands::Agent { .. }
+            | Commands::Evaluate { .. }
+            | Commands::Evolve { .. }
+            | Commands::Config { .. }
+            | Commands::DeadAgents { .. }
+            | Commands::Agents { .. }
+            | Commands::Kill { .. }
+            | Commands::Service { .. }
+            | Commands::Quickstart
+            | Commands::Status
+    ) || {
+        #[cfg(any(feature = "matrix", feature = "matrix-lite"))]
+        {
+            matches!(cmd, Commands::Notify { .. } | Commands::Matrix { .. })
+        }
+        #[cfg(not(any(feature = "matrix", feature = "matrix-lite")))]
+        {
+            false
+        }
+    }
+}
+
 /// Check if the user is requesting help for a specific subcommand (e.g., `wg show --help`).
 ///
 /// Because we use `disable_help_flag = true` for the custom top-level help system,
@@ -1526,6 +1582,14 @@ fn main() -> Result<()> {
     }
 
     let command = cli.command.unwrap();
+
+    // Warn if --json is passed to a command that doesn't support it
+    if cli.json && !supports_json(&command) {
+        eprintln!(
+            "Warning: --json flag is not supported by 'wg {}' and will be ignored",
+            command_name(&command)
+        );
+    }
 
     // Track command usage (fire-and-forget, ignores errors)
     workgraph::usage::append_usage_log(&workgraph_dir, command_name(&command));

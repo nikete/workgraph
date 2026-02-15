@@ -96,8 +96,12 @@ impl DaemonLogger {
         let ts = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ");
         let line = format!("{} [{}] {}\n", ts, level, msg);
         if let Ok(mut inner) = self.inner.lock() {
-            let _ = inner.file.write_all(line.as_bytes());
-            let _ = inner.file.flush();
+            if let Err(e) = inner.file.write_all(line.as_bytes()) {
+                eprintln!("Warning: daemon log write failed: {}", e);
+            }
+            if let Err(e) = inner.file.flush() {
+                eprintln!("Warning: daemon log flush failed: {}", e);
+            }
             inner.written += line.len() as u64;
             if inner.written >= LOG_MAX_BYTES {
                 Self::rotate(&mut inner);
@@ -269,9 +273,21 @@ pub struct CoordinatorState {
 impl CoordinatorState {
     pub fn load(dir: &Path) -> Option<Self> {
         let path = coordinator_state_path(dir);
-        fs::read_to_string(&path)
-            .ok()
-            .and_then(|c| serde_json::from_str(&c).ok())
+        let content = match fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => return None, // file doesn't exist yet
+        };
+        match serde_json::from_str(&content) {
+            Ok(state) => Some(state),
+            Err(e) => {
+                eprintln!(
+                    "Warning: corrupt coordinator state at {}: {}",
+                    path.display(),
+                    e
+                );
+                None
+            }
+        }
     }
 
     pub fn save(&self, dir: &Path) {
@@ -586,7 +602,7 @@ pub fn coordinator_tick(
         // Load agents to identify human operators — their work quality isn't
         // a reflection of a role+motivation prompt so we skip auto-evaluation.
         let agents_dir = dir.join("agency").join("agents");
-        let all_agents = agency::load_all_agents(&agents_dir).unwrap_or_default();
+        let all_agents = agency::load_all_agents_or_warn(&agents_dir);
         let human_agent_ids: std::collections::HashSet<&str> = all_agents
             .iter()
             .filter(|a| a.is_human())
@@ -2049,7 +2065,7 @@ fn handle_status(dir: &Path) -> IpcResponse {
         Err(e) => return IpcResponse::error(&e.to_string()),
     };
 
-    let registry = AgentRegistry::load(dir).unwrap_or_default();
+    let registry = AgentRegistry::load_or_warn(dir);
     let alive_count = registry.active_count();
     let idle_count = registry.idle_count();
 
@@ -2281,7 +2297,7 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
     }
 
     // Get agent summary
-    let registry = AgentRegistry::load(dir).unwrap_or_default();
+    let registry = AgentRegistry::load_or_warn(dir);
     let alive_count = registry.active_count();
     let idle_count = registry.idle_count();
 

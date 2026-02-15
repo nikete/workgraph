@@ -110,7 +110,12 @@ pub fn run_all(dir: &Path, force: bool, json: bool) -> Result<()> {
         }
 
         // Update status
-        let _ = locked_registry.update_status(agent_id, AgentStatus::Stopping);
+        if let Err(e) = locked_registry.update_status(agent_id, AgentStatus::Stopping) {
+            eprintln!(
+                "Warning: failed to update status for agent {}: {}",
+                agent_id, e
+            );
+        }
 
         // Unclaim task
         if let Err(e) = unclaim_task(dir, task_id, agent_id) {
