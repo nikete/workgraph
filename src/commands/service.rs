@@ -1133,6 +1133,7 @@ fn extract_triage_json(raw: &str) -> Option<String> {
     // Find first { to last }
     if let Some(start) = trimmed.find('{')
         && let Some(end) = trimmed.rfind('}')
+        && start <= end
     {
         let candidate = &trimmed[start..=end];
         if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
@@ -3119,6 +3120,12 @@ poll_interval = 120
     #[test]
     fn test_extract_triage_json_garbage() {
         assert!(extract_triage_json("no json here").is_none());
+    }
+
+    #[test]
+    fn test_extract_triage_json_inverted_braces_no_panic() {
+        // If } appears before { in the text, should return None, not panic
+        assert!(extract_triage_json("some text } then { more text").is_none());
     }
 
     #[test]

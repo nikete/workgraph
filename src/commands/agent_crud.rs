@@ -381,9 +381,21 @@ pub fn run_lineage(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
     let agent = agency::find_agent_by_prefix(&agents_dir, id)
         .with_context(|| format!("Failed to find agent '{}'", id))?;
 
-    let role_ancestry = agency::role_ancestry(&agent.role_id, &roles_dir).unwrap_or_default();
-    let motivation_ancestry =
-        agency::motivation_ancestry(&agent.motivation_id, &motivations_dir).unwrap_or_default();
+    let role_ancestry = agency::role_ancestry(&agent.role_id, &roles_dir).unwrap_or_else(|e| {
+        eprintln!(
+            "Warning: failed to load role ancestry for '{}': {}",
+            agent.role_id, e
+        );
+        Vec::new()
+    });
+    let motivation_ancestry = agency::motivation_ancestry(&agent.motivation_id, &motivations_dir)
+        .unwrap_or_else(|e| {
+            eprintln!(
+                "Warning: failed to load motivation ancestry for '{}': {}",
+                agent.motivation_id, e
+            );
+            Vec::new()
+        });
 
     if json {
         let output = serde_json::json!({

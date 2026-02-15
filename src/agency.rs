@@ -1017,7 +1017,7 @@ pub fn record_evaluation(
             score: evaluation.score,
             task_id: evaluation.task_id.clone(),
             timestamp: evaluation.timestamp.clone(),
-            context_id: evaluation.task_id.clone(),
+            context_id: evaluation.role_id.clone(),
         };
         update_performance(&mut agent.performance, agent_eval_ref);
         save_agent(&agent, &agents_dir)?;

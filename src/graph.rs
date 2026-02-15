@@ -453,8 +453,22 @@ impl WorkGraph {
     }
 
     /// Remove a node by ID, returning the removed node if it existed.
+    ///
+    /// Also cleans up all references to the removed node from other tasks
+    /// (`blocked_by`, `blocks`, `requires`, and `loops_to` targets).
     pub fn remove_node(&mut self, id: &str) -> Option<Node> {
-        self.nodes.remove(id)
+        let removed = self.nodes.remove(id);
+        if removed.is_some() {
+            for node in self.nodes.values_mut() {
+                if let Node::Task(task) = node {
+                    task.blocked_by.retain(|dep| dep != id);
+                    task.blocks.retain(|dep| dep != id);
+                    task.requires.retain(|dep| dep != id);
+                    task.loops_to.retain(|edge| edge.target != id);
+                }
+            }
+        }
+        removed
     }
 
     /// Return the total number of nodes (tasks + resources) in the graph.
@@ -796,6 +810,32 @@ mod tests {
         let removed = graph.remove_node("t1");
         assert!(removed.is_some());
         assert!(graph.is_empty());
+    }
+
+    #[test]
+    fn test_remove_node_cleans_up_references() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("t1", "Task 1")));
+
+        let mut t2 = make_task("t2", "Task 2");
+        t2.blocked_by = vec!["t1".to_string()];
+        t2.blocks = vec!["t1".to_string()];
+        t2.requires = vec!["t1".to_string()];
+        t2.loops_to = vec![LoopEdge {
+            target: "t1".to_string(),
+            guard: None,
+            max_iterations: 3,
+            delay: None,
+        }];
+        graph.add_node(Node::Task(t2));
+
+        graph.remove_node("t1");
+
+        let t2 = graph.get_task("t2").unwrap();
+        assert!(t2.blocked_by.is_empty(), "blocked_by should be cleaned");
+        assert!(t2.blocks.is_empty(), "blocks should be cleaned");
+        assert!(t2.requires.is_empty(), "requires should be cleaned");
+        assert!(t2.loops_to.is_empty(), "loops_to should be cleaned");
     }
 
     #[test]

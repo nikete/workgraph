@@ -321,7 +321,7 @@ fn test_three_evaluations_incremental_avg() {
 // ===========================================================================
 
 /// Role stores motivation_id as context_id, motivation stores role_id as context_id,
-/// agent stores task_id as context_id — all independently.
+/// agent stores role_id as context_id — all independently.
 #[test]
 fn test_context_ids_tracked_independently() {
     let fix = TestFixture::new();
@@ -340,12 +340,12 @@ fn test_context_ids_tracked_independently() {
     };
     agency::record_evaluation(&eval, &fix.agency_dir).unwrap();
 
-    // Agent's context_id = task_id
+    // Agent's context_id = role_id (identifies which role was used)
     let agent =
         agency::find_agent_by_prefix(&fix.agency_dir.join("agents"), &fix.agent_id).unwrap();
     assert_eq!(
-        agent.performance.evaluations[0].context_id, "context-task",
-        "Agent context_id should be the task_id"
+        agent.performance.evaluations[0].context_id, fix.role_id,
+        "Agent context_id should be the role_id"
     );
 
     // Role's context_id = motivation_id

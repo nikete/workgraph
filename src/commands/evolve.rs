@@ -902,6 +902,7 @@ fn extract_json(raw: &str) -> Option<String> {
     // Find the first { and last } and try to parse
     if let Some(start) = stripped.find('{')
         && let Some(end) = stripped.rfind('}')
+        && start <= end
     {
         let candidate = &stripped[start..=end];
         if serde_json::from_str::<serde_json::Value>(candidate).is_ok() {
@@ -1089,6 +1090,11 @@ fn apply_modify_role(
             .ok_or_else(|| anyhow::anyhow!("Parent role '{}' not found", parent_ids[0]))?;
         Lineage::mutation(parent_ids[0], parent.lineage.generation, run_id)
     } else {
+        for pid in &parent_ids {
+            if !existing_roles.iter().any(|r| r.id == *pid) {
+                anyhow::bail!("Parent role '{}' not found for crossover", pid);
+            }
+        }
         let max_gen = parent_ids
             .iter()
             .filter_map(|pid| existing_roles.iter().find(|r| r.id == *pid))
@@ -2966,5 +2972,13 @@ Let me know if you'd like me to adjust anything."#;
         let input = "```\n{\"run_id\": \"plain-fence\", \"operations\": []}\n```";
         let result = extract_json(input).unwrap();
         assert!(result.contains("plain-fence"));
+    }
+
+    #[test]
+    fn test_extract_json_inverted_braces_no_panic() {
+        // If } appears before { in the text, should return None, not panic
+        let input = "some text } then { more text";
+        let result = extract_json(input);
+        assert!(result.is_none());
     }
 }

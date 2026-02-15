@@ -107,8 +107,8 @@ fn collect_root_blockers(graph: &WorkGraph, node: &BlockingNode, roots: &mut Has
     if node.children.is_empty() {
         // This node has no blockers - check if it's actually a blocker (not the root task)
         if let Some(task) = graph.get_task(&node.id) {
-            // It's a root blocker if it's open or blocked (not done, not in-progress)
-            if task.status == Status::Open {
+            // It's a root blocker if it's not terminal (still open, in-progress, or blocked)
+            if !task.status.is_terminal() {
                 roots.insert(node.id.clone());
             }
         }
@@ -217,7 +217,7 @@ fn print_tree(node: &BlockingNode, prefix: &str, depth: usize) {
     } else {
         // Child node - print with tree connector and status
         let status_str = format!("(status: {:?})", node.status);
-        let root_marker = if node.children.is_empty() && node.status == Status::Open {
+        let root_marker = if node.children.is_empty() && !node.status.is_terminal() {
             " <-- ROOT CAUSE"
         } else {
             ""
@@ -485,5 +485,27 @@ mod tests {
         graph2.add_node(Node::Task(blocked2.clone()));
 
         assert!(!is_task_ready(&graph2, &blocked2));
+    }
+
+    #[test]
+    fn test_collect_root_blockers_includes_in_progress() {
+        let mut graph = WorkGraph::new();
+
+        let mut root = make_task("root", "Root");
+        root.status = Status::InProgress;
+        let mut leaf = make_task("leaf", "Leaf");
+        leaf.blocked_by = vec!["root".to_string()];
+
+        graph.add_node(Node::Task(root));
+        graph.add_node(Node::Task(leaf));
+
+        let mut visited = HashSet::new();
+        let tree = build_blocking_tree(&graph, "leaf", &mut visited);
+
+        let mut roots = HashSet::new();
+        collect_root_blockers(&graph, &tree, &mut roots);
+
+        assert_eq!(roots.len(), 1);
+        assert!(roots.contains("root"));
     }
 }

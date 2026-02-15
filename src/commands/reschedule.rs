@@ -25,7 +25,11 @@ pub fn run(
 
     let new_timestamp = if let Some(hours) = after_hours {
         // Calculate timestamp as now + hours
-        let duration = Duration::seconds((hours * 3600.0) as i64);
+        let secs = hours * 3600.0;
+        if !secs.is_finite() || secs > i64::MAX as f64 || secs < i64::MIN as f64 {
+            anyhow::bail!("Hours value {} is out of range", hours);
+        }
+        let duration = Duration::seconds(secs as i64);
         let future_time = Utc::now() + duration;
         future_time.to_rfc3339()
     } else if let Some(timestamp) = at_timestamp {
@@ -172,6 +176,19 @@ mod tests {
     fn test_reschedule_uninitialized_workgraph() {
         let dir = tempdir().unwrap();
         let result = run(dir.path(), "t1", Some(24.0), None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_reschedule_overflow_hours_rejected() {
+        let dir = tempdir().unwrap();
+        let task = make_task("t1", "Task 1");
+        setup_workgraph(dir.path(), vec![task]);
+
+        let result = run(dir.path(), "t1", Some(f64::INFINITY), None);
+        assert!(result.is_err());
+
+        let result = run(dir.path(), "t1", Some(f64::NAN), None);
         assert!(result.is_err());
     }
 }

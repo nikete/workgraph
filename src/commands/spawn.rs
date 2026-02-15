@@ -378,7 +378,12 @@ exit $EXIT_CODE
                     actor: Some(temp_agent_id.clone()),
                     message: format!("Spawn failed, reverting claim: {}", e),
                 });
-                let _ = save_graph(&rollback_graph, &graph_path);
+                if let Err(save_err) = save_graph(&rollback_graph, &graph_path) {
+                    eprintln!(
+                        "Warning: failed to save rollback graph for task '{}': {}",
+                        task_id, save_err
+                    );
+                }
             }
             return Err(anyhow::anyhow!(
                 "Failed to spawn executor '{}' (command: {}): {}",
