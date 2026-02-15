@@ -128,7 +128,13 @@ pub fn load_command_order(dir: &Path) -> Option<Vec<(String, u64)>> {
     }
 
     let content = fs::read_to_string(&path).ok()?;
-    let stats: UsageStats = serde_json::from_str(&content).ok()?;
+    let stats: UsageStats = match serde_json::from_str(&content) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("Warning: corrupt stats.json at {}: {}", path.display(), e);
+            return None;
+        }
+    };
 
     // Check for sufficient data
     let total: u64 = stats.counts.values().sum();

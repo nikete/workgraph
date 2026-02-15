@@ -252,7 +252,7 @@ fn spawn_agent_inner(
 
     // Create a wrapper script that runs the command and handles completion
     // This ensures tasks get marked done/failed even if the agent doesn't do it
-    let complete_cmd = "wg done \"$TASK_ID\" 2>> \"$OUTPUT_FILE\" || true".to_string();
+    let complete_cmd = "wg done \"$TASK_ID\" 2>> \"$OUTPUT_FILE\" || echo \"[wrapper] WARNING: 'wg done' failed with exit code $?\" >> \"$OUTPUT_FILE\"".to_string();
     let complete_msg = "[wrapper] Agent exited successfully, marking task done";
 
     let wrapper_script = format!(
@@ -278,7 +278,7 @@ if [ "$TASK_STATUS" = "in-progress" ]; then
     else
         echo "" >> "$OUTPUT_FILE"
         echo "[wrapper] Agent exited with code $EXIT_CODE, marking task failed" >> "$OUTPUT_FILE"
-        wg fail "$TASK_ID" --reason "Agent exited with code $EXIT_CODE" 2>> "$OUTPUT_FILE" || true
+        wg fail "$TASK_ID" --reason "Agent exited with code $EXIT_CODE" 2>> "$OUTPUT_FILE" || echo "[wrapper] WARNING: 'wg fail' failed with exit code $?" >> "$OUTPUT_FILE"
     fi
 fi
 
@@ -813,7 +813,7 @@ mod tests {
         let wrapper_path = agent_output_dir(temp_dir.path(), "agent-1").join("run.sh");
         let script = fs::read_to_string(&wrapper_path).unwrap();
 
-        // Should suppress errors with 2>> redirection and || true
-        assert!(script.contains("2>> \"$OUTPUT_FILE\" || true"));
+        // Should redirect errors and log failures instead of silencing
+        assert!(script.contains("2>> \"$OUTPUT_FILE\" || echo \"[wrapper] WARNING:"));
     }
 }

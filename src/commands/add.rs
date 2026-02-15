@@ -1,10 +1,8 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
-use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::Path;
 use workgraph::graph::{Estimate, LoopEdge, Node, Status, Task, parse_delay};
-use workgraph::parser::load_graph;
+use workgraph::parser::{load_graph, save_graph};
 
 use super::graph_path;
 
@@ -72,7 +70,7 @@ pub fn run(
     let path = graph_path(dir);
 
     // Load existing graph to check for ID conflicts
-    let graph = if path.exists() {
+    let mut graph = if path.exists() {
         load_graph(&path).context("Failed to load graph")?
     } else {
         anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
@@ -89,6 +87,19 @@ pub fn run(
         None => generate_id(title, &graph),
     };
 
+    // Validate blocked_by references
+    for blocker_id in blocked_by {
+        if blocker_id == &task_id {
+            anyhow::bail!("Task '{}' cannot block itself", task_id);
+        }
+        if graph.get_node(blocker_id).is_none() {
+            eprintln!(
+                "Warning: blocker '{}' does not exist in the graph",
+                blocker_id
+            );
+        }
+    }
+
     let estimate = if hours.is_some() || cost.is_some() {
         Some(Estimate { hours, cost })
     } else {
@@ -97,6 +108,12 @@ pub fn run(
 
     // Build loop edges if --loops-to specified
     let loops_to_edges = if let Some(target) = loops_to {
+        if graph.get_node(target).is_none() {
+            eprintln!(
+                "Warning: loop target '{}' does not exist in the graph",
+                target
+            );
+        }
         let max_iterations = loop_max
             .ok_or_else(|| anyhow::anyhow!("--loop-max is required when using --loops-to"))?;
         let guard = match loop_guard {
@@ -158,15 +175,9 @@ pub fn run(
         ready_after: None,
     };
 
-    // Append to file
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .context("Failed to open graph.jsonl")?;
-
-    let json = serde_json::to_string(&Node::Task(task)).context("Failed to serialize task")?;
-    writeln!(file, "{}", json).context("Failed to write task")?;
+    // Add task to graph and save atomically (temp file + rename)
+    graph.add_node(Node::Task(task));
+    save_graph(&graph, &path).context("Failed to save graph")?;
     super::notify_graph_changed(dir);
 
     println!("Added task: {} ({})", title, task_id);
@@ -580,5 +591,79 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn self_blocking_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        std::fs::create_dir_all(dir_path).unwrap();
+        let path = super::graph_path(dir_path);
+        let graph = WorkGraph::new();
+        workgraph::parser::save_graph(&graph, &path).unwrap();
+
+        let result = run(
+            dir_path,
+            "My task",
+            Some("my-task"),
+            None,
+            &["my-task".to_string()], // self-reference
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot block itself"),
+            "Expected 'cannot block itself' error"
+        );
+    }
+
+    #[test]
+    fn nonexistent_blocker_warns_but_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        std::fs::create_dir_all(dir_path).unwrap();
+        let path = super::graph_path(dir_path);
+        let graph = WorkGraph::new();
+        workgraph::parser::save_graph(&graph, &path).unwrap();
+
+        // Should succeed (with a warning to stderr) — nonexistent blockers are allowed
+        let result = run(
+            dir_path,
+            "My task",
+            None,
+            None,
+            &["nonexistent".to_string()],
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_ok());
     }
 }

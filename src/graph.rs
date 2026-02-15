@@ -523,7 +523,13 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
         // 2. Check iteration limit
         let current_iter = match graph.get_task(&edge.target) {
             Some(target) => target.loop_iteration,
-            None => continue, // Target doesn't exist
+            None => {
+                eprintln!(
+                    "Warning: loop target '{}' referenced by '{}' does not exist, skipping",
+                    edge.target, source_id
+                );
+                continue;
+            }
         };
         if current_iter >= edge.max_iterations {
             continue;
@@ -531,8 +537,15 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
 
         // 3. Re-activate the target task
         let new_iteration = current_iter + 1;
-        let ready_after = edge.delay.as_ref().and_then(|d| {
-            parse_delay(d).map(|secs| (Utc::now() + Duration::seconds(secs as i64)).to_rfc3339())
+        let ready_after = edge.delay.as_ref().and_then(|d| match parse_delay(d) {
+            Some(secs) => Some((Utc::now() + Duration::seconds(secs as i64)).to_rfc3339()),
+            None => {
+                eprintln!(
+                    "Warning: invalid delay '{}' on loop edge {} → {}, ignoring delay",
+                    d, source_id, edge.target
+                );
+                None
+            }
         });
 
         let target_reactivated = if let Some(target) = graph.get_task_mut(&edge.target) {

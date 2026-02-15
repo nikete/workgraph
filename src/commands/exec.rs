@@ -45,7 +45,10 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
     }
 
     // Claim the task if not already in progress
-    let task = graph.get_task_mut(task_id).unwrap();
+    // Re-acquire mutable reference after immutable borrow above
+    let task = graph
+        .get_task_mut(task_id)
+        .ok_or_else(|| anyhow::anyhow!("Task '{}' disappeared from graph", task_id))?;
     let was_open = task.status == Status::Open;
 
     if was_open {
@@ -83,9 +86,11 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
         eprintln!("{}", stderr);
     }
 
-    // Reload graph and update status
+    // Reload graph and update status (task may have been modified by exec command)
     let mut graph = load_graph(&path).context("Failed to reload graph")?;
-    let task = graph.get_task_mut(task_id).unwrap();
+    let task = graph.get_task_mut(task_id).ok_or_else(|| {
+        anyhow::anyhow!("Task '{}' disappeared from graph during execution", task_id)
+    })?;
 
     if success {
         task.status = Status::Done;
