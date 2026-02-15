@@ -246,7 +246,10 @@ fn format_notification(task: &Task, custom_message: Option<&str>) -> (String, St
 
     // Custom message first if provided
     if let Some(msg) = custom_message {
-        html.push_str(&format!("<p><strong>{}</strong></p>", escape_html(msg)));
+        html.push_str(&format!(
+            "<p><strong>{}</strong></p>",
+            escape_html(msg).replace('\n', "<br>")
+        ));
     }
 
     html.push_str(&format!(

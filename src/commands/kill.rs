@@ -120,9 +120,11 @@ pub fn run_all(dir: &Path, force: bool, json: bool) -> Result<()> {
         // Unclaim task
         if let Err(e) = unclaim_task(dir, task_id, agent_id) {
             errors.push(format!("Failed to unclaim task '{}': {}", task_id, e));
+            // Don't unregister: agent entry needed so the task can be linked back
+            continue;
         }
 
-        // Remove from registry
+        // Remove from registry only after successful unclaim
         locked_registry.unregister_agent(agent_id);
 
         killed.push((agent_id.clone(), *pid, task_id.clone()));

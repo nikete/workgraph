@@ -59,8 +59,10 @@ pub fn append_usage_log(dir: &Path, command: &str) {
     let line = format!("{} {}\n", timestamp, command);
 
     // Open with O_APPEND for atomic appends (no locking needed on POSIX)
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = file.write_all(line.as_bytes());
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path)
+        && let Err(e) = file.write_all(line.as_bytes())
+    {
+        eprintln!("Warning: failed to write usage log: {}", e);
     }
 }
 
@@ -110,8 +112,13 @@ pub fn aggregate_usage_stats(dir: &Path) -> anyhow::Result<usize> {
     fs::write(&stats, content)?;
 
     // Truncate the log file (entries are now aggregated)
-    if entries_processed > 0 {
-        let _ = File::create(&log); // Truncate by creating empty file
+    if entries_processed > 0
+        && let Err(e) = File::create(&log)
+    {
+        eprintln!(
+            "Warning: failed to truncate usage log after aggregation: {}",
+            e
+        );
     }
 
     Ok(entries_processed)

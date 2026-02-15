@@ -625,24 +625,31 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
                 reactivated.push(mid_id.clone());
             }
         }
+    }
 
-        // 5. Re-open the source task itself so it runs again in the next
-        //    iteration of the cycle.  The source was just marked Done by the
-        //    caller, but it is part of the loop and must execute again.
+    // 5. Re-open the source task itself so it runs again in the next
+    //    iteration of the cycle.  The source was just marked Done by the
+    //    caller, but it is part of the loop and must execute again.
+    //    Only do this once even if multiple loop edges fired.
+    if !reactivated.is_empty() {
+        // Use the max iteration across all reactivated targets
+        let max_iteration = reactivated
+            .iter()
+            .filter_map(|id| graph.get_task(id).map(|t| t.loop_iteration))
+            .max()
+            .unwrap_or(1);
+
         if let Some(src_task) = graph.get_task_mut(source_id) {
             src_task.status = Status::Open;
             src_task.assigned = None;
             src_task.started_at = None;
             src_task.completed_at = None;
-            src_task.loop_iteration = new_iteration;
+            src_task.loop_iteration = max_iteration;
 
             src_task.log.push(LogEntry {
                 timestamp: Utc::now().to_rfc3339(),
                 actor: None,
-                message: format!(
-                    "Re-opened by own loop to {} (iteration {}/{})",
-                    edge.target, new_iteration, edge.max_iterations
-                ),
+                message: format!("Re-opened by own loop (iteration {})", max_iteration),
             });
 
             reactivated.push(source_id.to_string());
@@ -1406,5 +1413,56 @@ mod tests {
 
         let tgt = graph.get_task("tgt").unwrap();
         assert_eq!(tgt.loop_iteration, 1);
+    }
+
+    #[test]
+    fn test_evaluate_loop_edges_multi_target_no_duplicate_source() {
+        // Source task has two loop edges to different targets.
+        // When both fire, the source should appear exactly once in reactivated.
+        let mut graph = WorkGraph::new();
+
+        let mut tgt_a = make_task("tgt-a", "Target A");
+        tgt_a.status = Status::Done;
+
+        let mut tgt_b = make_task("tgt-b", "Target B");
+        tgt_b.status = Status::Done;
+
+        let mut src = make_task("src", "Source");
+        src.status = Status::Done;
+        src.loops_to.push(LoopEdge {
+            target: "tgt-a".to_string(),
+            guard: None,
+            max_iterations: 3,
+            delay: None,
+        });
+        src.loops_to.push(LoopEdge {
+            target: "tgt-b".to_string(),
+            guard: None,
+            max_iterations: 3,
+            delay: None,
+        });
+
+        graph.add_node(Node::Task(tgt_a));
+        graph.add_node(Node::Task(tgt_b));
+        graph.add_node(Node::Task(src));
+
+        let reactivated = evaluate_loop_edges(&mut graph, "src");
+
+        // Source should appear exactly once, not twice
+        let source_count = reactivated.iter().filter(|id| *id == "src").count();
+        assert_eq!(
+            source_count, 1,
+            "source should appear exactly once in reactivated list, got {}",
+            source_count
+        );
+
+        // Both targets should be reactivated
+        assert!(reactivated.contains(&"tgt-a".to_string()));
+        assert!(reactivated.contains(&"tgt-b".to_string()));
+
+        // Source should be at iteration 1 (max of both targets)
+        let src = graph.get_task("src").unwrap();
+        assert_eq!(src.loop_iteration, 1);
+        assert_eq!(src.status, Status::Open);
     }
 }

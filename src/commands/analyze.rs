@@ -520,7 +520,8 @@ fn compute_bottlenecks(graph: &WorkGraph, now: &DateTime<Utc>) -> Vec<Bottleneck
     bottlenecks
 }
 
-/// Compute workload information from task assignments
+/// Compute workload information from task assignments.
+/// Actors with more than 2x the average hours are flagged as overloaded.
 fn compute_workload(graph: &WorkGraph) -> WorkloadSection {
     let mut actor_hours: HashMap<String, f64> = HashMap::new();
 
@@ -537,10 +538,45 @@ fn compute_workload(graph: &WorkGraph) -> WorkloadSection {
 
     let total_actors = actor_hours.len();
 
+    if total_actors == 0 {
+        return WorkloadSection {
+            total_actors: 0,
+            balanced_actors: 0,
+            overloaded: vec![],
+        };
+    }
+
+    let total_hours: f64 = actor_hours.values().sum();
+    let avg_hours = total_hours / total_actors as f64;
+    // Threshold: actors with >2x average are overloaded (only meaningful with >1 actor)
+    let threshold = if total_actors > 1 && avg_hours > 0.0 {
+        avg_hours * 2.0
+    } else {
+        f64::MAX
+    };
+
+    let mut overloaded = Vec::new();
+    for (id, hours) in &actor_hours {
+        if *hours > threshold {
+            let load_pct = if avg_hours > 0.0 {
+                (hours / avg_hours) * 100.0
+            } else {
+                0.0
+            };
+            overloaded.push(WorkloadInfo {
+                id: id.clone(),
+                load_percent: Some(load_pct),
+                is_overloaded: true,
+            });
+        }
+    }
+
+    let balanced_actors = total_actors - overloaded.len();
+
     WorkloadSection {
         total_actors,
-        balanced_actors: total_actors,
-        overloaded: vec![],
+        balanced_actors,
+        overloaded,
     }
 }
 
@@ -1433,6 +1469,33 @@ mod tests {
 
         let workload = compute_workload(&graph);
         assert_eq!(workload.total_actors, 0);
+    }
+
+    #[test]
+    fn test_compute_workload_detects_overloaded_actor() {
+        let mut graph = WorkGraph::new();
+
+        // Alice: 10h, Bob: 10h, Charlie: 100h (way above average)
+        for (i, (actor, hours)) in [("alice", 10.0), ("bob", 10.0), ("charlie", 100.0)]
+            .iter()
+            .enumerate()
+        {
+            let mut t = make_task(&format!("t{}", i), &format!("Task {}", i));
+            t.assigned = Some(actor.to_string());
+            t.estimate = Some(Estimate {
+                hours: Some(*hours),
+                cost: None,
+            });
+            graph.add_node(Node::Task(t));
+        }
+
+        let workload = compute_workload(&graph);
+        assert_eq!(workload.total_actors, 3);
+        // Charlie is overloaded (100h vs avg ~40h, threshold = 80h)
+        assert_eq!(workload.overloaded.len(), 1);
+        assert_eq!(workload.overloaded[0].id, "charlie");
+        assert!(workload.overloaded[0].is_overloaded);
+        assert_eq!(workload.balanced_actors, 2);
     }
 
     // --- Expanded tests for compute_aging ---

@@ -240,10 +240,11 @@ fn create_scenario(name: String, buffer: f64, base_hours: f64, hours_per_week: f
 
     let (completion_date, weeks_to_complete) = if hours_per_week > 0.0 && estimated_hours > 0.0 {
         let weeks = estimated_hours / hours_per_week;
-        if !weeks.is_finite() || weeks < 0.0 {
+        let days_f = (weeks * 7.0).ceil();
+        if !days_f.is_finite() || days_f < 0.0 || days_f > i64::MAX as f64 {
             (None, None)
         } else {
-            let days = (weeks * 7.0).ceil() as i64;
+            let days = days_f as i64;
             let date = Utc::now() + Duration::days(days);
             (Some(date.format("%b %d, %Y").to_string()), Some(weeks))
         }
@@ -835,5 +836,18 @@ mod tests {
         // All tasks form a cycle so none are entry points (all have incomplete blockers)
         // The critical path may be None or may contain a subset, but must not crash
         assert!(forecast.remaining_work.open_tasks + forecast.remaining_work.blocked_tasks > 0);
+    }
+
+    #[test]
+    fn test_create_scenario_huge_hours_no_overflow() {
+        // Very large estimates should produce None dates, not panic from i64 overflow
+        let scenario = create_scenario(
+            "huge".to_string(),
+            0.0,
+            f64::MAX / 2.0, // enormous hours
+            1.0,            // tiny throughput
+        );
+        // Should gracefully return None, not panic or produce garbage date
+        assert!(scenario.completion_date.is_none());
     }
 }

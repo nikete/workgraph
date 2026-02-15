@@ -371,21 +371,29 @@ exit $EXIT_CODE
         Ok(child) => child,
         Err(e) => {
             // Spawn failed — revert the task claim so it's not stuck
-            if let Ok(mut rollback_graph) = load_graph(&graph_path)
-                && let Some(t) = rollback_graph.get_task_mut(task_id)
-            {
-                t.status = Status::Open;
-                t.started_at = None;
-                t.assigned = None;
-                t.log.push(LogEntry {
-                    timestamp: Utc::now().to_rfc3339(),
-                    actor: Some(temp_agent_id.clone()),
-                    message: format!("Spawn failed, reverting claim: {}", e),
-                });
-                if let Err(save_err) = save_graph(&rollback_graph, &graph_path) {
+            match load_graph(&graph_path) {
+                Ok(mut rollback_graph) => {
+                    if let Some(t) = rollback_graph.get_task_mut(task_id) {
+                        t.status = Status::Open;
+                        t.started_at = None;
+                        t.assigned = None;
+                        t.log.push(LogEntry {
+                            timestamp: Utc::now().to_rfc3339(),
+                            actor: Some(temp_agent_id.clone()),
+                            message: format!("Spawn failed, reverting claim: {}", e),
+                        });
+                        if let Err(save_err) = save_graph(&rollback_graph, &graph_path) {
+                            eprintln!(
+                                "Warning: failed to save rollback graph for task '{}': {}",
+                                task_id, save_err
+                            );
+                        }
+                    }
+                }
+                Err(load_err) => {
                     eprintln!(
-                        "Warning: failed to save rollback graph for task '{}': {}",
-                        task_id, save_err
+                        "Warning: failed to load graph for rollback of task '{}': {}",
+                        task_id, load_err
                     );
                 }
             }
@@ -402,7 +410,21 @@ exit $EXIT_CODE
 
     // Register the agent
     let agent_id = agent_registry.register_agent(pid, task_id, executor_name, &output_file_str);
-    agent_registry.save(dir)?;
+    if let Err(save_err) = agent_registry.save(dir) {
+        // Registry save failed — kill the orphaned process to prevent invisible agents
+        eprintln!(
+            "Warning: failed to save agent registry for {} (PID {}), killing process: {}",
+            agent_id, pid, save_err
+        );
+        #[cfg(unix)]
+        {
+            // SAFETY: sending SIGKILL to a known PID we just spawned
+            unsafe {
+                libc::kill(pid as i32, libc::SIGKILL);
+            }
+        }
+        return Err(save_err.context("Failed to persist agent registry after spawn"));
+    }
 
     // Write metadata
     let metadata_path = output_dir.join("metadata.json");
