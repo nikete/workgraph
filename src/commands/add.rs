@@ -176,8 +176,19 @@ pub fn run(
         paused: false,
     };
 
-    // Add task to graph and save atomically (temp file + rename)
+    // Add task to graph
     graph.add_node(Node::Task(task));
+
+    // Maintain bidirectional consistency: update `blocks` on referenced blocker tasks
+    for dep in blocked_by {
+        if let Some(blocker) = graph.get_task_mut(dep)
+            && !blocker.blocks.contains(&task_id)
+        {
+            blocker.blocks.push(task_id.clone());
+        }
+    }
+
+    // Save atomically (temp file + rename)
     save_graph(&graph, &path).context("Failed to save graph")?;
     super::notify_graph_changed(dir);
 
@@ -667,5 +678,66 @@ mod tests {
             None,
         );
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn blocked_by_updates_blocker_blocks_field() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_path = dir.path();
+        std::fs::create_dir_all(dir_path).unwrap();
+        let path = super::graph_path(dir_path);
+
+        // Create a graph with an existing blocker task
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(stub_task("blocker-a")));
+        graph.add_node(Node::Task(stub_task("blocker-b")));
+        workgraph::parser::save_graph(&graph, &path).unwrap();
+
+        // Add a new task blocked by both blockers
+        let result = run(
+            dir_path,
+            "Dependent task",
+            Some("dep-task"),
+            None,
+            &["blocker-a".to_string(), "blocker-b".to_string()],
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(result.is_ok());
+
+        // Reload graph and verify symmetry
+        let graph = load_graph(&path).unwrap();
+
+        // The new task should have blocked_by set
+        let dep = graph.get_task("dep-task").unwrap();
+        assert!(dep.blocked_by.contains(&"blocker-a".to_string()));
+        assert!(dep.blocked_by.contains(&"blocker-b".to_string()));
+
+        // Each blocker should have the new task in its blocks field
+        let a = graph.get_task("blocker-a").unwrap();
+        assert!(
+            a.blocks.contains(&"dep-task".to_string()),
+            "blocker-a.blocks should contain dep-task, got: {:?}",
+            a.blocks
+        );
+
+        let b = graph.get_task("blocker-b").unwrap();
+        assert!(
+            b.blocks.contains(&"dep-task".to_string()),
+            "blocker-b.blocks should contain dep-task, got: {:?}",
+            b.blocks
+        );
     }
 }

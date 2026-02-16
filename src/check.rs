@@ -195,9 +195,9 @@ pub fn check_all(graph: &WorkGraph) -> CheckResult {
     let orphan_refs = check_orphans(graph);
     let loop_edge_issues = check_loop_edges(graph);
 
-    // loops_to cycles are INTENTIONAL — only blocked_by cycles and orphan refs
-    // and loop edge issues make the graph invalid
-    let ok = cycles.is_empty() && orphan_refs.is_empty() && loop_edge_issues.is_empty();
+    // Cycles are warnings, not errors — only orphan refs and loop edge issues
+    // make the graph invalid
+    let ok = orphan_refs.is_empty() && loop_edge_issues.is_empty();
 
     CheckResult {
         cycles,
@@ -372,7 +372,7 @@ mod tests {
         graph.add_node(Node::Task(t2));
 
         let result = check_all(&graph);
-        assert!(!result.ok);
+        assert!(result.ok);
         assert!(!result.cycles.is_empty());
     }
 
