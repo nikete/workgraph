@@ -1,14 +1,13 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use workgraph::check::check_all;
 use workgraph::graph::{Status, WorkGraph};
-use workgraph::parser::load_graph;
 use workgraph::query::{build_reverse_index, ready_tasks};
 
-use super::{collect_transitive_dependents, graph_path};
+use super::collect_transitive_dependents;
 
 // Re-use cycle classification from loops module
 use super::loops::{ClassifiedCycle, CycleClassification};
@@ -119,13 +118,7 @@ pub struct AnalysisOutput {
 }
 
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let now = Utc::now();
 
     // Gather all analysis data
@@ -493,7 +486,7 @@ fn compute_bottlenecks(graph: &WorkGraph, now: &DateTime<Utc>) -> Vec<Bottleneck
             bottlenecks.push(BottleneckInfo {
                 id: task.id.clone(),
                 transitive_blocks,
-                status: task.status.clone(),
+                status: task.status,
                 assigned: task.assigned.clone(),
                 severity,
                 days_in_progress,

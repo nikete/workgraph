@@ -47,9 +47,7 @@ fn run_explicit_assign(dir: &Path, path: &Path, task_id: &str, agent_hash: &str)
 
     let mut graph = load_graph(path).context("Failed to load graph")?;
 
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     task.agent = Some(agent.id.clone());
     save_graph(&graph, path).context("Failed to save graph")?;
@@ -90,9 +88,7 @@ fn run_explicit_assign(dir: &Path, path: &Path, task_id: &str, agent_hash: &str)
 fn run_clear(dir: &Path, path: &Path, task_id: &str) -> Result<()> {
     let mut graph = load_graph(path).context("Failed to load graph")?;
 
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     let had_agent = task.agent.is_some();
     task.agent = None;

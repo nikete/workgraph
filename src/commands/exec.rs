@@ -5,6 +5,7 @@ use std::process::Command;
 use workgraph::graph::{LogEntry, Status, evaluate_loop_edges};
 use workgraph::parser::{load_graph, save_graph};
 
+#[cfg(test)]
 use super::graph_path;
 
 /// Execute a task's shell command
@@ -14,17 +15,9 @@ use super::graph_path;
 /// - Runs the task's exec command
 /// - Marks done on success (exit 0), fail on error
 pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_or_err(task_id)?;
 
     // Check task has an exec command
     let exec_cmd = task
@@ -46,9 +39,7 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
 
     // Claim the task if not already in progress
     // Re-acquire mutable reference after immutable borrow above
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' disappeared from graph", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
     let was_open = task.status == Status::Open;
 
     if was_open {
@@ -63,6 +54,7 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
             message: format!("Started execution: {}", exec_cmd),
         });
         save_graph(&graph, &path).context("Failed to save graph")?;
+        super::notify_graph_changed(dir);
         println!("Claimed task '{}' for execution", task_id);
     }
 
@@ -88,9 +80,7 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
 
     // Reload graph and update status (task may have been modified by exec command)
     let mut graph = load_graph(&path).context("Failed to reload graph")?;
-    let task = graph.get_task_mut(task_id).ok_or_else(|| {
-        anyhow::anyhow!("Task '{}' disappeared from graph during execution", task_id)
-    })?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     if success {
         task.status = Status::Done;
@@ -103,6 +93,7 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
         // Evaluate loop edges: re-activate upstream tasks if conditions are met
         let reactivated = evaluate_loop_edges(&mut graph, task_id);
         save_graph(&graph, &path).context("Failed to save graph")?;
+        super::notify_graph_changed(dir);
         println!("Task '{}' completed successfully", task_id);
         for tid in &reactivated {
             println!("  Loop: re-activated '{}'", tid);
@@ -118,6 +109,7 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
             message: format!("Execution failed with exit code {}", exit_code),
         });
         save_graph(&graph, &path).context("Failed to save graph")?;
+        super::notify_graph_changed(dir);
         anyhow::bail!("Task '{}' failed with exit code {}", task_id, exit_code);
     }
 
@@ -126,21 +118,14 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
 
 /// Set the exec command for a task
 pub fn set_exec(dir: &Path, task_id: &str, command: &str) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     task.exec = Some(command.to_string());
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Set exec command for '{}': {}", task_id, command);
     Ok(())
@@ -148,17 +133,9 @@ pub fn set_exec(dir: &Path, task_id: &str, command: &str) -> Result<()> {
 
 /// Clear the exec command for a task
 pub fn clear_exec(dir: &Path, task_id: &str) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     if task.exec.is_none() {
         println!("Task '{}' has no exec command to clear", task_id);
@@ -168,6 +145,7 @@ pub fn clear_exec(dir: &Path, task_id: &str) -> Result<()> {
     task.exec = None;
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Cleared exec command for '{}'", task_id);
     Ok(())

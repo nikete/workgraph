@@ -1,13 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 use workgraph::agency;
 use workgraph::graph::TrustLevel;
-use workgraph::parser::load_graph;
 use workgraph::query::ready_tasks;
-
-use super::graph_path;
 
 /// Candidate task for an agent
 #[derive(Debug, Serialize)]
@@ -33,13 +30,7 @@ struct NextTaskResult {
 
 /// Find the best next task for an agent based on capabilities and readiness
 pub fn run(dir: &Path, agent_id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Load agent from .workgraph/agency/agents/
     let agents_dir = dir.join("agency").join("agents");

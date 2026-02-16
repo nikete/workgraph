@@ -166,7 +166,7 @@ pub fn run(
 
     // Determine model: CLI flag > agency.evolver_model > agent.model
     let model = model
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or(config.agency.evolver_model.clone())
         .unwrap_or_else(|| config.agent.model.clone());
 
@@ -323,7 +323,7 @@ pub fn run(
         {
             let target_ids: Vec<&str> = target
                 .split(',')
-                .map(|s| s.trim())
+                .map(str::trim)
                 .filter(|s| !s.is_empty())
                 .collect();
             if target_ids
@@ -1001,6 +1001,7 @@ fn defer_self_mutation(op: &EvolverOperation, dir: &Path, run_id: &str) -> Resul
     graph.add_node(Node::Task(task));
     save_graph(&graph, &graph_path)
         .context("Failed to save graph with self-mutation review task")?;
+    super::notify_graph_changed(dir);
 
     Ok(task_id)
 }
@@ -1096,7 +1097,7 @@ fn apply_modify_role(
     // Support crossover: target_id may be "parent-a,parent-b"
     let parent_ids: Vec<&str> = target_id
         .split(',')
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
 
@@ -1226,7 +1227,7 @@ fn apply_modify_motivation(
     // Support crossover: target_id may be "parent-a,parent-b"
     let parent_ids: Vec<&str> = target_id
         .split(',')
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
 

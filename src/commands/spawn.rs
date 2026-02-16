@@ -137,9 +137,7 @@ fn spawn_agent_inner(
     // Load the graph and get task info
     let mut graph = load_graph(&graph_path).context("Failed to load graph")?;
 
-    let task = graph
-        .get_task(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_or_err(task_id)?;
 
     // Only allow spawning on tasks that are Open or Blocked
     match task.status {
@@ -217,7 +215,7 @@ fn spawn_agent_inner(
     let settings = executor_config.apply_templates(&vars);
 
     // Determine model: CLI/coordinator model > task.model > none
-    let effective_model = model.map(|m| m.to_string()).or(task_model);
+    let effective_model = model.map(std::string::ToString::to_string).or(task_model);
 
     // Build the inner command string first
     let inner_command = match settings.executor_type.as_str() {
@@ -354,9 +352,7 @@ exit $EXIT_CODE
 
     // Claim the task BEFORE spawning the process to prevent race conditions
     // where two concurrent spawns both pass the status check.
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' disappeared from graph", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
     task.status = Status::InProgress;
     task.started_at = Some(Utc::now().to_rfc3339());
     task.assigned = Some(temp_agent_id.clone());

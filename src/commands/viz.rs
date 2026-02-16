@@ -3,10 +3,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::IsTerminal;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use workgraph::format_hours;
 use workgraph::graph::{Status, WorkGraph};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Output format for visualization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,13 +52,7 @@ impl Default for VizOptions {
 }
 
 pub fn run(dir: &Path, options: VizOptions) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Determine which tasks to include
     let tasks_to_show: Vec<_> = graph
@@ -182,7 +174,7 @@ fn generate_dot(
     // Print resources that are required by shown tasks
     let required_resources: HashSet<&str> = tasks
         .iter()
-        .flat_map(|t| t.requires.iter().map(|s| s.as_str()))
+        .flat_map(|t| t.requires.iter().map(String::as_str))
         .collect();
 
     for resource in graph.resources() {
@@ -361,7 +353,7 @@ fn generate_mermaid(
     if !critical_path.is_empty() {
         lines.push(String::new());
         lines.push("  %% Critical path styling".to_string());
-        let critical_nodes: Vec<&str> = critical_path.iter().map(|s| s.as_str()).collect();
+        let critical_nodes: Vec<&str> = critical_path.iter().map(String::as_str).collect();
         lines.push(format!(
             "  style {} stroke:#f00,stroke-width:3px",
             critical_nodes.join(",")
@@ -676,7 +668,7 @@ fn generate_ascii(
         // Find roots in this component (no parents in active set)
         let mut roots: Vec<&str> = component
             .iter()
-            .filter(|&&id| reverse.get(id).map(|p| p.is_empty()).unwrap_or(true))
+            .filter(|&&id| reverse.get(id).map(Vec::is_empty).unwrap_or(true))
             .copied()
             .collect();
         roots.sort();
@@ -728,7 +720,7 @@ fn generate_ascii(
                 rendered.insert(id);
 
                 // Check for additional parents (fan-in annotation)
-                let parents = reverse.get(id).map(|v| v.as_slice()).unwrap_or(&[]);
+                let parents = reverse.get(id).map(Vec::as_slice).unwrap_or(&[]);
                 let fan_in_note = if parents.len() > 1 {
                     // We're being shown under one parent; note the others
                     let others: Vec<&str> = parents.to_vec();
@@ -775,7 +767,7 @@ fn generate_ascii(
                 }
 
                 // Get children and recurse
-                let children = forward.get(id).map(|v| v.as_slice()).unwrap_or(&[]);
+                let children = forward.get(id).map(Vec::as_slice).unwrap_or(&[]);
                 let child_count = children.len();
                 for (i, &child) in children.iter().enumerate() {
                     let child_is_last = i == child_count - 1;
@@ -831,18 +823,6 @@ fn generate_ascii(
     }
 
     lines.join("\n")
-}
-
-/// Format hours nicely (no decimals if whole number)
-fn format_hours(hours: f64) -> String {
-    if !hours.is_finite() {
-        return "?".to_string();
-    }
-    if hours.fract() == 0.0 && hours >= i64::MIN as f64 && hours <= i64::MAX as f64 {
-        format!("{}", hours as i64)
-    } else {
-        format!("{:.1}", hours)
-    }
 }
 
 #[cfg(test)]

@@ -128,7 +128,7 @@ pub fn run_create(
         rate,
         capacity,
         trust_level: trust,
-        contact: contact.map(|s| s.to_string()),
+        contact: contact.map(std::string::ToString::to_string),
         executor: executor.to_string(),
     };
 

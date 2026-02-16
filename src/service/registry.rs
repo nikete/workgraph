@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::os::unix::fs::OpenOptionsExt;
 
 /// Agent status in the registry
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentStatus {
     /// Agent is starting up
@@ -81,10 +81,7 @@ impl AgentEntry {
     pub fn uptime_human(&self) -> String {
         match self.uptime_secs() {
             Some(secs) if secs < 0 => "0s".to_string(),
-            Some(secs) if secs < 60 => format!("{}s", secs),
-            Some(secs) if secs < 3600 => format!("{}m", secs / 60),
-            Some(secs) if secs < 86400 => format!("{}h", secs / 3600),
-            Some(secs) => format!("{}d", secs / 86400),
+            Some(secs) => crate::format_duration(secs, true),
             None => "unknown".to_string(),
         }
     }
@@ -425,7 +422,7 @@ impl AgentRegistry {
     pub fn count_by_status(&self) -> HashMap<AgentStatus, usize> {
         let mut counts = HashMap::new();
         for agent in self.agents.values() {
-            *counts.entry(agent.status.clone()).or_insert(0) += 1;
+            *counts.entry(agent.status).or_insert(0) += 1;
         }
         counts
     }

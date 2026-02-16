@@ -1,10 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::path::Path;
 use workgraph::graph::{Resource, Status, WorkGraph};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Resource utilization data
 #[derive(Debug, Clone, Serialize)]
@@ -105,13 +102,7 @@ pub fn calculate_utilization(graph: &WorkGraph) -> Vec<ResourceUtilization> {
 }
 
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let utilizations = calculate_utilization(&graph);
 
     if utilizations.is_empty() {

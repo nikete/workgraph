@@ -13,7 +13,7 @@ use anyhow::Result;
 use std::path::Path;
 use workgraph::service::{AgentEntry, AgentRegistry, AgentStatus};
 
-use super::dead_agents::is_process_alive;
+use super::is_process_alive;
 
 /// Compute the effective status of an agent by checking PID liveness.
 /// If the registry says the agent is alive but the process has exited,

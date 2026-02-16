@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tempfile::TempDir;
-use workgraph::graph::{Node, Status, Task, WorkGraph};
+use workgraph::graph::{Estimate, Node, Status, Task, WorkGraph};
 use workgraph::parser::{load_graph, save_graph};
 
 // ---------------------------------------------------------------------------
@@ -799,4 +799,21 @@ fn test_ready_excludes_blocked_tasks() {
         !output.contains("Blocked task"),
         "ready should not show blocked task"
     );
+}
+
+#[test]
+fn test_cost_json_output() {
+    let tmp = TempDir::new().unwrap();
+    let mut task = make_task("ct", "Cost task", Status::Open);
+    task.estimate = Some(Estimate {
+        hours: Some(5.0),
+        cost: Some(250.0),
+    });
+    let wg_dir = setup_workgraph(&tmp, vec![task]);
+
+    let output = wg_ok(&wg_dir, &["cost", "ct", "--json"]);
+    let parsed: serde_json::Value = serde_json::from_str(&output)
+        .unwrap_or_else(|e| panic!("Invalid JSON: {}\nOutput: {}", e, output));
+    assert_eq!(parsed["task_id"], "ct");
+    assert_eq!(parsed["total_cost"], 250.0);
 }

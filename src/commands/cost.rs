@@ -1,18 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
-use workgraph::parser::load_graph;
 use workgraph::query::cost_of;
 
-use super::graph_path;
-
-pub fn run(dir: &Path, id: &str) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     if graph.get_task(id).is_none() {
         anyhow::bail!("Task '{}' not found", id);
@@ -20,21 +11,32 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
 
     let total_cost = cost_of(&graph, id);
 
-    println!(
-        "Total cost for '{}' (including dependencies): ${:.2}",
-        id, total_cost
-    );
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "task_id": id,
+                "total_cost": total_cost
+            }))?
+        );
+    } else {
+        println!(
+            "Total cost for '{}' (including dependencies): ${:.2}",
+            id, total_cost
+        );
+    }
 
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::graph_path;
     use super::*;
     use std::fs;
     use tempfile::tempdir;
     use workgraph::graph::{Estimate, Node, Task, WorkGraph};
-    use workgraph::parser::save_graph;
+    use workgraph::parser::{load_graph, save_graph};
 
     fn make_task(id: &str, title: &str) -> Task {
         Task {
@@ -58,7 +60,7 @@ mod tests {
     #[test]
     fn test_run_uninitialized() {
         let dir = tempdir().unwrap();
-        let result = run(dir.path(), "t1");
+        let result = run(dir.path(), "t1", false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not initialized"));
     }
@@ -67,7 +69,7 @@ mod tests {
     fn test_run_nonexistent_task() {
         let dir = tempdir().unwrap();
         setup_workgraph(dir.path(), vec![make_task("t1", "Task 1")]);
-        let result = run(dir.path(), "nonexistent");
+        let result = run(dir.path(), "nonexistent", false);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -82,7 +84,7 @@ mod tests {
         });
         setup_workgraph(dir.path(), vec![task]);
 
-        let result = run(dir.path(), "t1");
+        let result = run(dir.path(), "t1", false);
         assert!(result.is_ok());
     }
 
@@ -275,7 +277,7 @@ mod tests {
         let dir = tempdir().unwrap();
         setup_workgraph(dir.path(), vec![make_task("t1", "Task")]);
 
-        let result = run(dir.path(), "t1");
+        let result = run(dir.path(), "t1", false);
         assert!(result.is_ok());
     }
 }

@@ -3,9 +3,6 @@ use serde::Serialize;
 use std::path::Path;
 use workgraph::agency;
 use workgraph::graph::TrustLevel;
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Match result for an agent
 #[derive(Debug, Serialize)]
@@ -21,17 +18,9 @@ struct MatchResult {
 
 /// Find agents capable of performing a task
 pub fn run(dir: &Path, task_id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_or_err(task_id)?;
 
     let required_skills: std::collections::HashSet<_> = task.skills.iter().collect();
 

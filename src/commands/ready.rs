@@ -1,20 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::path::Path;
 use workgraph::graph::Status;
-use workgraph::parser::load_graph;
 use workgraph::query::ready_tasks;
 
-use super::graph_path;
-
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let ready = ready_tasks(&graph);
 
     // Find tasks that would be ready except they're waiting on ready_after
@@ -106,25 +97,18 @@ fn format_countdown(timestamp: &str) -> String {
         return "(elapsed)".to_string();
     }
     let secs = (ts - now).num_seconds();
-    if secs < 60 {
-        format!("(ready in {}s)", secs)
-    } else if secs < 3600 {
-        format!("(ready in {}m {}s)", secs / 60, secs % 60)
-    } else if secs < 86400 {
-        format!("(ready in {}h {}m)", secs / 3600, (secs % 3600) / 60)
-    } else {
-        format!("(ready in {}d {}h)", secs / 86400, (secs % 86400) / 3600)
-    }
+    format!("(ready in {})", workgraph::format_duration(secs, false))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::graph_path;
     use chrono::Duration;
     use std::fs;
     use tempfile::tempdir;
     use workgraph::graph::{Node, Task, WorkGraph};
-    use workgraph::parser::save_graph;
+    use workgraph::parser::{load_graph, save_graph};
 
     fn make_task(id: &str, title: &str, status: Status) -> Task {
         Task {

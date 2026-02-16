@@ -34,7 +34,7 @@ fn output_error(json: bool, task_id: &str, room: Option<&str>, error: &str) -> R
     if json {
         let output = NotifyResult {
             task_id: task_id.to_string(),
-            room: room.map(|r| r.to_string()),
+            room: room.map(std::string::ToString::to_string),
             sent: false,
             error: Some(error.to_string()),
         };
@@ -107,7 +107,7 @@ pub fn run(
 
     // Determine room to send to
     let target_room = room
-        .map(|r| r.to_string())
+        .map(std::string::ToString::to_string)
         .or(matrix_config.default_room.clone());
     let target_room = match target_room {
         Some(r) => r,
@@ -203,7 +203,7 @@ fn format_notification(task: &Task, custom_message: Option<&str>) -> (String, St
         Status::Abandoned => "🗑️",
     };
 
-    let status_str = format_status(&task.status);
+    let status_str = task.status.to_string();
 
     // Build plain text version
     let mut plain = String::new();
@@ -300,17 +300,6 @@ fn format_notification(task: &Task, custom_message: Option<&str>) -> (String, St
     html.push_str("<p><em>Reply with:</em> <code>claim</code> | <code>done</code> | <code>input &lt;info&gt;</code> | <code>help</code></p>");
 
     (plain, html)
-}
-
-fn format_status(status: &Status) -> &'static str {
-    match status {
-        Status::Open => "open",
-        Status::InProgress => "in-progress",
-        Status::Done => "done",
-        Status::Blocked => "blocked",
-        Status::Failed => "failed",
-        Status::Abandoned => "abandoned",
-    }
 }
 
 fn escape_html(s: &str) -> String {

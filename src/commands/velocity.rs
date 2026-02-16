@@ -1,11 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::path::Path;
 use workgraph::graph::{Status, WorkGraph};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Number of weeks to show by default
 const DEFAULT_WEEKS: usize = 4;
@@ -203,13 +200,7 @@ fn make_bar(value: usize, max_value: usize, below_average: bool) -> String {
 }
 
 pub fn run(dir: &Path, json: bool, weeks: Option<usize>) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let num_weeks = weeks.unwrap_or(DEFAULT_WEEKS);
     let summary = calculate_velocity(&graph, num_weeks);
 

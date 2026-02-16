@@ -766,6 +766,14 @@ enum Commands {
         #[arg(long)]
         processes: bool,
 
+        /// Purge dead/done/failed agents from registry (and optionally delete dirs)
+        #[arg(long)]
+        purge: bool,
+
+        /// Also delete agent work directories (.workgraph/agents/<id>/) when purging
+        #[arg(long, requires = "purge")]
+        delete_dirs: bool,
+
         /// Override heartbeat timeout threshold (minutes)
         #[arg(long)]
         threshold: Option<u64>,
@@ -1257,7 +1265,10 @@ fn print_help(dir: &Path, show_all: bool, alphabetical: bool) {
         .filter(|c| !c.is_hide_set())
         .map(|c| {
             let name = c.get_name().to_string();
-            let about = c.get_about().map(|s| s.to_string()).unwrap_or_default();
+            let about = c
+                .get_about()
+                .map(std::string::ToString::to_string)
+                .unwrap_or_default();
             (name, about)
         })
         .collect();
@@ -1510,6 +1521,7 @@ fn supports_json(cmd: &Commands) -> bool {
             | Commands::Resources
             | Commands::CriticalPath
             | Commands::Analyze
+            | Commands::Archive { .. }
             | Commands::Show { .. }
             | Commands::Log { .. }
             | Commands::Resource { .. }
@@ -1531,6 +1543,8 @@ fn supports_json(cmd: &Commands) -> bool {
             | Commands::Agents { .. }
             | Commands::Kill { .. }
             | Commands::Service { .. }
+            | Commands::Cost { .. }
+            | Commands::Check
             | Commands::Quickstart
             | Commands::Status
     ) || {
@@ -1715,7 +1729,7 @@ fn main() -> Result<()> {
         Commands::Ready => commands::ready::run(&workgraph_dir, cli.json),
         Commands::Blocked { id } => commands::blocked::run(&workgraph_dir, &id, cli.json),
         Commands::WhyBlocked { id } => commands::why_blocked::run(&workgraph_dir, &id, cli.json),
-        Commands::Check => commands::check::run(&workgraph_dir),
+        Commands::Check => commands::check::run(&workgraph_dir, cli.json),
         Commands::List { status, paused } => {
             commands::list::run(&workgraph_dir, status.as_deref(), paused, cli.json)
         }
@@ -1748,7 +1762,7 @@ fn main() -> Result<()> {
             since,
             until,
         } => commands::graph::run(&workgraph_dir, archive, since.as_deref(), until.as_deref()),
-        Commands::Cost { id } => commands::cost::run(&workgraph_dir, &id),
+        Commands::Cost { id } => commands::cost::run(&workgraph_dir, &id, cli.json),
         Commands::Coordinate { max_parallel } => {
             commands::coordinate::run(&workgraph_dir, cli.json, max_parallel)
         }
@@ -1773,7 +1787,7 @@ fn main() -> Result<()> {
             dry_run,
             older,
             list,
-        } => commands::archive::run(&workgraph_dir, dry_run, older.as_deref(), list),
+        } => commands::archive::run(&workgraph_dir, dry_run, older.as_deref(), list, cli.json),
         Commands::Show { id } => commands::show::run(&workgraph_dir, &id, cli.json),
         Commands::Log {
             id,
@@ -2118,9 +2132,13 @@ fn main() -> Result<()> {
             cleanup,
             remove,
             processes,
+            purge,
+            delete_dirs,
             threshold,
         } => {
-            if processes {
+            if purge {
+                commands::dead_agents::run_purge(&workgraph_dir, delete_dirs, cli.json).map(|_| ())
+            } else if processes {
                 commands::dead_agents::run_check_processes(&workgraph_dir, cli.json)
             } else if remove {
                 commands::dead_agents::run_remove_dead(&workgraph_dir, cli.json).map(|_| ())

@@ -1,18 +1,20 @@
 use crate::graph::{LoopGuard, WorkGraph};
+use serde::Serialize;
 use std::collections::HashSet;
 
 /// Result of checking the graph for issues
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct CheckResult {
     pub cycles: Vec<Vec<String>>,
     pub orphan_refs: Vec<OrphanRef>,
     pub loop_edge_issues: Vec<LoopEdgeIssue>,
     pub stale_assignments: Vec<StaleAssignment>,
+    pub stuck_blocked: Vec<StuckBlocked>,
     pub ok: bool,
 }
 
 /// A reference to a non-existent node
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct OrphanRef {
     pub from: String,
     pub to: String,
@@ -20,14 +22,22 @@ pub struct OrphanRef {
 }
 
 /// A task with status=open but an agent assigned (may indicate a dead agent)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct StaleAssignment {
     pub task_id: String,
     pub assigned: String,
 }
 
+/// A task with status=Blocked where all blocked_by tasks have terminal status
+/// (done/failed/abandoned). These tasks should have been transitioned to Open but weren't.
+#[derive(Debug, Clone, Serialize)]
+pub struct StuckBlocked {
+    pub task_id: String,
+    pub blocked_by_ids: Vec<String>,
+}
+
 /// An issue with a loop edge
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct LoopEdgeIssue {
     pub from: String,
     pub target: String,
@@ -35,7 +45,7 @@ pub struct LoopEdgeIssue {
 }
 
 /// Types of loop edge issues
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub enum LoopEdgeIssueKind {
     /// Target task does not exist
     TargetNotFound,
@@ -176,6 +186,34 @@ pub fn check_stale_assignments(graph: &WorkGraph) -> Vec<StaleAssignment> {
     stale
 }
 
+/// Check for tasks with status=Blocked where all blocked_by tasks have terminal status.
+/// These tasks should have been transitioned to Open but weren't — they're stuck.
+pub fn check_stuck_blocked(graph: &WorkGraph) -> Vec<StuckBlocked> {
+    let mut stuck = Vec::new();
+
+    for task in graph.tasks() {
+        if task.status != crate::graph::Status::Blocked {
+            continue;
+        }
+        if task.blocked_by.is_empty() {
+            continue;
+        }
+        let all_terminal = task.blocked_by.iter().all(|dep_id| {
+            graph
+                .get_task(dep_id)
+                .is_some_and(|dep| dep.status.is_terminal())
+        });
+        if all_terminal {
+            stuck.push(StuckBlocked {
+                task_id: task.id.clone(),
+                blocked_by_ids: task.blocked_by.clone(),
+            });
+        }
+    }
+
+    stuck
+}
+
 /// Check for references to non-existent nodes
 pub fn check_orphans(graph: &WorkGraph) -> Vec<OrphanRef> {
     let mut orphans = Vec::new();
@@ -221,9 +259,10 @@ pub fn check_all(graph: &WorkGraph) -> CheckResult {
     let orphan_refs = check_orphans(graph);
     let loop_edge_issues = check_loop_edges(graph);
     let stale_assignments = check_stale_assignments(graph);
+    let stuck_blocked = check_stuck_blocked(graph);
 
-    // Cycles and stale assignments are warnings, not errors — only orphan refs
-    // and loop edge issues make the graph invalid
+    // Cycles, stale assignments, and stuck blocked are warnings, not errors —
+    // only orphan refs and loop edge issues make the graph invalid
     let ok = orphan_refs.is_empty() && loop_edge_issues.is_empty();
 
     CheckResult {
@@ -231,6 +270,7 @@ pub fn check_all(graph: &WorkGraph) -> CheckResult {
         orphan_refs,
         loop_edge_issues,
         stale_assignments,
+        stuck_blocked,
         ok,
     }
 }
@@ -238,15 +278,8 @@ pub fn check_all(graph: &WorkGraph) -> CheckResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{Node, Status, Task};
-
-    fn make_task(id: &str, title: &str) -> Task {
-        Task {
-            id: id.to_string(),
-            title: title.to_string(),
-            ..Task::default()
-        }
-    }
+    use crate::graph::{Node, Status};
+    use crate::test_helpers::make_task;
 
     #[test]
     fn test_no_cycles_in_empty_graph() {
@@ -540,7 +573,11 @@ mod tests {
         graph.add_node(Node::Task(t3));
 
         let issues = check_loop_edges(&graph);
-        assert!(issues.is_empty(), "Terminal tasks should not produce loop edge issues, got: {:?}", issues);
+        assert!(
+            issues.is_empty(),
+            "Terminal tasks should not produce loop edge issues, got: {:?}",
+            issues
+        );
     }
 
     #[test]
@@ -850,6 +887,108 @@ mod tests {
         let result = check_all(&graph);
         assert!(!result.stale_assignments.is_empty());
         // Stale assignments should not make the graph invalid
+        assert!(result.ok);
+    }
+
+    // --- Stuck blocked tests ---
+
+    #[test]
+    fn test_no_stuck_blocked_in_empty_graph() {
+        let graph = WorkGraph::new();
+        let stuck = check_stuck_blocked(&graph);
+        assert!(stuck.is_empty());
+    }
+
+    #[test]
+    fn test_stuck_blocked_all_deps_done() {
+        let mut graph = WorkGraph::new();
+        let mut dep = make_task("dep", "Dependency");
+        dep.status = Status::Done;
+        let mut blocked = make_task("blocked", "Blocked task");
+        blocked.status = Status::Blocked;
+        blocked.blocked_by = vec!["dep".to_string()];
+
+        graph.add_node(Node::Task(dep));
+        graph.add_node(Node::Task(blocked));
+
+        let stuck = check_stuck_blocked(&graph);
+        assert_eq!(stuck.len(), 1);
+        assert_eq!(stuck[0].task_id, "blocked");
+        assert_eq!(stuck[0].blocked_by_ids, vec!["dep".to_string()]);
+    }
+
+    #[test]
+    fn test_stuck_blocked_mixed_terminal_deps() {
+        let mut graph = WorkGraph::new();
+        let mut dep1 = make_task("dep1", "Done dep");
+        dep1.status = Status::Done;
+        let mut dep2 = make_task("dep2", "Failed dep");
+        dep2.status = Status::Failed;
+        let mut dep3 = make_task("dep3", "Abandoned dep");
+        dep3.status = Status::Abandoned;
+        let mut blocked = make_task("blocked", "Blocked task");
+        blocked.status = Status::Blocked;
+        blocked.blocked_by = vec!["dep1".to_string(), "dep2".to_string(), "dep3".to_string()];
+
+        graph.add_node(Node::Task(dep1));
+        graph.add_node(Node::Task(dep2));
+        graph.add_node(Node::Task(dep3));
+        graph.add_node(Node::Task(blocked));
+
+        let stuck = check_stuck_blocked(&graph);
+        assert_eq!(stuck.len(), 1);
+        assert_eq!(stuck[0].task_id, "blocked");
+    }
+
+    #[test]
+    fn test_not_stuck_when_dep_still_open() {
+        let mut graph = WorkGraph::new();
+        let dep1 = make_task("dep1", "Open dep");
+        let mut dep2 = make_task("dep2", "Done dep");
+        dep2.status = Status::Done;
+        let mut blocked = make_task("blocked", "Blocked task");
+        blocked.status = Status::Blocked;
+        blocked.blocked_by = vec!["dep1".to_string(), "dep2".to_string()];
+
+        graph.add_node(Node::Task(dep1));
+        graph.add_node(Node::Task(dep2));
+        graph.add_node(Node::Task(blocked));
+
+        let stuck = check_stuck_blocked(&graph);
+        assert!(stuck.is_empty());
+    }
+
+    #[test]
+    fn test_not_stuck_when_status_is_open() {
+        let mut graph = WorkGraph::new();
+        let mut dep = make_task("dep", "Done dep");
+        dep.status = Status::Done;
+        let mut task = make_task("task", "Open task");
+        task.blocked_by = vec!["dep".to_string()];
+        // status is Open (default), not Blocked
+
+        graph.add_node(Node::Task(dep));
+        graph.add_node(Node::Task(task));
+
+        let stuck = check_stuck_blocked(&graph);
+        assert!(stuck.is_empty());
+    }
+
+    #[test]
+    fn test_stuck_blocked_are_warnings_not_errors() {
+        let mut graph = WorkGraph::new();
+        let mut dep = make_task("dep", "Done dep");
+        dep.status = Status::Done;
+        let mut blocked = make_task("blocked", "Blocked task");
+        blocked.status = Status::Blocked;
+        blocked.blocked_by = vec!["dep".to_string()];
+
+        graph.add_node(Node::Task(dep));
+        graph.add_node(Node::Task(blocked));
+
+        let result = check_all(&graph);
+        assert!(!result.stuck_blocked.is_empty());
+        // Stuck blocked should not make the graph invalid
         assert!(result.ok);
     }
 }

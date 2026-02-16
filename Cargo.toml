@@ -16,6 +16,7 @@ default = ["matrix-lite"]
 matrix = ["dep:matrix-sdk", "dep:futures-util"]
 matrix-lite = ["dep:reqwest", "dep:urlencoding"]
 llm-tests = []  # gates tests that call Claude CLI
+test-support = []  # exposes test helpers for cross-crate use
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -48,3 +49,4 @@ libc = "0.2"
 [dev-dependencies]
 tempfile = "3.10"
 serial_test = "3"
+workgraph = { path = ".", features = ["test-support"] }

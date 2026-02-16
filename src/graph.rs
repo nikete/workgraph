@@ -72,7 +72,7 @@ pub struct Estimate {
 }
 
 /// Task status
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum Status {
     #[default]
@@ -82,6 +82,19 @@ pub enum Status {
     Blocked,
     Failed,
     Abandoned,
+}
+
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Status::Open => write!(f, "open"),
+            Status::InProgress => write!(f, "in-progress"),
+            Status::Done => write!(f, "done"),
+            Status::Blocked => write!(f, "blocked"),
+            Status::Failed => write!(f, "failed"),
+            Status::Abandoned => write!(f, "abandoned"),
+        }
+    }
 }
 
 /// Custom deserializer that maps legacy "pending-review" status to Done.
@@ -438,6 +451,33 @@ impl WorkGraph {
         }
     }
 
+    /// Look up a task by ID, returning an error with did-you-mean suggestions if not found.
+    pub fn get_task_or_err(&self, id: &str) -> anyhow::Result<&Task> {
+        self.get_task(id)
+            .ok_or_else(|| self.task_not_found_error(id))
+    }
+
+    /// Look up a task by ID (mutable), returning an error with did-you-mean suggestions if not found.
+    pub fn get_task_mut_or_err(&mut self, id: &str) -> anyhow::Result<&mut Task> {
+        let err = self.task_not_found_error(id);
+        self.get_task_mut(id).ok_or(err)
+    }
+
+    /// Build a "Task not found" error, suggesting similar task IDs if any exist.
+    fn task_not_found_error(&self, id: &str) -> anyhow::Error {
+        let suggestion = self
+            .tasks()
+            .map(|t| t.id.as_str())
+            .filter(|candidate| is_similar(id, candidate))
+            .min_by_key(|candidate| levenshtein(id, candidate))
+            .map(|s| s.to_string());
+
+        match suggestion {
+            Some(s) => anyhow::anyhow!("Task '{}' not found. Did you mean '{}'?", id, s),
+            None => anyhow::anyhow!("Task '{}' not found", id),
+        }
+    }
+
     /// Look up a resource by ID, returning `None` if the node is a task.
     pub fn get_resource(&self, id: &str) -> Option<&Resource> {
         match self.nodes.get(id) {
@@ -757,6 +797,33 @@ fn find_intermediate_tasks(graph: &WorkGraph, from: &str, to: &str) -> Vec<Strin
         .into_iter()
         .filter(|id| id != from && id != to && backward_reachable.contains(id))
         .collect()
+}
+
+/// Compute Levenshtein edit distance between two strings.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let (m, n) = (a.len(), b.len());
+    let mut prev = (0..=n).collect::<Vec<_>>();
+    let mut curr = vec![0; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
+/// Check if two task IDs are similar enough to suggest.
+/// Returns true if one is a prefix of the other, or Levenshtein distance <= 2.
+fn is_similar(query: &str, candidate: &str) -> bool {
+    if candidate.starts_with(query) || query.starts_with(candidate) {
+        return true;
+    }
+    levenshtein(query, candidate) <= 2
 }
 
 #[cfg(test)]
@@ -1470,5 +1537,95 @@ mod tests {
         let src = graph.get_task("src").unwrap();
         assert_eq!(src.loop_iteration, 1);
         assert_eq!(src.status, Status::Open);
+    }
+
+    #[test]
+    fn test_levenshtein() {
+        assert_eq!(levenshtein("", ""), 0);
+        assert_eq!(levenshtein("abc", "abc"), 0);
+        assert_eq!(levenshtein("abc", "abd"), 1);
+        assert_eq!(levenshtein("food", "foo"), 1);
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
+    }
+
+    #[test]
+    fn test_is_similar() {
+        // Prefix matches
+        assert!(is_similar("api", "api-design"));
+        assert!(is_similar("api-design", "api"));
+
+        // Edit distance <= 2
+        assert!(is_similar("foo", "food"));
+        assert!(is_similar("foo", "boo"));
+        assert!(is_similar("abc", "axc"));
+
+        // Too far apart
+        assert!(!is_similar("abc", "xyz"));
+        assert!(!is_similar("hello", "world"));
+    }
+
+    #[test]
+    fn test_get_task_or_err_found() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("api-design", "Design API")));
+
+        let task = graph.get_task_or_err("api-design").unwrap();
+        assert_eq!(task.title, "Design API");
+    }
+
+    #[test]
+    fn test_get_task_or_err_not_found_with_suggestion() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("api-design", "Design API")));
+
+        let err = graph.get_task_or_err("api-desgin").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not found"), "should say not found: {}", msg);
+        assert!(
+            msg.contains("Did you mean 'api-design'?"),
+            "should suggest api-design: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_get_task_or_err_not_found_no_suggestion() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("api-design", "Design API")));
+
+        let err = graph.get_task_or_err("zzz-totally-different").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("not found"), "should say not found: {}", msg);
+        assert!(
+            !msg.contains("Did you mean"),
+            "should not suggest anything: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_get_task_mut_or_err_found() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("build-ui", "Build UI")));
+
+        let task = graph.get_task_mut_or_err("build-ui").unwrap();
+        task.title = "Build UI v2".to_string();
+
+        assert_eq!(graph.get_task("build-ui").unwrap().title, "Build UI v2");
+    }
+
+    #[test]
+    fn test_get_task_or_err_prefix_suggestion() {
+        let mut graph = WorkGraph::new();
+        graph.add_node(Node::Task(make_task("api-design", "Design API")));
+        graph.add_node(Node::Task(make_task("build-ui", "Build UI")));
+
+        let err = graph.get_task_or_err("api").unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Did you mean 'api-design'?"),
+            "should suggest prefix match: {}",
+            msg
+        );
     }
 }

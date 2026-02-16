@@ -1,11 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::Serialize;
 use std::path::Path;
 use workgraph::graph::{Status, Task, WorkGraph};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Age bucket categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,13 +108,7 @@ struct AgingOutput {
 }
 
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let now = Utc::now();
 
     // Collect open/in-progress tasks with their ages
@@ -362,7 +353,7 @@ fn output_json(
         .map(|(bucket, count)| AgeBucketJson {
             bucket: bucket.label().to_string(),
             count: *count,
-            warning_level: bucket.warning_level().map(|s| s.to_string()),
+            warning_level: bucket.warning_level().map(std::string::ToString::to_string),
         })
         .collect();
 

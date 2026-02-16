@@ -2,23 +2,18 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::Path;
 use workgraph::graph::{LogEntry, Status};
-use workgraph::parser::{load_graph, save_graph};
+use workgraph::parser::save_graph;
 
+#[cfg(test)]
 use super::graph_path;
+#[cfg(test)]
+use workgraph::parser::load_graph;
 
 /// Claim a task for work: sets status to InProgress, optionally assigns an actor
 pub fn claim(dir: &Path, id: &str, actor: Option<&str>) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_mut_or_err(id)?;
 
     // Only allow claiming tasks that are Open or Blocked
     match task.status {
@@ -70,7 +65,7 @@ pub fn claim(dir: &Path, id: &str, actor: Option<&str>) -> Result<()> {
     };
     task.log.push(LogEntry {
         timestamp: Utc::now().to_rfc3339(),
-        actor: actor.map(|a| a.to_string()),
+        actor: actor.map(std::string::ToString::to_string),
         message: log_message,
     });
 
@@ -87,17 +82,9 @@ pub fn claim(dir: &Path, id: &str, actor: Option<&str>) -> Result<()> {
 
 /// Unclaim a task: sets status back to Open and clears assigned
 pub fn unclaim(dir: &Path, id: &str) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_mut_or_err(id)?;
 
     // Only allow unclaiming tasks that are InProgress (or Open, as a no-op).
     // Terminal states should not be reverted via unclaim.

@@ -24,9 +24,7 @@ pub fn run(
     }
 
     let graph = load_graph(&path)?;
-    let task = graph
-        .get_task(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_or_err(task_id)?;
 
     // Step 1: Verify task is done or failed
     // Failed tasks are also evaluated — there is useful signal in what kinds
@@ -130,7 +128,7 @@ pub fn run(
     // Determine the model to use
     let config = Config::load_or_default(dir);
     let model = evaluator_model
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or(config.agency.evaluator_model.clone())
         .or(task.model.clone())
         .unwrap_or_else(|| config.agent.model.clone());

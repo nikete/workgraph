@@ -3,9 +3,6 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Path;
 use workgraph::graph::{Node, Resource};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 pub fn run_add(
     dir: &Path,
@@ -15,14 +12,7 @@ pub fn run_add(
     available: Option<f64>,
     unit: Option<&str>,
 ) -> Result<()> {
-    let path = graph_path(dir);
-
-    // Load existing graph to check for ID conflicts
-    let graph = if path.exists() {
-        load_graph(&path).context("Failed to load graph")?
-    } else {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    };
+    let (graph, path) = super::load_workgraph(dir)?;
 
     // Check for ID conflicts
     if graph.get_node(id).is_some() {
@@ -54,13 +44,7 @@ pub fn run_add(
 }
 
 pub fn run_list(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     let resources: Vec<_> = graph.resources().collect();
 
@@ -98,9 +82,11 @@ pub fn run_list(dir: &Path, json: bool) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::graph_path;
     use super::*;
     use std::fs;
     use tempfile::TempDir;
+    use workgraph::parser::load_graph;
 
     fn setup_workgraph() -> TempDir {
         let temp_dir = TempDir::new().unwrap();

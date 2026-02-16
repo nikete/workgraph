@@ -2,26 +2,21 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::Path;
 use workgraph::graph::{LogEntry, Status};
-use workgraph::parser::{load_graph, save_graph};
+use workgraph::parser::save_graph;
 
+#[cfg(test)]
 use super::graph_path;
+#[cfg(test)]
+use workgraph::parser::load_graph;
 
 /// Reclaim a task from a dead/unresponsive agent
 ///
 /// This allows forcefully taking over a task that is currently assigned to another agent.
 /// The task must be in InProgress status to be reclaimed.
 pub fn run(dir: &Path, task_id: &str, from_actor: &str, to_actor: &str) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     // Check that task is in progress
     if task.status != Status::InProgress {

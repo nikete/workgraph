@@ -299,7 +299,7 @@ impl DagLayout {
                 let task = tasks.get(task_id);
                 let title = task.map(|t| t.title.as_str()).unwrap_or("");
                 let indicator =
-                    status_indicator_str(&task.map(|t| t.status.clone()).unwrap_or(Status::Open));
+                    status_indicator_str(&task.map(|t| t.status).unwrap_or(Status::Open));
                 // Box content: " indicator title " + 2 for borders
                 let content_width = indicator.len() + 1 + title.len() + 2;
                 let w = (content_width + 2).clamp(MIN_NODE_WIDTH, MAX_NODE_WIDTH);
@@ -362,7 +362,7 @@ impl DagLayout {
                 layout_nodes.push(LayoutNode {
                     task_id: task_id.to_string(),
                     title: task.map(|t| t.title.clone()).unwrap_or_default(),
-                    status: task.map(|t| t.status.clone()).unwrap_or(Status::Open),
+                    status: task.map(|t| t.status).unwrap_or(Status::Open),
                     critical: critical_ids.contains(task_id),
                     active_agent_count: agent_count,
                     active_agent_ids: agent_ids,
@@ -1322,7 +1322,7 @@ fn draw_node(buf: &mut [Vec<Cell>], node: &LayoutNode, buf_width: usize, buf_hei
 }
 
 fn set_cell(buf: &mut [Vec<Cell>], x: usize, y: usize, ch: char, style: CellStyle) {
-    if y < buf.len() && x < buf.get(y).map_or(0, |row| row.len()) {
+    if y < buf.len() && x < buf.get(y).map_or(0, Vec::len) {
         buf[y][x] = Cell { ch, style };
     }
 }

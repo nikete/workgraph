@@ -2,9 +2,6 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Embedded SKILL.md content - baked into binary at compile time
 const SKILL_CONTENT: &str = include_str!("../../.claude/skills/wg/SKILL.md");
@@ -27,13 +24,7 @@ struct TaskSkills {
 
 /// List all skills used across tasks
 pub fn run_list(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Build a map of skill -> tasks that require it
     let mut skill_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -71,17 +62,9 @@ pub fn run_list(dir: &Path, json: bool) -> Result<()> {
 
 /// Show skills for a specific task
 pub fn run_task(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_or_err(id)?;
 
     if json {
         let output = TaskSkills {
@@ -104,13 +87,7 @@ pub fn run_task(dir: &Path, id: &str, json: bool) -> Result<()> {
 
 /// Find tasks requiring a specific skill
 pub fn run_find(dir: &Path, skill: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     let matching_tasks: Vec<_> = graph
         .tasks()

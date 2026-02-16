@@ -66,7 +66,41 @@ pub mod why_blocked;
 pub mod workload;
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use workgraph::parser::load_graph;
+
+/// Load the workgraph (immutable) from the given directory.
+/// Returns the graph and the path to the graph file (needed for save_graph).
+pub fn load_workgraph(dir: &Path) -> Result<(workgraph::graph::WorkGraph, PathBuf)> {
+    let path = graph_path(dir);
+    if !path.exists() {
+        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
+    }
+    let graph = load_graph(&path).context("Failed to load graph")?;
+    Ok((graph, path))
+}
+
+/// Load the workgraph (mutable) from the given directory.
+/// Returns the graph and the path to the graph file (needed for save_graph).
+pub fn load_workgraph_mut(dir: &Path) -> Result<(workgraph::graph::WorkGraph, PathBuf)> {
+    load_workgraph(dir)
+}
+
+/// Check if a process with the given PID is alive.
+///
+/// Uses `kill(pid, 0)` on Unix to probe without sending a signal.
+/// On non-Unix platforms, conservatively assumes the process is alive.
+#[cfg(unix)]
+pub fn is_process_alive(pid: u32) -> bool {
+    unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+#[cfg(not(unix))]
+pub fn is_process_alive(_pid: u32) -> bool {
+    true
+}
 
 pub fn graph_path(dir: &Path) -> std::path::PathBuf {
     dir.join("graph.jsonl")

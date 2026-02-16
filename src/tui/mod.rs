@@ -199,7 +199,7 @@ fn handle_graph_key(app: &mut App, code: KeyCode) {
             let agent_id = app
                 .graph_explorer
                 .as_ref()
-                .and_then(|e| e.selected_task_first_agent());
+                .and_then(app::GraphExplorer::selected_task_first_agent);
             if let Some(agent_id) = agent_id {
                 app.open_log_viewer_for_agent(&agent_id);
             } else {

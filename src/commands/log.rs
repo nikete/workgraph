@@ -2,23 +2,16 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::Path;
 use workgraph::graph::LogEntry;
-use workgraph::parser::{load_graph, save_graph};
+use workgraph::parser::save_graph;
 
+#[cfg(test)]
 use super::graph_path;
 
 /// Add a log entry to a task
 pub fn run_add(dir: &Path, id: &str, message: &str, actor: Option<&str>) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_mut_or_err(id)?;
 
     let entry = LogEntry {
         timestamp: Utc::now().to_rfc3339(),
@@ -29,6 +22,7 @@ pub fn run_add(dir: &Path, id: &str, message: &str, actor: Option<&str>) -> Resu
     task.log.push(entry);
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     let actor_str = actor.map(|a| format!(" ({})", a)).unwrap_or_default();
     println!("Added log entry to '{}'{}", id, actor_str);
@@ -37,17 +31,9 @@ pub fn run_add(dir: &Path, id: &str, message: &str, actor: Option<&str>) -> Resu
 
 /// List log entries for a task
 pub fn run_list(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_or_err(id)?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&task.log)?);

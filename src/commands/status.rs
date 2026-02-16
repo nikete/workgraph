@@ -133,7 +133,7 @@ fn gather_service_status(dir: &Path) -> Result<ServiceStatusInfo> {
                 .map(|started| {
                     let now = chrono::Utc::now();
                     let duration = now.signed_duration_since(started);
-                    format_duration_short(duration.num_seconds())
+                    workgraph::format_duration(duration.num_seconds(), false)
                 })
                 .ok();
 
@@ -269,11 +269,19 @@ fn gather_task_summary(dir: &Path) -> Result<TaskSummaryInfo> {
             Status::Done => {
                 done_total += 1;
                 // Check if completed today
-                if let Some(ref completed_at) = task.completed_at
-                    && let Ok(completed) = completed_at.parse::<DateTime<Utc>>()
-                    && completed >= today_start
-                {
-                    done_today += 1;
+                if let Some(ref completed_at) = task.completed_at {
+                    match completed_at.parse::<DateTime<Utc>>() {
+                        Ok(completed) if completed >= today_start => {
+                            done_today += 1;
+                        }
+                        Ok(_) => {} // completed before today
+                        Err(e) => {
+                            eprintln!(
+                                "warning: task '{}' has malformed completed_at timestamp '{}': {}",
+                                task.id, completed_at, e
+                            );
+                        }
+                    }
                 }
             }
             Status::Blocked => {
@@ -309,8 +317,16 @@ fn gather_recent_activity(dir: &Path) -> Result<Vec<RecentActivityEntry>> {
         .filter(|t| t.status == Status::Done && t.completed_at.is_some())
         .filter_map(|t| {
             let completed_at = t.completed_at.as_ref()?;
-            let ts = completed_at.parse::<DateTime<Utc>>().ok()?;
-            Some((ts, t.id.clone(), t.title.clone()))
+            match completed_at.parse::<DateTime<Utc>>() {
+                Ok(ts) => Some((ts, t.id.clone(), t.title.clone())),
+                Err(e) => {
+                    eprintln!(
+                        "warning: task '{}' has malformed completed_at timestamp '{}': {}",
+                        t.id, completed_at, e
+                    );
+                    None
+                }
+            }
         })
         .collect();
 
@@ -413,41 +429,7 @@ fn print_status(status: &StatusOutput) {
     }
 }
 
-/// Format duration in a compact way (e.g., "5h", "1d 2h", "30m")
-fn format_duration_short(secs: i64) -> String {
-    if secs < 60 {
-        format!("{}s", secs)
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
-    } else if secs < 86400 {
-        let hours = secs / 3600;
-        let mins = (secs % 3600) / 60;
-        if mins > 0 {
-            format!("{}h {}m", hours, mins)
-        } else {
-            format!("{}h", hours)
-        }
-    } else {
-        let days = secs / 86400;
-        let hours = (secs % 86400) / 3600;
-        if hours > 0 {
-            format!("{}d {}h", days, hours)
-        } else {
-            format!("{}d", days)
-        }
-    }
-}
-
-/// Check if a process is running (reusing logic from service.rs)
-#[cfg(unix)]
-fn is_process_running(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(not(unix))]
-fn is_process_running(_pid: u32) -> bool {
-    true
-}
+use super::is_process_alive as is_process_running;
 
 #[cfg(test)]
 mod tests {
@@ -462,16 +444,6 @@ mod tests {
             title: title.to_string(),
             ..Task::default()
         }
-    }
-
-    #[test]
-    fn test_format_duration_short() {
-        assert_eq!(format_duration_short(30), "30s");
-        assert_eq!(format_duration_short(90), "1m");
-        assert_eq!(format_duration_short(3600), "1h");
-        assert_eq!(format_duration_short(3660), "1h 1m");
-        assert_eq!(format_duration_short(86400), "1d");
-        assert_eq!(format_duration_short(90000), "1d 1h");
     }
 
     #[test]
@@ -544,15 +516,6 @@ mod tests {
         assert_eq!(recent.len(), 5);
         // Most recent should be first (t1 is most recent)
         assert_eq!(recent[0].task_id, "t1");
-    }
-
-    #[test]
-    fn test_format_duration_edge_cases() {
-        assert_eq!(format_duration_short(0), "0s");
-        assert_eq!(format_duration_short(59), "59s");
-        assert_eq!(format_duration_short(60), "1m");
-        assert_eq!(format_duration_short(119), "1m");
-        assert_eq!(format_duration_short(120), "2m");
     }
 
     #[test]

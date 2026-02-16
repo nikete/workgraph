@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
 use chrono::{Duration, Utc};
 use std::path::Path;
-use workgraph::parser::{load_graph, save_graph};
+use workgraph::parser::save_graph;
 
+#[cfg(test)]
 use super::graph_path;
+#[cfg(test)]
+use workgraph::parser::load_graph;
 
 pub fn run(
     dir: &Path,
@@ -11,17 +14,9 @@ pub fn run(
     after_hours: Option<f64>,
     at_timestamp: Option<&str>,
 ) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_mut_or_err(id)?;
 
     let new_timestamp = if let Some(hours) = after_hours {
         // Calculate timestamp as now + hours
@@ -42,12 +37,14 @@ pub fn run(
         // Clear the not_before (make it ready now)
         task.not_before = None;
         save_graph(&graph, &path).context("Failed to save graph")?;
+        super::notify_graph_changed(dir);
         println!("Cleared not_before for '{}' - task is now ready", id);
         return Ok(());
     };
 
     task.not_before = Some(new_timestamp.clone());
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!("Rescheduled '{}' - not ready until {}", id, new_timestamp);
     Ok(())

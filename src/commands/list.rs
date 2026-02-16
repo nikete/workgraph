@@ -1,19 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::path::Path;
 use workgraph::graph::Status;
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 pub fn run(dir: &Path, status_filter: Option<&str>, paused_only: bool, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     let status_filter: Option<Status> = match status_filter {
         Some("open") => Some(Status::Open),
@@ -107,12 +98,13 @@ fn format_ready_after_hint(ready_after: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::graph_path;
     use super::*;
     use chrono::Duration;
     use std::fs;
     use tempfile::tempdir;
     use workgraph::graph::{Node, Task, WorkGraph};
-    use workgraph::parser::save_graph;
+    use workgraph::parser::{load_graph, save_graph};
 
     fn make_task(id: &str, title: &str, status: Status) -> Task {
         Task {

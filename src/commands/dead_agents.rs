@@ -9,6 +9,8 @@
 //!   wg dead-agents --check           # Just check, don't modify
 //!   wg dead-agents --cleanup         # Mark dead and unclaim tasks
 //!   wg dead-agents --threshold 10    # Use 10-minute threshold (default: from config)
+//!   wg dead-agents --purge           # Remove dead/done/failed entries from registry
+//!   wg dead-agents --purge --delete-dirs  # Also delete agent work directories
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -214,8 +216,8 @@ pub fn run_cleanup(
             }
 
             if !result.errors.is_empty() {
-                println!();
-                println!("Errors:");
+                eprintln!();
+                eprintln!("Errors:");
                 for err in &result.errors {
                     eprintln!("  {}", err);
                 }
@@ -262,18 +264,117 @@ pub fn run_remove_dead(dir: &Path, json: bool) -> Result<Vec<String>> {
     Ok(dead_ids)
 }
 
-/// Check if a process is still running
-#[cfg(unix)]
-pub fn is_process_alive(pid: u32) -> bool {
-    // Use kill with signal 0 to check if process exists
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+/// Purge dead agents: remove from registry and optionally delete work directories
+pub fn run_purge(dir: &Path, delete_dirs: bool, json: bool) -> Result<PurgeResult> {
+    let mut locked_registry = AgentRegistry::load_locked(dir)?;
+
+    // Find all dead/done/failed agents
+    let dead_entries: Vec<(String, String)> = locked_registry
+        .list_agents()
+        .iter()
+        .filter(|a| {
+            matches!(
+                a.status,
+                AgentStatus::Dead | AgentStatus::Done | AgentStatus::Failed
+            )
+        })
+        .map(|a| (a.id.clone(), a.task_id.clone()))
+        .collect();
+
+    // Remove from registry
+    let mut removed_ids = Vec::new();
+    for (id, _) in &dead_entries {
+        locked_registry.unregister_agent(id);
+        removed_ids.push(id.clone());
+    }
+
+    locked_registry.save()?;
+
+    // Optionally delete agent work directories
+    let mut dirs_deleted = Vec::new();
+    let mut dir_errors = Vec::new();
+    if delete_dirs {
+        let agents_dir = dir.join("agents");
+        for (id, _) in &dead_entries {
+            let agent_dir = agents_dir.join(id);
+            if agent_dir.exists() {
+                match std::fs::remove_dir_all(&agent_dir) {
+                    Ok(()) => dirs_deleted.push(id.clone()),
+                    Err(e) => {
+                        dir_errors.push(format!("Failed to delete {}: {}", agent_dir.display(), e))
+                    }
+                }
+            }
+        }
+    }
+
+    let result = PurgeResult {
+        removed_ids,
+        dirs_deleted,
+        dir_errors,
+    };
+
+    if json {
+        let output = serde_json::json!({
+            "purged_from_registry": result.removed_ids,
+            "dirs_deleted": result.dirs_deleted,
+            "errors": result.dir_errors,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if result.removed_ids.is_empty() {
+        println!("No dead/done/failed agents to purge.");
+    } else {
+        println!(
+            "Purged {} agent(s) from registry:",
+            result.removed_ids.len()
+        );
+        for id in &result.removed_ids {
+            println!("  {}", id);
+        }
+
+        if !result.dirs_deleted.is_empty() {
+            println!();
+            println!(
+                "Deleted {} agent director{}:",
+                result.dirs_deleted.len(),
+                if result.dirs_deleted.len() == 1 {
+                    "y"
+                } else {
+                    "ies"
+                }
+            );
+            for id in &result.dirs_deleted {
+                println!("  .workgraph/agents/{}/", id);
+            }
+        }
+
+        if !result.dir_errors.is_empty() {
+            eprintln!();
+            eprintln!("Errors:");
+            for err in &result.dir_errors {
+                eprintln!("  {}", err);
+            }
+        }
+
+        if !delete_dirs && !result.removed_ids.is_empty() {
+            println!();
+            println!("Tip: use --delete-dirs to also remove agent work directories.");
+        }
+    }
+
+    Ok(result)
 }
 
-#[cfg(not(unix))]
-pub fn is_process_alive(_pid: u32) -> bool {
-    // On non-Unix, assume process is alive
-    true
+/// Result of purge operation
+#[derive(Debug)]
+pub struct PurgeResult {
+    pub removed_ids: Vec<String>,
+    pub dirs_deleted: Vec<String>,
+    pub dir_errors: Vec<String>,
 }
+
+// Re-export from the shared utility in mod.rs
+pub use super::is_process_alive;
 
 /// Check for agents whose process has actually died
 pub fn run_check_processes(dir: &Path, json: bool) -> Result<()> {
@@ -492,6 +593,57 @@ mod tests {
 
         let result = run_check_processes(temp_dir.path(), false);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_purge_removes_dead_from_registry() {
+        let temp_dir = setup_with_agent_and_task();
+
+        // First mark as dead via cleanup
+        run_cleanup(temp_dir.path(), Some(1), false).unwrap();
+
+        // Purge without deleting dirs
+        let result = run_purge(temp_dir.path(), false, false).unwrap();
+        assert_eq!(result.removed_ids.len(), 1);
+        assert!(result.dirs_deleted.is_empty());
+
+        // Verify agent is gone from registry
+        let registry = AgentRegistry::load(temp_dir.path()).unwrap();
+        assert!(registry.get_agent("agent-1").is_none());
+    }
+
+    #[test]
+    fn test_purge_with_delete_dirs() {
+        let temp_dir = setup_with_agent_and_task();
+
+        // Create an agent work directory
+        let agent_dir = temp_dir.path().join("agents").join("agent-1");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+        std::fs::write(agent_dir.join("output.log"), "test output").unwrap();
+
+        // Mark as dead via cleanup
+        run_cleanup(temp_dir.path(), Some(1), false).unwrap();
+
+        // Purge with delete_dirs
+        let result = run_purge(temp_dir.path(), true, false).unwrap();
+        assert_eq!(result.removed_ids.len(), 1);
+        assert_eq!(result.dirs_deleted.len(), 1);
+
+        // Verify directory is gone
+        assert!(!agent_dir.exists());
+    }
+
+    #[test]
+    fn test_purge_no_dead_agents() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Register an agent with fresh heartbeat (alive)
+        let mut registry = AgentRegistry::new();
+        registry.register_agent(12345, "task-1", "claude", "/tmp/output.log");
+        registry.save(temp_dir.path()).unwrap();
+
+        let result = run_purge(temp_dir.path(), false, false).unwrap();
+        assert!(result.removed_ids.is_empty());
     }
 
     #[test]

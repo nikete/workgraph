@@ -156,8 +156,8 @@ pub fn run_all(dir: &Path, force: bool, json: bool) -> Result<()> {
         }
 
         if !errors.is_empty() {
-            println!();
-            println!("Errors:");
+            eprintln!();
+            eprintln!("Errors:");
             for err in &errors {
                 eprintln!("  {}", err);
             }
@@ -270,22 +270,15 @@ fn unclaim_task(dir: &Path, task_id: &str, agent_id: &str) -> Result<()> {
             });
 
             save_graph(&graph, &path).context("Failed to save graph")?;
+            super::notify_graph_changed(dir);
         }
     }
 
     Ok(())
 }
 
-/// Check if a process is running
-#[cfg(all(unix, test))]
-pub fn is_process_running(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(all(not(unix), test))]
-pub fn is_process_running(_pid: u32) -> bool {
-    true // Assume running on non-Unix
-}
+#[cfg(test)]
+use super::is_process_alive as is_process_running;
 
 #[cfg(test)]
 mod tests {

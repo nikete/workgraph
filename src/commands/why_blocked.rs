@@ -1,11 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
 use workgraph::WorkGraph;
 use workgraph::graph::{Status, Task};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Information about a blocking chain node
 #[derive(Debug, Clone)]
@@ -23,17 +20,9 @@ struct RootBlocker<'a> {
 }
 
 pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_or_err(id)?;
 
     // Build the blocking chain tree
     let mut visited = HashSet::new();
@@ -71,7 +60,7 @@ fn build_blocking_tree(
     visited: &mut HashSet<String>,
 ) -> BlockingNode {
     let task = graph.get_task(task_id);
-    let status = task.map(|t| t.status.clone()).unwrap_or(Status::Open);
+    let status = task.map(|t| t.status).unwrap_or(Status::Open);
 
     let mut node = BlockingNode {
         id: task_id.to_string(),

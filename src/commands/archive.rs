@@ -108,7 +108,7 @@ fn load_archive(archive_path: &Path) -> Result<Vec<Task>> {
     Ok(tasks)
 }
 
-pub fn run(dir: &Path, dry_run: bool, older: Option<&str>, list: bool) -> Result<()> {
+pub fn run(dir: &Path, dry_run: bool, older: Option<&str>, list: bool, json: bool) -> Result<()> {
     let path = graph_path(dir);
     let arch_path = archive_path(dir);
 
@@ -119,7 +119,19 @@ pub fn run(dir: &Path, dry_run: bool, older: Option<&str>, list: bool) -> Result
     // Handle --list: show archived tasks
     if list {
         let tasks = load_archive(&arch_path)?;
-        if tasks.is_empty() {
+        if json {
+            let items: Vec<serde_json::Value> = tasks
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "id": t.id,
+                        "title": t.title,
+                        "completed_at": t.completed_at,
+                    })
+                })
+                .collect();
+            println!("{}", serde_json::to_string_pretty(&items)?);
+        } else if tasks.is_empty() {
             println!("No archived tasks.");
         } else {
             println!("Archived tasks ({}):", tasks.len());
@@ -173,6 +185,7 @@ pub fn run(dir: &Path, dry_run: bool, older: Option<&str>, list: bool) -> Result
 
     // 3. Save the modified graph
     save_graph(&modified_graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!(
         "Archived {} tasks to {:?}",
@@ -292,7 +305,7 @@ mod tests {
         save_graph(&graph, &graph_file).unwrap();
 
         // Run in dry-run mode
-        run(wg_dir, true, None, false).unwrap();
+        run(wg_dir, true, None, false, false).unwrap();
 
         // Verify graph is unchanged
         let loaded = load_graph(&graph_file).unwrap();
@@ -324,7 +337,7 @@ mod tests {
         save_graph(&graph, &graph_file).unwrap();
 
         // Run archive
-        run(wg_dir, false, None, false).unwrap();
+        run(wg_dir, false, None, false, false).unwrap();
 
         // Verify done task removed from graph
         let loaded = load_graph(&graph_file).unwrap();
@@ -363,6 +376,41 @@ mod tests {
         append_to_archive(&tasks, &arch_path).unwrap();
 
         // Run list - should not error
-        run(wg_dir, false, None, true).unwrap();
+        run(wg_dir, false, None, true, false).unwrap();
+    }
+
+    #[test]
+    fn test_run_list_json() {
+        let dir = tempdir().unwrap();
+        let wg_dir = dir.path();
+
+        // Create .workgraph directory structure
+        std::fs::create_dir_all(wg_dir).unwrap();
+        let graph_file = wg_dir.join("graph.jsonl");
+        let arch_path = wg_dir.join("archive.jsonl");
+
+        // Create empty graph
+        let graph = WorkGraph::new();
+        save_graph(&graph, &graph_file).unwrap();
+
+        // Create archive with some tasks
+        let tasks = vec![
+            make_task(
+                "t1",
+                "First Archived",
+                Status::Done,
+                Some("2024-01-01T00:00:00Z"),
+            ),
+            make_task(
+                "t2",
+                "Second Archived",
+                Status::Done,
+                Some("2024-02-15T12:00:00Z"),
+            ),
+        ];
+        append_to_archive(&tasks, &arch_path).unwrap();
+
+        // Run list with json=true (output goes to stdout, just verify no error)
+        run(wg_dir, false, None, true, true).unwrap();
     }
 }

@@ -1,10 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use workgraph::graph::Status;
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Information about a dead end task
 struct DeadEndInfo {
@@ -15,13 +12,7 @@ struct DeadEndInfo {
 
 /// Run the structure analysis command
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Collect all tasks
     let tasks: Vec<_> = graph.tasks().collect();
@@ -70,7 +61,7 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
         .filter(|t| {
             dependents
                 .get(t.id.as_str())
-                .map(|d| d.is_empty())
+                .map(HashSet::is_empty)
                 .unwrap_or(true)
         })
         .map(|t| {
@@ -92,7 +83,7 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
 
             DeadEndInfo {
                 id: t.id.clone(),
-                status: t.status.clone(),
+                status: t.status,
                 is_final_deliverable: is_final,
             }
         })

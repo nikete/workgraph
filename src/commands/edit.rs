@@ -38,9 +38,7 @@ pub fn run(
     let mut graph = load_graph(&path).context("Failed to load graph")?;
 
     // Validate task exists
-    if graph.get_task(task_id).is_none() {
-        anyhow::bail!("Task '{}' not found", task_id);
-    }
+    graph.get_task_or_err(task_id)?;
 
     // Validate self-blocking
     for dep in add_blocked_by {
@@ -60,9 +58,7 @@ pub fn run(
 
     // Modify the task in a block so the mutable borrow is released afterwards
     {
-        let task = graph
-            .get_task_mut(task_id)
-            .ok_or_else(|| anyhow::anyhow!("Task '{}' not found in graph", task_id))?;
+        let task = graph.get_task_mut_or_err(task_id)?;
 
         // Update title
         if let Some(new_title) = title {

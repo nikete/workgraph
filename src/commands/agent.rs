@@ -440,9 +440,7 @@ fn claim_task(dir: &Path, task_id: &str, actor_id: &str) -> Result<()> {
     let path = graph_path(dir);
     let mut graph = load_graph(&path).context("Failed to load graph")?;
 
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     task.status = Status::InProgress;
     task.assigned = Some(actor_id.to_string());
@@ -454,6 +452,7 @@ fn claim_task(dir: &Path, task_id: &str, actor_id: &str) -> Result<()> {
     });
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
     Ok(())
 }
 
@@ -462,9 +461,7 @@ fn complete_task(dir: &Path, task_id: &str, actor_id: &str) -> Result<()> {
     let path = graph_path(dir);
     let mut graph = load_graph(&path).context("Failed to load graph")?;
 
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     task.status = Status::Done;
     task.completed_at = Some(Utc::now().to_rfc3339());
@@ -478,6 +475,7 @@ fn complete_task(dir: &Path, task_id: &str, actor_id: &str) -> Result<()> {
     evaluate_loop_edges(&mut graph, task_id);
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
     Ok(())
 }
 
@@ -486,9 +484,7 @@ fn fail_task(dir: &Path, task_id: &str, actor_id: &str, reason: &str) -> Result<
     let path = graph_path(dir);
     let mut graph = load_graph(&path).context("Failed to load graph")?;
 
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     task.status = Status::Failed;
     task.retry_count += 1;
@@ -500,6 +496,7 @@ fn fail_task(dir: &Path, task_id: &str, actor_id: &str, reason: &str) -> Result<
     });
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
     Ok(())
 }
 

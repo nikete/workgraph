@@ -37,8 +37,7 @@ use workgraph::parser::{load_graph, save_graph};
 use workgraph::query::ready_tasks;
 use workgraph::service::registry::{AgentEntry, AgentRegistry, AgentStatus};
 
-use super::dead_agents::is_process_alive;
-use super::{graph_path, spawn};
+use super::{graph_path, is_process_alive, spawn};
 
 // ---------------------------------------------------------------------------
 // Persistent daemon logger
@@ -165,10 +164,10 @@ pub fn tail_log(dir: &Path, n: usize, level_filter: Option<&str>) -> Vec<String>
         lines
             .iter()
             .filter(|l| l.contains(&tag))
-            .map(|l| l.to_string())
+            .map(std::string::ToString::to_string)
             .collect()
     } else {
-        lines.iter().map(|l| l.to_string()).collect()
+        lines.iter().map(std::string::ToString::to_string).collect()
     };
     filtered
         .into_iter()
@@ -410,10 +409,7 @@ fn check_ready_or_return(
 /// `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
 ///
 /// Returns `true` if the graph was modified.
-fn build_auto_assign_tasks(
-    graph: &mut workgraph::graph::WorkGraph,
-    config: &Config,
-) -> bool {
+fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Config) -> bool {
     let mut modified = false;
 
     // Collect task data to avoid holding references while mutating graph
@@ -1409,7 +1405,7 @@ pub fn run_tick(
     let config = Config::load(dir)?;
     let max_agents = max_agents.unwrap_or(config.coordinator.max_agents);
     let executor = executor
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .unwrap_or_else(|| config.coordinator.executor.clone());
 
     let graph_path = graph_path(dir);
@@ -1418,7 +1414,7 @@ pub fn run_tick(
     }
 
     let model = model
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| config.coordinator.model.clone());
     println!(
         "Running single coordinator tick (max_agents={}, executor={}, model={})...",
@@ -1639,10 +1635,10 @@ pub fn run_start(
     let eff_max_agents = max_agents.unwrap_or(config.coordinator.max_agents);
     let eff_poll_interval = interval.unwrap_or(config.coordinator.poll_interval);
     let eff_executor = executor
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .unwrap_or_else(|| config.coordinator.executor.clone());
     let eff_model: Option<String> = model
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .or_else(|| config.coordinator.model.clone());
 
     let log_path_str = log_path.to_string_lossy().to_string();
@@ -1771,7 +1767,7 @@ pub fn run_daemon(
     let mut daemon_cfg = DaemonConfig {
         max_agents: cli_max_agents.unwrap_or(config.coordinator.max_agents),
         executor: cli_executor
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .unwrap_or_else(|| config.coordinator.executor.clone()),
         // The poll_interval is the slow background safety-net timer.
         // CLI --interval overrides it; otherwise use config.coordinator.poll_interval.
@@ -1779,7 +1775,7 @@ pub fn run_daemon(
             cli_interval.unwrap_or(config.coordinator.poll_interval),
         ),
         model: cli_model
-            .map(|s| s.to_string())
+            .map(std::string::ToString::to_string)
             .or_else(|| config.coordinator.model.clone()),
         paused: false,
     };
@@ -2437,7 +2433,7 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
         .map(|started| {
             let now = chrono::Utc::now();
             let duration = now.signed_duration_since(started);
-            format_duration(duration.num_seconds())
+            workgraph::format_duration(duration.num_seconds(), false)
         })
         .unwrap_or_else(|_| "unknown".to_string());
 
@@ -2548,9 +2544,9 @@ pub fn run_reload(
 ) -> Result<()> {
     let request = IpcRequest::Reconfigure {
         max_agents,
-        executor: executor.map(|s| s.to_string()),
+        executor: executor.map(std::string::ToString::to_string),
         poll_interval: interval,
-        model: model.map(|s| s.to_string()),
+        model: model.map(std::string::ToString::to_string),
     };
 
     let response = send_request(dir, request)?;
@@ -2583,11 +2579,14 @@ pub fn run_reload(
         if let Some(data) = &response.data
             && let Some(cfg) = data.get("config")
         {
-            let ma = cfg.get("max_agents").and_then(|v| v.as_u64()).unwrap_or(0);
+            let ma = cfg
+                .get("max_agents")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0);
             let ex = cfg.get("executor").and_then(|v| v.as_str()).unwrap_or("?");
             let pi = cfg
                 .get("poll_interval")
-                .and_then(|v| v.as_u64())
+                .and_then(serde_json::Value::as_u64)
                 .unwrap_or(0);
             let mdl = cfg
                 .get("model")
@@ -2683,33 +2682,7 @@ pub fn run_resume(_dir: &Path, _json: bool) -> Result<()> {
     anyhow::bail!("Service daemon is only supported on Unix systems")
 }
 
-/// Format a duration in seconds to human-readable string
-fn format_duration(secs: i64) -> String {
-    if secs < 60 {
-        format!("{}s", secs)
-    } else if secs < 3600 {
-        format!("{}m {}s", secs / 60, secs % 60)
-    } else if secs < 86400 {
-        let hours = secs / 3600;
-        let mins = (secs % 3600) / 60;
-        format!("{}h {}m", hours, mins)
-    } else {
-        let days = secs / 86400;
-        let hours = (secs % 86400) / 3600;
-        format!("{}d {}h", days, hours)
-    }
-}
-
-/// Check if a process is running
-#[cfg(unix)]
-fn is_process_running(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(not(unix))]
-fn is_process_running(_pid: u32) -> bool {
-    true
-}
+use super::is_process_alive as is_process_running;
 
 /// Public wrapper: check if the service process is alive
 pub fn is_service_alive(pid: u32) -> bool {
@@ -2911,14 +2884,6 @@ mod tests {
         assert!(!resp.ok);
         assert_eq!(resp.error, Some("Something went wrong".to_string()));
         assert!(resp.data.is_none());
-    }
-
-    #[test]
-    fn test_format_duration() {
-        assert_eq!(format_duration(30), "30s");
-        assert_eq!(format_duration(90), "1m 30s");
-        assert_eq!(format_duration(3661), "1h 1m");
-        assert_eq!(format_duration(90000), "1d 1h");
     }
 
     #[test]

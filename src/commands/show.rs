@@ -1,12 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::path::Path;
 use workgraph::graph::{LogEntry, LoopEdge, LoopGuard, Status};
-use workgraph::parser::load_graph;
 use workgraph::query::build_reverse_index;
-
-use super::graph_path;
 
 /// Blocker info with status
 #[derive(Debug, Serialize)]
@@ -84,17 +81,9 @@ fn is_not_paused(val: &bool) -> bool {
 }
 
 pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_or_err(id)?;
 
     // Build reverse index to find what this task blocks
     let reverse_index = build_reverse_index(&graph);
@@ -105,7 +94,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
         .iter()
         .map(|blocker_id| {
             let status = match graph.get_task(blocker_id) {
-                Some(t) => t.status.clone(),
+                Some(t) => t.status,
                 None => {
                     eprintln!(
                         "Warning: blocker '{}' referenced by '{}' not found in graph",
@@ -130,7 +119,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
                 .map(|dep_id| {
                     let status = graph
                         .get_task(dep_id)
-                        .map(|t| t.status.clone())
+                        .map(|t| t.status)
                         .unwrap_or(Status::Open);
                     BlockerInfo {
                         id: dep_id.clone(),
@@ -145,7 +134,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
         id: task.id.clone(),
         title: task.title.clone(),
         description: task.description.clone(),
-        status: task.status.clone(),
+        status: task.status,
         assigned: task.assigned.clone(),
         hours: task.estimate.as_ref().and_then(|e| e.hours),
         cost: task.estimate.as_ref().and_then(|e| e.cost),
@@ -187,9 +176,9 @@ fn print_human_readable(details: &TaskDetails) {
     println!("Task: {}", details.id);
     println!("Title: {}", details.title);
     if details.paused {
-        println!("Status: {} (PAUSED)", format_status(&details.status));
+        println!("Status: {} (PAUSED)", details.status);
     } else {
-        println!("Status: {}", format_status(&details.status));
+        println!("Status: {}", details.status);
     }
 
     if let Some(ref assigned) = details.assigned {
@@ -267,7 +256,7 @@ fn print_human_readable(details: &TaskDetails) {
         println!("  (none)");
     } else {
         for blocker in &details.blocked_by {
-            println!("  - {} ({})", blocker.id, format_status(&blocker.status));
+            println!("  - {} ({})", blocker.id, blocker.status);
         }
     }
 
@@ -279,7 +268,7 @@ fn print_human_readable(details: &TaskDetails) {
         println!("  (none)");
     } else {
         for blocked in &details.blocks {
-            println!("  - {} ({})", blocked.id, format_status(&blocked.status));
+            println!("  - {} ({})", blocked.id, blocked.status);
         }
     }
 
@@ -290,7 +279,7 @@ fn print_human_readable(details: &TaskDetails) {
         for edge in &details.loops_to {
             let guard_str = match &edge.guard {
                 Some(LoopGuard::TaskStatus { task, status }) => {
-                    format!(", guard: task:{}={}", task, format_status(status))
+                    format!(", guard: task:{}={}", task, status)
                 }
                 Some(LoopGuard::IterationLessThan(n)) => {
                     format!(", guard: iteration<{}", n)
@@ -375,17 +364,6 @@ fn format_countdown(timestamp: &str) -> String {
     }
 }
 
-fn format_status(status: &Status) -> &'static str {
-    match status {
-        Status::Open => "open",
-        Status::InProgress => "in-progress",
-        Status::Done => "done",
-        Status::Blocked => "blocked",
-        Status::Failed => "failed",
-        Status::Abandoned => "abandoned",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -421,11 +399,11 @@ mod tests {
     }
 
     #[test]
-    fn test_format_status() {
-        assert_eq!(format_status(&Status::Open), "open");
-        assert_eq!(format_status(&Status::InProgress), "in-progress");
-        assert_eq!(format_status(&Status::Done), "done");
-        assert_eq!(format_status(&Status::Blocked), "blocked");
+    fn test_status_display() {
+        assert_eq!(Status::Open.to_string(), "open");
+        assert_eq!(Status::InProgress.to_string(), "in-progress");
+        assert_eq!(Status::Done.to_string(), "done");
+        assert_eq!(Status::Blocked.to_string(), "blocked");
     }
 
     #[test]
@@ -474,13 +452,13 @@ mod tests {
     }
 
     #[test]
-    fn test_format_status_all_variants() {
-        assert_eq!(format_status(&Status::Open), "open");
-        assert_eq!(format_status(&Status::InProgress), "in-progress");
-        assert_eq!(format_status(&Status::Done), "done");
-        assert_eq!(format_status(&Status::Blocked), "blocked");
-        assert_eq!(format_status(&Status::Failed), "failed");
-        assert_eq!(format_status(&Status::Abandoned), "abandoned");
+    fn test_status_display_all_variants() {
+        assert_eq!(Status::Open.to_string(), "open");
+        assert_eq!(Status::InProgress.to_string(), "in-progress");
+        assert_eq!(Status::Done.to_string(), "done");
+        assert_eq!(Status::Blocked.to_string(), "blocked");
+        assert_eq!(Status::Failed.to_string(), "failed");
+        assert_eq!(Status::Abandoned.to_string(), "abandoned");
     }
 
     #[test]

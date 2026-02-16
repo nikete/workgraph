@@ -3,22 +3,17 @@ use chrono::Utc;
 use std::path::Path;
 use workgraph::agency::capture_task_output;
 use workgraph::graph::{LogEntry, Status};
-use workgraph::parser::{load_graph, save_graph};
+use workgraph::parser::save_graph;
 
+#[cfg(test)]
 use super::graph_path;
+#[cfg(test)]
+use workgraph::parser::load_graph;
 
 pub fn run(dir: &Path, id: &str, reason: Option<&str>) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_mut_or_err(id)?;
 
     if task.status == Status::Done {
         anyhow::bail!(
@@ -98,29 +93,8 @@ pub fn run(dir: &Path, id: &str, reason: Option<&str>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::tempdir;
-    use workgraph::graph::{Node, Task, WorkGraph};
-
-    fn make_task(id: &str, title: &str, status: Status) -> Task {
-        Task {
-            id: id.to_string(),
-            title: title.to_string(),
-            status,
-            ..Task::default()
-        }
-    }
-
-    fn setup_workgraph(dir: &Path, tasks: Vec<Task>) -> std::path::PathBuf {
-        fs::create_dir_all(dir).unwrap();
-        let path = graph_path(dir);
-        let mut graph = WorkGraph::new();
-        for task in tasks {
-            graph.add_node(Node::Task(task));
-        }
-        save_graph(&graph, &path).unwrap();
-        path
-    }
+    use workgraph::test_helpers::{make_task_with_status as make_task, setup_workgraph};
 
     #[test]
     fn test_fail_in_progress_task() {

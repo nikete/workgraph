@@ -1,29 +1,53 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
+use serde::Serialize;
 use std::path::Path;
 use workgraph::check::{LoopEdgeIssueKind, check_all};
-use workgraph::parser::load_graph;
 
-use super::graph_path;
+#[derive(Serialize)]
+struct CheckJsonOutput {
+    ok: bool,
+    cycles: Vec<Vec<String>>,
+    orphan_refs: Vec<workgraph::check::OrphanRef>,
+    loop_edge_issues: Vec<workgraph::check::LoopEdgeIssue>,
+    stale_assignments: Vec<workgraph::check::StaleAssignment>,
+    stuck_blocked: Vec<workgraph::check::StuckBlocked>,
+    node_count: usize,
+    loop_edge_count: usize,
+    warnings: usize,
+    errors: usize,
+}
 
-pub fn run(dir: &Path) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+pub fn run(dir: &Path, json: bool) -> Result<()> {
+    let (graph, _path) = super::load_workgraph(dir)?;
     let result = check_all(&graph);
 
-    let mut warnings = 0;
-    let mut errors = 0;
+    let warnings =
+        result.cycles.len() + result.stale_assignments.len() + result.stuck_blocked.len();
+    let errors = result.orphan_refs.len() + result.loop_edge_issues.len();
+    let loop_edge_count: usize = graph.tasks().map(|t| t.loops_to.len()).sum();
+
+    if json {
+        let output = CheckJsonOutput {
+            ok: result.ok,
+            cycles: result.cycles,
+            orphan_refs: result.orphan_refs,
+            loop_edge_issues: result.loop_edge_issues,
+            stale_assignments: result.stale_assignments,
+            stuck_blocked: result.stuck_blocked,
+            node_count: graph.len(),
+            loop_edge_count,
+            warnings,
+            errors,
+        };
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
 
     // Cycles are warnings (allowed for recurring tasks)
     if !result.cycles.is_empty() {
         eprintln!("Warning: Cycles detected (this is OK for recurring tasks):");
         for cycle in &result.cycles {
             eprintln!("  {}", cycle.join(" -> "));
-            warnings += 1;
         }
     }
 
@@ -34,7 +58,20 @@ pub fn run(dir: &Path) -> Result<()> {
         );
         for stale in &result.stale_assignments {
             eprintln!("  {} (assigned to '{}')", stale.task_id, stale.assigned);
-            warnings += 1;
+        }
+    }
+
+    // Stuck blocked tasks are warnings
+    if !result.stuck_blocked.is_empty() {
+        eprintln!(
+            "Warning: Stuck blocked tasks (all dependencies are terminal but task is still blocked):"
+        );
+        for stuck in &result.stuck_blocked {
+            eprintln!(
+                "  {} (blocked by: {})",
+                stuck.task_id,
+                stuck.blocked_by_ids.join(", ")
+            );
         }
     }
 
@@ -46,7 +83,6 @@ pub fn run(dir: &Path) -> Result<()> {
                 "  {} --[{}]--> {} (not found)",
                 orphan.from, orphan.relation, orphan.to
             );
-            errors += 1;
         }
     }
 
@@ -81,12 +117,10 @@ pub fn run(dir: &Path) -> Result<()> {
                 }
             };
             eprintln!("  {}", desc);
-            errors += 1;
         }
     }
 
     // Count loop edges for info
-    let loop_edge_count: usize = graph.tasks().map(|t| t.loops_to.len()).sum();
     if loop_edge_count > 0 && result.loop_edge_issues.is_empty() {
         println!("Loop edges: {} edge(s), all valid", loop_edge_count);
     }
@@ -104,6 +138,7 @@ pub fn run(dir: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::graph_path;
     use super::*;
     use tempfile::TempDir;
     use workgraph::graph::{LoopEdge, Node, Task};
@@ -133,7 +168,7 @@ mod tests {
         graph.add_node(Node::Task(make_task("t2", "Task 2")));
         setup_graph(&dir, &graph);
 
-        let result = run(&dir);
+        let result = run(&dir, false);
         assert!(result.is_ok(), "clean graph should pass check");
     }
 
@@ -148,7 +183,7 @@ mod tests {
         graph.add_node(Node::Task(t1));
         setup_graph(&dir, &graph);
 
-        let result = run(&dir);
+        let result = run(&dir, false);
         assert!(result.is_err(), "orphan refs should fail check");
     }
 
@@ -172,7 +207,7 @@ mod tests {
 
         // Cycles are warnings, not errors — run should succeed
         // (the command only bails on errors > 0, not warnings)
-        let result = run(&dir);
+        let result = run(&dir, false);
         assert!(
             result.is_ok(),
             "cycles alone should not cause check failure (they are warnings)"
@@ -195,7 +230,7 @@ mod tests {
         graph.add_node(Node::Task(t1));
         setup_graph(&dir, &graph);
 
-        let result = run(&dir);
+        let result = run(&dir, false);
         assert!(result.is_err(), "loop edge issues should fail check");
     }
 
@@ -205,7 +240,7 @@ mod tests {
         let dir = tmp.path().join(".workgraph");
         // Don't create anything — dir doesn't even exist
 
-        let result = run(&dir);
+        let result = run(&dir, false);
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("not initialized"));
@@ -229,7 +264,7 @@ mod tests {
         graph.add_node(Node::Task(t2));
         setup_graph(&dir, &graph);
 
-        let result = run(&dir);
+        let result = run(&dir, false);
         assert!(result.is_ok(), "valid loop edges should pass check");
     }
 
@@ -245,7 +280,7 @@ mod tests {
         setup_graph(&dir, &graph);
 
         // Stale assignments are warnings, not errors — run should succeed
-        let result = run(&dir);
+        let result = run(&dir, false);
         assert!(
             result.is_ok(),
             "stale assignments alone should not cause check failure (they are warnings)"

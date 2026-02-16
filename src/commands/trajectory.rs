@@ -1,11 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use workgraph::graph::{Status, Task, WorkGraph};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// A task in the trajectory with context flow info
 #[derive(Debug, Serialize, Clone)]
@@ -50,9 +47,7 @@ fn build_dependents_index(graph: &WorkGraph) -> HashMap<String, Vec<String>> {
 /// Find trajectory starting from a task
 /// A trajectory follows the path where outputs become inputs
 pub fn find_trajectory(graph: &WorkGraph, start_id: &str) -> Result<Trajectory> {
-    let start_task = graph
-        .get_task(start_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", start_id))?;
+    let start_task = graph.get_task_or_err(start_id)?;
 
     let dependents_index = build_dependents_index(graph);
     let mut steps = Vec::new();
@@ -79,7 +74,7 @@ pub fn find_trajectory(graph: &WorkGraph, start_id: &str) -> Result<Trajectory> 
         let step = TrajectoryStep {
             id: task.id.clone(),
             title: task.title.clone(),
-            status: task.status.clone(),
+            status: task.status,
             depth,
             receives,
             produces: produces.clone(),
@@ -136,13 +131,7 @@ pub fn find_trajectory(graph: &WorkGraph, start_id: &str) -> Result<Trajectory> 
 
 /// Show trajectory for a task
 pub fn run(dir: &Path, task_id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let trajectory = find_trajectory(&graph, task_id)?;
 
     if json {
@@ -191,13 +180,7 @@ pub fn run(dir: &Path, task_id: &str, json: bool) -> Result<()> {
 /// Note: Actor nodes have been removed from the graph. This function now
 /// shows all trajectories starting from ready tasks without capability filtering.
 pub fn suggest_for_actor(dir: &Path, actor_id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Find ready tasks
     let ready_tasks: Vec<&Task> = graph

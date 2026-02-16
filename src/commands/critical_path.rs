@@ -1,11 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
+use workgraph::format_hours;
 use workgraph::graph::{Status, WorkGraph};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Information about a task on the critical path
 #[derive(Debug, Clone, Serialize)]
@@ -37,13 +35,7 @@ struct CriticalPathOutput {
 }
 
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Get active tasks only (exclude terminal states: done, failed, abandoned)
     let active_tasks: Vec<_> = graph.tasks().filter(|t| !t.status.is_terminal()).collect();
@@ -69,7 +61,7 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
 
     // Detect cycles among active tasks
     let cycles = detect_cycles_among_active(&graph, &active_ids);
-    let cycle_nodes: HashSet<&str> = cycles.iter().flatten().map(|s| s.as_str()).collect();
+    let cycle_nodes: HashSet<&str> = cycles.iter().flatten().map(String::as_str).collect();
 
     // Build dependency graph (task_id -> list of tasks it blocks)
     // This is the "forward" direction for finding paths
@@ -114,7 +106,7 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
     };
 
     // Build critical task info
-    let critical_set: HashSet<&str> = critical_path.iter().map(|s| s.as_str()).collect();
+    let critical_set: HashSet<&str> = critical_path.iter().map(String::as_str).collect();
     let critical_tasks: Vec<CriticalTask> = critical_path
         .iter()
         .enumerate()
@@ -128,7 +120,7 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
                 CriticalTask {
                     id: t.id.clone(),
                     title: t.title.clone(),
-                    status: t.status.clone(),
+                    status: t.status,
                     hours: t.estimate.as_ref().and_then(|e| e.hours),
                     blocked_by,
                 }
@@ -237,18 +229,6 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Format hours nicely (no decimals if whole number)
-fn format_hours(hours: f64) -> String {
-    if !hours.is_finite() {
-        return "?".to_string();
-    }
-    if hours.fract() == 0.0 && hours >= i64::MIN as f64 && hours <= i64::MAX as f64 {
-        format!("{}", hours as i64)
-    } else {
-        format!("{:.1}", hours)
-    }
 }
 
 /// Build forward index: task_id -> tasks that it blocks (among active non-cycle tasks)

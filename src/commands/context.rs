@@ -1,11 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 use workgraph::graph::Status;
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Source of context (which dependency produced it)
 #[derive(Debug, Serialize)]
@@ -28,17 +25,9 @@ struct TaskContext {
 
 /// Show available context for a task from its dependencies
 pub fn run(dir: &Path, task_id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_or_err(task_id)?;
 
     // Collect all artifacts from dependencies (blocked_by)
     let mut available_context = Vec::new();
@@ -53,7 +42,7 @@ pub fn run(dir: &Path, task_id: &str, json: bool) -> Result<()> {
                 available_context.push(ContextSource {
                     task_id: dep_task.id.clone(),
                     task_title: dep_task.title.clone(),
-                    status: dep_task.status.clone(),
+                    status: dep_task.status,
                     artifacts: dep_task.artifacts.clone(),
                 });
             }
@@ -126,17 +115,9 @@ pub fn run(dir: &Path, task_id: &str, json: bool) -> Result<()> {
 
 /// Show what tasks depend on a task's outputs (reverse context query)
 pub fn run_dependents(dir: &Path, task_id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_or_err(task_id)?;
 
     // Find tasks that list this task in their blocked_by
     let mut dependents: Vec<(String, String, Vec<String>)> = Vec::new();

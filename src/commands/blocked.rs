@@ -1,18 +1,14 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
-use workgraph::parser::load_graph;
 use workgraph::query::blocked_by;
 
+#[cfg(test)]
 use super::graph_path;
+#[cfg(test)]
+use workgraph::parser::load_graph;
 
 pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     if graph.get_task(id).is_none() {
         anyhow::bail!("Task '{}' not found", id);

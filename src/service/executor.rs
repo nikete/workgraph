@@ -123,7 +123,7 @@ impl TemplateVars {
             // Canonicalize to handle relative paths like ".workgraph"
             d.canonicalize()
                 .ok()
-                .and_then(|abs| abs.parent().map(|p| p.to_path_buf()))
+                .and_then(|abs| abs.parent().map(std::path::Path::to_path_buf))
         }) {
             Some(r) => r,
             None => return String::new(),

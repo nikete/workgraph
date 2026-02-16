@@ -1,12 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use workgraph::graph::Status;
-use workgraph::parser::load_graph;
 use workgraph::query::build_reverse_index;
 
-use super::{collect_transitive_dependents, graph_path};
+use super::collect_transitive_dependents;
 
 /// Information about the impact of a task
 #[derive(Debug, Serialize)]
@@ -34,17 +33,9 @@ struct ImpactSummary {
 }
 
 pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", id))?;
+    let task = graph.get_task_or_err(id)?;
 
     // Build reverse index: task_id -> list of tasks that depend on it
     let reverse_index = build_reverse_index(&graph);
@@ -52,7 +43,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
     // Find direct dependents
     let direct_ids: Vec<&str> = reverse_index
         .get(id)
-        .map(|v| v.iter().map(|s| s.as_str()).collect())
+        .map(|v| v.iter().map(String::as_str).collect())
         .unwrap_or_default();
 
     // Find all transitive dependents (excluding direct)
@@ -62,7 +53,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
     let transitive_ids: Vec<&str> = all_dependents
         .iter()
         .filter(|tid| !direct_ids.contains(&tid.as_str()))
-        .map(|s| s.as_str())
+        .map(String::as_str)
         .collect();
 
     // Build dependency chains for display
@@ -82,7 +73,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
     let task_info = ImpactInfo {
         id: task.id.clone(),
         title: task.title.clone(),
-        status: task.status.clone(),
+        status: task.status,
         hours: task.estimate.as_ref().and_then(|e| e.hours),
     };
 
@@ -92,7 +83,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
         .map(|t| ImpactInfo {
             id: t.id.clone(),
             title: t.title.clone(),
-            status: t.status.clone(),
+            status: t.status,
             hours: t.estimate.as_ref().and_then(|e| e.hours),
         })
         .collect();
@@ -103,7 +94,7 @@ pub fn run(dir: &Path, id: &str, json: bool) -> Result<()> {
         .map(|t| ImpactInfo {
             id: t.id.clone(),
             title: t.title.clone(),
-            status: t.status.clone(),
+            status: t.status,
             hours: t.estimate.as_ref().and_then(|e| e.hours),
         })
         .collect();

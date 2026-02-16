@@ -1,10 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
 use workgraph::graph::{Status, Task};
-use workgraph::parser::load_graph;
 use workgraph::query::ready_tasks;
-
-use super::graph_path;
 
 /// Coordination status for JSON output
 #[derive(Debug, serde::Serialize)]
@@ -106,13 +103,7 @@ pub fn get_coordination_status(graph: &workgraph::graph::WorkGraph) -> Coordinat
 }
 
 pub fn run(dir: &Path, json: bool, max_parallel: Option<usize>) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let status = get_coordination_status(&graph);
 
     if json {

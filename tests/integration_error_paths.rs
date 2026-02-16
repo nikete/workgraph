@@ -647,7 +647,10 @@ fn test_two_node_cycle() {
     let result = check_all(&graph);
     // Cycles are warnings, not errors — ok is still true
     assert!(result.ok, "Cycles are warnings; ok should still be true");
-    assert!(!result.cycles.is_empty(), "Two-node cycle should be reported");
+    assert!(
+        !result.cycles.is_empty(),
+        "Two-node cycle should be reported"
+    );
 }
 
 #[test]

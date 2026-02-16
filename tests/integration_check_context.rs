@@ -445,7 +445,10 @@ fn check_self_loop_no_delay_flagged() {
         "Self-loops without delay should be flagged"
     );
     assert!(
-        result.loop_edge_issues.iter().any(|i| i.kind == workgraph::check::LoopEdgeIssueKind::SelfLoop),
+        result
+            .loop_edge_issues
+            .iter()
+            .any(|i| i.kind == workgraph::check::LoopEdgeIssueKind::SelfLoop),
         "Should flag as SelfLoop issue"
     );
 }

@@ -1,12 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
 use workgraph::graph::Status;
-use workgraph::parser::load_graph;
 use workgraph::query::build_reverse_index;
 
-use super::{collect_transitive_dependents, graph_path};
+use super::collect_transitive_dependents;
 
 /// Information about a bottleneck task
 #[derive(Debug, Serialize)]
@@ -28,13 +27,7 @@ struct BottlenecksOutput {
 }
 
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Build reverse index: task_id -> list of tasks that depend on it
     let reverse_index = build_reverse_index(&graph);
@@ -45,7 +38,7 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
 
     for task in graph.tasks() {
         // Count direct dependents
-        let direct_blocks = reverse_index.get(&task.id).map(|v| v.len()).unwrap_or(0);
+        let direct_blocks = reverse_index.get(&task.id).map(Vec::len).unwrap_or(0);
 
         // Count transitive dependents
         let mut transitive: HashSet<String> = HashSet::new();
@@ -62,7 +55,7 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
                 title: task.title.clone(),
                 direct_blocks,
                 transitive_blocks,
-                status: task.status.clone(),
+                status: task.status,
                 assigned: task.assigned.clone(),
                 recommendation,
             });

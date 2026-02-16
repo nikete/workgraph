@@ -1,10 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::path::Path;
-use workgraph::parser::load_graph;
 use workgraph::query::{ProjectSummary, project_summary, tasks_within_budget, tasks_within_hours};
-
-use super::graph_path;
 
 /// JSON output for plan command
 #[derive(Debug, Serialize)]
@@ -42,13 +39,7 @@ pub struct TaskPlanItem {
 }
 
 pub fn run(dir: &Path, budget: Option<f64>, hours: Option<f64>, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let summary = project_summary(&graph);
 
     let budget_plan = budget.map(|b| {

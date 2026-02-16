@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt::Write;
 use std::fs;
 use std::path::{Path, PathBuf};
 use thiserror::Error;
@@ -94,7 +95,10 @@ impl Lineage {
     /// Create lineage for a crossover (two parents).
     pub fn crossover(parent_ids: &[&str], max_parent_generation: u32, run_id: &str) -> Self {
         Lineage {
-            parent_ids: parent_ids.iter().map(|s| s.to_string()).collect(),
+            parent_ids: parent_ids
+                .iter()
+                .map(std::string::ToString::to_string)
+                .collect(),
             generation: max_parent_generation.saturating_add(1),
             created_by: format!("evolver-{}", run_id),
             created_at: Utc::now(),
@@ -263,8 +267,8 @@ pub fn resolve_skill(skill: &SkillRef, workgraph_root: &Path) -> Result<Resolved
 fn resolve_url(url: &str) -> Result<ResolvedSkill, String> {
     // Use a blocking reqwest call since skill resolution happens at setup time.
     let body = reqwest::blocking::get(url)
-        .and_then(|r| r.error_for_status())
-        .and_then(|r| r.text())
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .and_then(reqwest::blocking::Response::text)
         .map_err(|e| format!("Failed to fetch skill URL {}: {}", url, e))?;
     Ok(ResolvedSkill {
         name: url.to_string(),
@@ -311,30 +315,30 @@ pub fn render_identity_prompt(
     let mut out = String::new();
 
     out.push_str("## Agent Identity\n\n");
-    out.push_str(&format!("### Role: {}\n", role.name));
-    out.push_str(&format!("{}\n\n", role.description));
+    let _ = writeln!(out, "### Role: {}", role.name);
+    let _ = writeln!(out, "{}\n", role.description);
 
     if !resolved_skills.is_empty() {
         out.push_str("#### Skills\n");
         for skill in resolved_skills {
-            out.push_str(&format!("### {}\n{}\n\n", skill.name, skill.content));
+            let _ = writeln!(out, "### {}\n{}\n", skill.name, skill.content);
         }
     }
 
     out.push_str("#### Desired Outcome\n");
-    out.push_str(&format!("{}\n\n", role.desired_outcome));
+    let _ = writeln!(out, "{}\n", role.desired_outcome);
 
     out.push_str("### Operational Parameters\n");
 
     out.push_str("#### Acceptable Trade-offs\n");
     for tradeoff in &motivation.acceptable_tradeoffs {
-        out.push_str(&format!("- {}\n", tradeoff));
+        let _ = writeln!(out, "- {}", tradeoff);
     }
     out.push('\n');
 
     out.push_str("#### Non-negotiable Constraints\n");
     for constraint in &motivation.unacceptable_tradeoffs {
-        out.push_str(&format!("- {}\n", constraint));
+        let _ = writeln!(out, "- {}", constraint);
     }
     out.push('\n');
 
@@ -386,57 +390,56 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
 
     // -- Task definition --
     out.push_str("## Task Definition\n\n");
-    out.push_str(&format!("**Title:** {}\n\n", input.task_title));
+    let _ = writeln!(out, "**Title:** {}\n", input.task_title);
     if let Some(desc) = input.task_description {
-        out.push_str(&format!("**Description:**\n{}\n\n", desc));
+        let _ = writeln!(out, "**Description:**\n{}\n", desc);
     }
     if !input.task_skills.is_empty() {
         out.push_str("**Required Skills:**\n");
         for skill in input.task_skills {
-            out.push_str(&format!("- {}\n", skill));
+            let _ = writeln!(out, "- {}", skill);
         }
         out.push('\n');
     }
     if let Some(verify) = input.verify {
-        out.push_str(&format!("**Verification Criteria:**\n{}\n\n", verify));
+        let _ = writeln!(out, "**Verification Criteria:**\n{}\n", verify);
     }
 
     // -- Agent identity --
     out.push_str("## Agent Identity\n\n");
     if let Some(agent) = input.agent {
-        out.push_str(&format!(
-            "**Agent:** {} ({})\n\n",
+        let _ = writeln!(
+            out,
+            "**Agent:** {} ({})\n",
             agent.name,
             short_hash(&agent.id)
-        ));
+        );
     }
     if let Some(role) = input.role {
-        out.push_str(&format!("**Role:** {} ({})\n", role.name, role.id));
-        out.push_str(&format!("{}\n\n", role.description));
-        out.push_str(&format!(
-            "**Desired Outcome:** {}\n\n",
-            role.desired_outcome
-        ));
+        let _ = writeln!(out, "**Role:** {} ({})", role.name, role.id);
+        let _ = writeln!(out, "{}\n", role.description);
+        let _ = writeln!(out, "**Desired Outcome:** {}\n", role.desired_outcome);
     } else {
         out.push_str("*No role was assigned.*\n\n");
     }
     if let Some(motivation) = input.motivation {
-        out.push_str(&format!(
-            "**Motivation:** {} ({})\n",
+        let _ = writeln!(
+            out,
+            "**Motivation:** {} ({})",
             motivation.name, motivation.id
-        ));
-        out.push_str(&format!("{}\n\n", motivation.description));
+        );
+        let _ = writeln!(out, "{}\n", motivation.description);
         if !motivation.acceptable_tradeoffs.is_empty() {
             out.push_str("**Acceptable Trade-offs:**\n");
             for t in &motivation.acceptable_tradeoffs {
-                out.push_str(&format!("- {}\n", t));
+                let _ = writeln!(out, "- {}", t);
             }
             out.push('\n');
         }
         if !motivation.unacceptable_tradeoffs.is_empty() {
             out.push_str("**Non-negotiable Constraints:**\n");
             for c in &motivation.unacceptable_tradeoffs {
-                out.push_str(&format!("- {}\n", c));
+                let _ = writeln!(out, "- {}", c);
             }
             out.push('\n');
         }
@@ -450,7 +453,7 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
         out.push_str("*No artifacts were recorded.*\n\n");
     } else {
         for artifact in input.artifacts {
-            out.push_str(&format!("- `{}`\n", artifact));
+            let _ = writeln!(out, "- `{}`", artifact);
         }
         out.push('\n');
     }
@@ -462,10 +465,11 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
     } else {
         for entry in input.log_entries {
             let actor = entry.actor.as_deref().unwrap_or("system");
-            out.push_str(&format!(
-                "- [{}] ({}): {}\n",
+            let _ = writeln!(
+                out,
+                "- [{}] ({}): {}",
                 entry.timestamp, actor, entry.message
-            ));
+            );
         }
         out.push('\n');
     }
@@ -474,10 +478,10 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
     if input.started_at.is_some() || input.completed_at.is_some() {
         out.push_str("## Timing\n\n");
         if let Some(started) = input.started_at {
-            out.push_str(&format!("- Started: {}\n", started));
+            let _ = writeln!(out, "- Started: {}", started);
         }
         if let Some(completed) = input.completed_at {
-            out.push_str(&format!("- Completed: {}\n", completed));
+            let _ = writeln!(out, "- Completed: {}", completed);
         }
         out.push('\n');
     }
@@ -1531,7 +1535,7 @@ fn capture_artifact_manifest(output_dir: &Path, task: &crate::graph::Task) {
     let project_root = output_dir
         .ancestors()
         .find(|p| p.join(".git").exists())
-        .map(|p| p.to_path_buf());
+        .map(std::path::Path::to_path_buf);
 
     let entries: Vec<ArtifactEntry> = task
         .artifacts

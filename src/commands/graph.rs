@@ -56,11 +56,19 @@ fn in_date_range(
     since: Option<&DateTime<Utc>>,
     until: Option<&DateTime<Utc>>,
 ) -> bool {
-    let completed = task.completed_at.as_ref().and_then(|s| {
-        DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|dt| dt.with_timezone(&Utc))
-    });
+    let completed =
+        task.completed_at
+            .as_ref()
+            .and_then(|s| match DateTime::parse_from_rfc3339(s) {
+                Ok(dt) => Some(dt.with_timezone(&Utc)),
+                Err(e) => {
+                    eprintln!(
+                        "warning: task '{}' has malformed completed_at timestamp '{}': {}",
+                        task.id, s, e
+                    );
+                    None
+                }
+            });
 
     match (completed, since, until) {
         (Some(completed), Some(since), Some(until)) => completed >= *since && completed <= *until,

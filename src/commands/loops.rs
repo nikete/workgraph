@@ -1,10 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::path::Path;
 use workgraph::check::check_cycles;
 use workgraph::graph::{LoopGuard, WorkGraph};
-use workgraph::parser::load_graph;
-
-use super::graph_path;
 
 /// Classification of a cycle
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -141,13 +138,7 @@ fn collect_loop_edges(graph: &WorkGraph) -> Vec<LoopEdgeInfo> {
 }
 
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
     let cycles = check_cycles(&graph);
     let loop_edges = collect_loop_edges(&graph);
 

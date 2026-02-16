@@ -62,7 +62,7 @@ impl AgentInfo {
         let effective_status = if entry.is_alive() && !process_alive {
             AgentStatus::Dead
         } else {
-            entry.status.clone()
+            entry.status
         };
         Self {
             id: entry.id.clone(),
@@ -87,16 +87,7 @@ impl AgentInfo {
     }
 }
 
-/// Check if a process is alive via kill(pid, 0)
-#[cfg(unix)]
-fn is_process_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-#[cfg(not(unix))]
-fn is_process_alive(_pid: u32) -> bool {
-    true
-}
+use crate::commands::is_process_alive;
 
 /// Which view is currently active
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -553,7 +544,10 @@ impl GraphExplorer {
             self.detail_scroll = 0;
             return;
         }
-        if let Some(task_id) = self.dag_selected_task_id().map(|s| s.to_string()) {
+        if let Some(task_id) = self
+            .dag_selected_task_id()
+            .map(std::string::ToString::to_string)
+        {
             let graph_path = workgraph_dir.join("graph.jsonl");
             if let Ok(graph) = load_graph(&graph_path)
                 && let Some(task) = graph.get_task(&task_id)
@@ -681,7 +675,7 @@ fn build_graph_tree(
             rows.push(GraphRow {
                 task_id: task.id.clone(),
                 title: task.title.clone(),
-                status: task.status.clone(),
+                status: task.status,
                 assigned: task.assigned.clone(),
                 depth: 0,
                 collapsed: collapsed.contains(&task.id),
@@ -723,7 +717,7 @@ fn flatten_subtree(
         rows.push(GraphRow {
             task_id: task.id.clone(),
             title: task.title.clone(),
-            status: task.status.clone(),
+            status: task.status,
             assigned: task.assigned.clone(),
             depth,
             collapsed: false,
@@ -740,7 +734,7 @@ fn flatten_subtree(
     rows.push(GraphRow {
         task_id: task.id.clone(),
         title: task.title.clone(),
-        status: task.status.clone(),
+        status: task.status,
         assigned: task.assigned.clone(),
         depth,
         collapsed: is_collapsed,
@@ -1097,7 +1091,7 @@ impl App {
             .map(|t: &Task| TaskEntry {
                 id: t.id.clone(),
                 title: t.title.clone(),
-                status: t.status.clone(),
+                status: t.status,
                 assigned: t.assigned.clone(),
             })
             .collect();

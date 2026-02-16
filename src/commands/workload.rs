@@ -1,13 +1,10 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
 use workgraph::agency;
 use workgraph::graph::Status;
-use workgraph::parser::load_graph;
 use workgraph::query::ready_tasks;
-
-use super::graph_path;
 
 /// Information about an agent's workload
 #[derive(Debug, Serialize)]
@@ -31,13 +28,7 @@ struct WorkloadOutput {
 }
 
 pub fn run(dir: &Path, json: bool) -> Result<()> {
-    let path = graph_path(dir);
-
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
+    let (graph, _path) = super::load_workgraph(dir)?;
 
     // Get ready tasks for later calculation
     let ready = ready_tasks(&graph);

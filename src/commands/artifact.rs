@@ -1,22 +1,17 @@
 use anyhow::{Context, Result};
 use std::path::Path;
-use workgraph::parser::{load_graph, save_graph};
+use workgraph::parser::save_graph;
 
+#[cfg(test)]
 use super::graph_path;
+#[cfg(test)]
+use workgraph::parser::load_graph;
 
 /// Register an artifact (produced output) for a task
 pub fn run_add(dir: &Path, task_id: &str, artifact_path: &str) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     // Check if artifact already registered
     if task.artifacts.contains(&artifact_path.to_string()) {
@@ -30,6 +25,7 @@ pub fn run_add(dir: &Path, task_id: &str, artifact_path: &str) -> Result<()> {
     task.artifacts.push(artifact_path.to_string());
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!(
         "Registered artifact '{}' for task '{}'",
@@ -40,17 +36,9 @@ pub fn run_add(dir: &Path, task_id: &str, artifact_path: &str) -> Result<()> {
 
 /// Remove an artifact from a task
 pub fn run_remove(dir: &Path, task_id: &str, artifact_path: &str) -> Result<()> {
-    let path = graph_path(dir);
+    let (mut graph, path) = super::load_workgraph_mut(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let mut graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task_mut(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_mut_or_err(task_id)?;
 
     let original_len = task.artifacts.len();
     task.artifacts.retain(|a| a != artifact_path);
@@ -64,6 +52,7 @@ pub fn run_remove(dir: &Path, task_id: &str, artifact_path: &str) -> Result<()> 
     }
 
     save_graph(&graph, &path).context("Failed to save graph")?;
+    super::notify_graph_changed(dir);
 
     println!(
         "Removed artifact '{}' from task '{}'",
@@ -74,17 +63,9 @@ pub fn run_remove(dir: &Path, task_id: &str, artifact_path: &str) -> Result<()> 
 
 /// List artifacts for a task
 pub fn run_list(dir: &Path, task_id: &str, json: bool) -> Result<()> {
-    let path = graph_path(dir);
+    let (graph, _path) = super::load_workgraph(dir)?;
 
-    if !path.exists() {
-        anyhow::bail!("Workgraph not initialized. Run 'wg init' first.");
-    }
-
-    let graph = load_graph(&path).context("Failed to load graph")?;
-
-    let task = graph
-        .get_task(task_id)
-        .ok_or_else(|| anyhow::anyhow!("Task '{}' not found", task_id))?;
+    let task = graph.get_task_or_err(task_id)?;
 
     if json {
         let output = serde_json::json!({
