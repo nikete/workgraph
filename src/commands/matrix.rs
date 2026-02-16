@@ -232,11 +232,10 @@ pub fn run_login(dir: &Path) -> Result<()> {
 }
 
 /// Logout and clear cached credentials
-pub fn run_logout(dir: &Path) -> Result<()> {
+pub fn run_logout(dir: &Path) {
     MatrixClient::clear_cache(dir);
     println!("Logged out. Cached credentials cleared.");
     println!("Run 'wg matrix login' to log in again.");
-    Ok(())
 }
 
 #[cfg(test)]

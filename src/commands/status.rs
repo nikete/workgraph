@@ -107,7 +107,7 @@ fn gather_status(dir: &Path) -> Result<StatusOutput> {
     let coordinator = gather_coordinator_info(dir);
 
     // 3. Agent summary
-    let agents = gather_agent_summary(dir)?;
+    let agents = gather_agent_summary(dir);
 
     // 4. Task summary
     let tasks = gather_task_summary(dir)?;
@@ -174,7 +174,7 @@ fn gather_coordinator_info(dir: &Path) -> CoordinatorInfo {
     }
 }
 
-fn gather_agent_summary(dir: &Path) -> Result<AgentSummaryInfo> {
+fn gather_agent_summary(dir: &Path) -> AgentSummaryInfo {
     let registry = AgentRegistry::load_or_warn(dir);
     let agents = registry.list_agents();
 
@@ -202,11 +202,11 @@ fn gather_agent_summary(dir: &Path) -> Result<AgentSummaryInfo> {
         }
     }
 
-    Ok(AgentSummaryInfo {
+    AgentSummaryInfo {
         alive,
         dead,
         active,
-    })
+    }
 }
 
 fn gather_task_summary(dir: &Path) -> Result<TaskSummaryInfo> {

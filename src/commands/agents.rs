@@ -73,7 +73,8 @@ pub fn run(dir: &Path, filter: Option<AgentFilter>, json: bool) -> Result<()> {
     if json {
         output_json(&filtered)
     } else {
-        output_table(&filtered)
+        output_table(&filtered);
+        Ok(())
     }
 }
 
@@ -112,10 +113,10 @@ fn output_json(agents: &[&AgentEntry]) -> Result<()> {
     Ok(())
 }
 
-fn output_table(agents: &[&AgentEntry]) -> Result<()> {
+fn output_table(agents: &[&AgentEntry]) {
     if agents.is_empty() {
         println!("No agents registered.");
-        return Ok(());
+        return;
     }
 
     // Calculate column widths
@@ -185,8 +186,6 @@ fn output_table(agents: &[&AgentEntry]) -> Result<()> {
     } else {
         println!("{} agent(s)", agents.len());
     }
-
-    Ok(())
 }
 
 /// Get agent count summary

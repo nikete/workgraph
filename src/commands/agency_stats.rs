@@ -83,7 +83,8 @@ pub fn run(dir: &Path, json: bool, min_evals: u32) -> Result<()> {
     if json {
         output_json(&roles, &motivations, &evaluations, &task_tags, min_evals)
     } else {
-        output_text(&roles, &motivations, &evaluations, &task_tags, min_evals)
+        output_text(&roles, &motivations, &evaluations, &task_tags, min_evals);
+        Ok(())
     }
 }
 
@@ -225,7 +226,7 @@ fn output_text(
     evaluations: &[Evaluation],
     task_tags: &HashMap<String, Vec<String>>,
     min_evals: u32,
-) -> Result<()> {
+) {
     // 1. Overall stats
     let total_roles = roles.len();
     let total_motivations = motivations.len();
@@ -249,7 +250,7 @@ fn output_text(
 
     if evaluations.is_empty() {
         println!("\nNo evaluations recorded yet. Run 'wg evaluate <task-id>' to generate data.");
-        return Ok(());
+        return;
     }
 
     // 2. Role leaderboard
@@ -390,8 +391,6 @@ fn output_text(
             );
         }
     }
-
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

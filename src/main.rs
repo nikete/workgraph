@@ -2265,7 +2265,10 @@ fn main() -> Result<()> {
             }
             MatrixCommands::Status => commands::matrix::run_status(&workgraph_dir, cli.json),
             MatrixCommands::Login => commands::matrix::run_login(&workgraph_dir),
-            MatrixCommands::Logout => commands::matrix::run_logout(&workgraph_dir),
+            MatrixCommands::Logout => {
+                commands::matrix::run_logout(&workgraph_dir);
+                Ok(())
+            }
         },
     }
 }
