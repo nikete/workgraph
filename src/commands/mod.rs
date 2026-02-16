@@ -128,7 +128,7 @@ pub fn collect_transitive_dependents(
 /// Best-effort notification to the service daemon that the graph has changed.
 /// Silently ignores all errors (daemon not running, socket unavailable, etc.)
 pub fn notify_graph_changed(dir: &Path) {
-    let _ = service::send_request(dir, service::IpcRequest::GraphChanged);
+    let _ = service::send_request(dir, &service::IpcRequest::GraphChanged);
 }
 
 /// Check service status and print a hint for the user/agent.

@@ -1755,7 +1755,7 @@ fn main() -> Result<()> {
                 format: fmt,
                 output,
             };
-            commands::viz::run(&workgraph_dir, options)
+            commands::viz::run(&workgraph_dir, &options)
         }
         Commands::GraphExport {
             archive,

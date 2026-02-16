@@ -2549,7 +2549,7 @@ pub fn run_reload(
         model: model.map(std::string::ToString::to_string),
     };
 
-    let response = send_request(dir, request)?;
+    let response = send_request(dir, &request)?;
 
     if !response.ok {
         let msg = response
@@ -2617,7 +2617,7 @@ pub fn run_reload(
 /// Pause the coordinator (no new agent spawns, running agents unaffected)
 #[cfg(unix)]
 pub fn run_pause(dir: &Path, json: bool) -> Result<()> {
-    let response = send_request(dir, IpcRequest::Pause)?;
+    let response = send_request(dir, &IpcRequest::Pause)?;
 
     if !response.ok {
         let msg = response
@@ -2651,7 +2651,7 @@ pub fn run_pause(_dir: &Path, _json: bool) -> Result<()> {
 /// Resume the coordinator (triggers immediate tick)
 #[cfg(unix)]
 pub fn run_resume(dir: &Path, json: bool) -> Result<()> {
-    let response = send_request(dir, IpcRequest::Resume)?;
+    let response = send_request(dir, &IpcRequest::Resume)?;
 
     if !response.ok {
         let msg = response
@@ -2761,7 +2761,7 @@ fn kill_process_force(_pid: u32) -> Result<()> {
 
 /// Send an IPC request to the running service
 #[cfg(unix)]
-pub fn send_request(dir: &Path, request: IpcRequest) -> Result<IpcResponse> {
+pub fn send_request(dir: &Path, request: &IpcRequest) -> Result<IpcResponse> {
     let state = ServiceState::load(dir)?.ok_or_else(|| anyhow::anyhow!("Service not running"))?;
 
     let socket = PathBuf::from(&state.socket_path);
@@ -2789,7 +2789,7 @@ pub fn send_request(dir: &Path, request: IpcRequest) -> Result<IpcResponse> {
 }
 
 #[cfg(not(unix))]
-pub fn send_request(_dir: &Path, _request: IpcRequest) -> Result<IpcResponse> {
+pub fn send_request(_dir: &Path, _request: &IpcRequest) -> Result<IpcResponse> {
     anyhow::bail!("IPC is only supported on Unix systems")
 }
 

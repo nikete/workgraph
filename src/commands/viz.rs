@@ -51,7 +51,7 @@ impl Default for VizOptions {
     }
 }
 
-pub fn run(dir: &Path, options: VizOptions) -> Result<()> {
+pub fn run(dir: &Path, options: &VizOptions) -> Result<()> {
     let (graph, _path) = super::load_workgraph(dir)?;
 
     // Determine which tasks to include
