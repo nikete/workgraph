@@ -617,10 +617,8 @@ fn test_self_dependency_detected_by_check_all() {
     graph.add_node(Node::Task(t));
 
     let result = check_all(&graph);
-    assert!(
-        !result.ok,
-        "Graph with self-dependency should not pass check_all"
-    );
+    // Cycles are warnings, not errors — ok is still true
+    assert!(result.ok, "Cycles are warnings; ok should still be true");
     assert!(
         !result.cycles.is_empty(),
         "check_all should report the cycle"
@@ -674,7 +672,9 @@ fn test_two_node_cycle() {
     assert!(ready.is_empty(), "No tasks in a cycle should be ready");
 
     let result = check_all(&graph);
-    assert!(!result.ok);
+    // Cycles are warnings, not errors — ok is still true
+    assert!(result.ok, "Cycles are warnings; ok should still be true");
+    assert!(!result.cycles.is_empty(), "Two-node cycle should be reported");
 }
 
 #[test]
@@ -966,8 +966,8 @@ fn test_blocked_by_cycle_with_loop_edge_overlay() {
     graph.add_node(Node::Task(b));
 
     let result = check_all(&graph);
-    // The blocked_by cycle makes this invalid
-    assert!(!result.ok);
+    // Cycles are warnings, not errors — ok is still true (no orphans or loop issues)
+    assert!(result.ok, "Cycles are warnings; ok should still be true");
     assert!(
         !result.cycles.is_empty(),
         "blocked_by cycle should be detected"
