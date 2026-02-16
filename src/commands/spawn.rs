@@ -85,19 +85,29 @@ fn agent_output_dir(workgraph_dir: &Path, agent_id: &str) -> PathBuf {
     workgraph_dir.join("agents").join(agent_id)
 }
 
-/// Build context string from dependency artifacts
+/// Build context string from dependency artifacts and logs
 fn build_task_context(graph: &workgraph::WorkGraph, task: &workgraph::graph::Task) -> String {
     let mut context_parts = Vec::new();
 
     for dep_id in &task.blocked_by {
-        if let Some(dep_task) = graph.get_task(dep_id)
-            && !dep_task.artifacts.is_empty()
-        {
-            context_parts.push(format!(
-                "From {}: artifacts: {}",
-                dep_id,
-                dep_task.artifacts.join(", ")
-            ));
+        if let Some(dep_task) = graph.get_task(dep_id) {
+            if !dep_task.artifacts.is_empty() {
+                context_parts.push(format!(
+                    "From {}: artifacts: {}",
+                    dep_id,
+                    dep_task.artifacts.join(", ")
+                ));
+            }
+
+            if dep_task.status == Status::Done && !dep_task.log.is_empty() {
+                let logs: Vec<&LogEntry> = dep_task.log.iter().rev().take(5).collect();
+                for entry in logs.iter().rev() {
+                    context_parts.push(format!(
+                        "From {} logs: {} {}",
+                        dep_id, entry.timestamp, entry.message
+                    ));
+                }
+            }
         }
     }
 
@@ -643,10 +653,27 @@ mod tests {
     fn test_build_task_context() {
         let mut graph = WorkGraph::new();
 
-        // Create a dependency task with artifacts
+        // Create a dependency task with artifacts and logs
         let mut dep_task = make_task("dep-1", "Dependency");
         dep_task.status = Status::Done;
         dep_task.artifacts = vec!["output.txt".to_string(), "data.json".to_string()];
+        dep_task.log = vec![
+            LogEntry {
+                timestamp: "2026-01-01T00:00:00Z".to_string(),
+                actor: Some("agent-1".to_string()),
+                message: "Started work".to_string(),
+            },
+            LogEntry {
+                timestamp: "2026-01-01T00:01:00Z".to_string(),
+                actor: Some("agent-1".to_string()),
+                message: "Found important result".to_string(),
+            },
+            LogEntry {
+                timestamp: "2026-01-01T00:02:00Z".to_string(),
+                actor: Some("agent-1".to_string()),
+                message: "Completed successfully".to_string(),
+            },
+        ];
         graph.add_node(Node::Task(dep_task));
 
         // Create main task blocked by dependency
@@ -658,6 +685,11 @@ mod tests {
         assert!(context.contains("dep-1"));
         assert!(context.contains("output.txt"));
         assert!(context.contains("data.json"));
+        // Verify log entries are included
+        assert!(context.contains("From dep-1 logs:"));
+        assert!(context.contains("Started work"));
+        assert!(context.contains("Found important result"));
+        assert!(context.contains("Completed successfully"));
     }
 
     #[test]
@@ -667,6 +699,7 @@ mod tests {
 
         let context = build_task_context(&graph, &task);
         assert_eq!(context, "No context from dependencies");
+        assert!(!context.contains("logs:"));
     }
 
     #[test]
