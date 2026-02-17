@@ -272,6 +272,7 @@ OUTPUT_FILE={escaped_output_file}
 
 # Allow nested Claude Code sessions (spawned agents are independent)
 unset CLAUDECODE
+unset CLAUDE_CODE_ENTRYPOINT
 
 # Run the agent command
 {inner_command} >> "$OUTPUT_FILE" 2>&1

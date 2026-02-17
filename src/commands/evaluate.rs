@@ -157,6 +157,8 @@ pub fn run(
     println!("Evaluating task '{}' with model '{}'...", task_id, model);
 
     let output = Command::new("claude")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env_remove("CLAUDECODE")
         .arg("--model")
         .arg(&model)
         .arg("--print")
