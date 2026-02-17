@@ -1529,9 +1529,17 @@ mod tests {
         let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // The source task (which has loops_to) should show the ↺ symbol
-        assert!(result.contains("↺"), "Expected ↺ symbol in output:\n{}", result);
+        assert!(
+            result.contains("↺"),
+            "Expected ↺ symbol in output:\n{}",
+            result
+        );
         // Should show iteration info like (iter 3/10)
-        assert!(result.contains("3/10"), "Expected iteration count in output:\n{}", result);
+        assert!(
+            result.contains("3/10"),
+            "Expected iteration count in output:\n{}",
+            result
+        );
     }
 
     #[test]
@@ -1555,8 +1563,16 @@ mod tests {
         let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // Should show ↺ symbol in the node label
-        assert!(result.contains("↺"), "Expected ↺ symbol in output:\n{}", result);
-        assert!(result.contains("2/5"), "Expected iteration count in output:\n{}", result);
+        assert!(
+            result.contains("↺"),
+            "Expected ↺ symbol in output:\n{}",
+            result
+        );
+        assert!(
+            result.contains("2/5"),
+            "Expected iteration count in output:\n{}",
+            result
+        );
     }
 
     #[test]
@@ -1582,7 +1598,11 @@ mod tests {
         let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // The loop back-edge line should contain ↺
-        assert!(result.contains("↺"), "Expected ↺ symbol in back-edge line:\n{}", result);
+        assert!(
+            result.contains("↺"),
+            "Expected ↺ symbol in back-edge line:\n{}",
+            result
+        );
     }
 
     #[test]
@@ -1597,8 +1617,16 @@ mod tests {
         let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // No loop symbol on tasks without loops
-        assert!(!result.contains("↺"), "Should NOT contain ↺ on normal task:\n{}", result);
-        assert!(!result.contains("↻"), "Should NOT contain ↻ on normal task:\n{}", result);
+        assert!(
+            !result.contains("↺"),
+            "Should NOT contain ↺ on normal task:\n{}",
+            result
+        );
+        assert!(
+            !result.contains("↻"),
+            "Should NOT contain ↻ on normal task:\n{}",
+            result
+        );
     }
 
     #[test]
