@@ -8,7 +8,7 @@ use workgraph::graph::{Status, Task, WorkGraph};
 use workgraph::parser::load_graph;
 use workgraph::{AgentEntry, AgentRegistry, AgentStatus};
 
-use super::dag_layout::DagLayout;
+use super::graph_layout::DagLayout;
 
 /// How long a recently-changed item stays highlighted (seconds)
 const HIGHLIGHT_DURATION: Duration = Duration::from_secs(3);
@@ -280,7 +280,7 @@ pub struct GraphExplorer {
     /// Current view mode (tree or graph)
     pub view_mode: GraphViewMode,
     /// Cached graph layout (computed on rebuild when in graph mode)
-    pub dag_layout: Option<DagLayout>,
+    pub graph_layout: Option<DagLayout>,
     /// Selected node index in graph mode
     pub dag_selected: usize,
     /// Horizontal scroll offset for graph view
@@ -301,7 +301,7 @@ impl GraphExplorer {
             agent_map: HashMap::new(),
             agent_active_indices: Vec::new(),
             view_mode: GraphViewMode::Tree,
-            dag_layout: None,
+            graph_layout: None,
             dag_selected: 0,
             dag_scroll_x: 0,
             dag_scroll_y: 0,
@@ -342,7 +342,7 @@ impl GraphExplorer {
             Ok(g) => g,
             Err(_) => {
                 self.rows.clear();
-                self.dag_layout = None;
+                self.graph_layout = None;
                 return;
             }
         };
@@ -380,12 +380,12 @@ impl GraphExplorer {
 
         // Always compute DAG layout so it's ready when user switches modes
         let mut dag = DagLayout::compute(&graph, &critical_ids, &agent_map);
-        super::dag_layout::center_layers(&mut dag);
-        super::dag_layout::reroute_edges(&mut dag, &graph);
+        super::graph_layout::center_layers(&mut dag);
+        super::graph_layout::reroute_edges(&mut dag, &graph);
 
         // Preserve DAG selection by task ID
         let prev_dag_id = self
-            .dag_layout
+            .graph_layout
             .as_ref()
             .and_then(|l| l.nodes.get(self.dag_selected).map(|n| n.task_id.clone()));
         if let Some(ref id) = prev_dag_id
@@ -399,7 +399,7 @@ impl GraphExplorer {
             self.dag_selected = 0;
         }
 
-        self.dag_layout = Some(dag);
+        self.graph_layout = Some(dag);
     }
 
     pub fn scroll_up(&mut self) {
@@ -485,7 +485,7 @@ impl GraphExplorer {
                 }
             }
             GraphViewMode::Dag => {
-                let layout = self.dag_layout.as_ref()?;
+                let layout = self.graph_layout.as_ref()?;
                 let node = layout.nodes.get(self.dag_selected)?;
                 if node.active_agent_count > 0 {
                     node.active_agent_ids.first().cloned()
@@ -506,7 +506,7 @@ impl GraphExplorer {
 
     /// DAG mode: move selection to the next node
     pub fn dag_select_next(&mut self) {
-        if let Some(ref layout) = self.dag_layout
+        if let Some(ref layout) = self.graph_layout
             && !layout.nodes.is_empty()
         {
             self.dag_selected = (self.dag_selected + 1).min(layout.nodes.len() - 1);
@@ -530,7 +530,7 @@ impl GraphExplorer {
 
     /// DAG mode: get the selected task ID
     pub fn dag_selected_task_id(&self) -> Option<&str> {
-        self.dag_layout
+        self.graph_layout
             .as_ref()
             .and_then(|l| l.nodes.get(self.dag_selected))
             .map(|n| n.task_id.as_str())
@@ -561,7 +561,7 @@ impl GraphExplorer {
 
     /// DAG mode: ensure the selected node is visible in the viewport
     pub fn dag_ensure_visible(&mut self, viewport_width: u16, viewport_height: u16) {
-        if let Some(ref layout) = self.dag_layout
+        if let Some(ref layout) = self.graph_layout
             && let Some(node) = layout.nodes.get(self.dag_selected)
         {
             let vw = viewport_width as usize;
@@ -1394,7 +1394,7 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::super::dag_layout::DagLayout;
+    use super::super::graph_layout::DagLayout;
     use super::*;
     use ratatui::style::Color;
     use workgraph::AgentStatus;
@@ -1414,7 +1414,7 @@ mod tests {
             agent_map: HashMap::new(),
             agent_active_indices: Vec::new(),
             view_mode: GraphViewMode::Tree,
-            dag_layout: None,
+            graph_layout: None,
             dag_selected: 0,
             dag_scroll_x: 0,
             dag_scroll_y: 0,
@@ -1772,8 +1772,8 @@ mod tests {
         assert_eq!(ex.selected, 1);
     }
 
-    fn make_dag_layout(task_ids: &[&str]) -> DagLayout {
-        use super::super::dag_layout::LayoutNode;
+    fn make_graph_layout(task_ids: &[&str]) -> DagLayout {
+        use super::super::graph_layout::LayoutNode;
         let nodes: Vec<LayoutNode> = task_ids
             .iter()
             .enumerate()
@@ -1811,7 +1811,7 @@ mod tests {
     #[test]
     fn graph_explorer_dag_select_next_and_prev() {
         let mut ex = make_graph_explorer(vec![]);
-        ex.dag_layout = Some(make_dag_layout(&["a", "b", "c"]));
+        ex.graph_layout = Some(make_graph_layout(&["a", "b", "c"]));
         ex.dag_selected = 0;
 
         ex.dag_select_next();
@@ -1854,7 +1854,7 @@ mod tests {
         // No layout → None
         assert!(ex.dag_selected_task_id().is_none());
 
-        ex.dag_layout = Some(make_dag_layout(&["my-task"]));
+        ex.graph_layout = Some(make_graph_layout(&["my-task"]));
         ex.dag_selected = 0;
         assert_eq!(ex.dag_selected_task_id(), Some("my-task"));
     }

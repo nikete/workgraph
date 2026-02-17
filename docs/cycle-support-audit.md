@@ -1,8 +1,10 @@
-# DAG Assumptions Survey
+# Cycle Support Audit
+
+> **Note:** Workgraph supports cycles as a first-class feature via `loops_to` edges with iteration guards and max counts. This document catalogs places where code was originally written with DAG assumptions that needed updating. It remains useful as a reference for understanding which subsystems are cycle-aware.
 
 **Date:** 2026-02-14
 **Scope:** Entire workgraph codebase and documentation
-**Purpose:** Catalog every location where the code assumes the task graph is a DAG (directed acyclic graph), to inform future work on cycle support.
+**Purpose:** Catalog every location where the code originally assumed the task graph was acyclic, and track which have been updated for cycle support.
 
 ---
 

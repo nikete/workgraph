@@ -408,7 +408,7 @@ impl Node {
     }
 }
 
-/// The work graph: a DAG of tasks and resources with embedded dependency edges.
+/// The work graph: a directed task graph with dependency edges and optional loop edges.
 ///
 /// Tasks depend on other tasks via `blocked_by`/`blocks` edges. Resources are
 /// consumed by tasks via `requires` edges. The graph is persisted as JSONL

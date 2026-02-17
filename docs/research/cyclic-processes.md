@@ -8,9 +8,11 @@
 
 ## Executive Summary
 
-Workgraph currently assumes a DAG (Directed Acyclic Graph) for task dependencies. Many real workflows are cyclic: sprint cycles, review-revise loops, CI/CD pipelines, monitoring→alert→fix→verify, recurring standups. This report surveys how other systems handle cycles, reviews formal approaches, and proposes a minimal extension for workgraph.
+> **Note:** This research document was written before loop edges were implemented. Workgraph now supports cycles via `loops_to` edges with iteration guards and max counts. The analysis below remains useful as background for the design decisions made.
 
-**Key finding**: The most pragmatic path is *not* to abandon the DAG model, but to layer cycle semantics on top of it. The three patterns that emerge across all systems are:
+Workgraph models task dependencies as a directed graph. Many real workflows are cyclic: sprint cycles, review-revise loops, CI/CD pipelines, monitoring→alert→fix→verify, recurring standups. This report surveys how other systems handle cycles, reviews formal approaches, and proposes extensions for workgraph.
+
+**Key finding**: The three patterns that emerge across all systems are:
 
 1. **Iteration edges** — explicit back-edges with guards and bounds (keep the DAG for scheduling, add annotated cycle edges for re-activation)
 2. **Template instantiation** — cycles create new instances of task subgraphs rather than mutating existing ones

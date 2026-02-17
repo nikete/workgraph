@@ -273,7 +273,7 @@ impl DagLayout {
 
         let has_cycles = !back_edge_set.is_empty();
 
-        // Build the DAG and compute layout (now guaranteed acyclic)
+        // Build the layout (back-edges stripped, input is now acyclic for ascii-dag)
         let dag = DAG::from_edges(&nodes_for_dag, &edges_for_dag);
         let ir = dag.compute_layout();
 

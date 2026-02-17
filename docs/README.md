@@ -78,7 +78,7 @@ Resources represent consumable or limited assets:
 
 ### Dependencies (The Graph)
 
-Tasks form a directed graph through `blocked_by` relationships. While typically a DAG (directed acyclic graph), cycles are permitted for iterative/recurring work patterns.
+Tasks form a directed graph through `blocked_by` relationships (forward dependencies) and `loops_to` edges (iterative cycles for review loops, retries, recurring work).
 
 Key graph concepts:
 

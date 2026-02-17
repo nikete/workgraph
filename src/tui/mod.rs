@@ -1,5 +1,5 @@
 pub mod app;
-pub mod dag_layout;
+pub mod graph_layout;
 
 use std::io;
 use std::path::PathBuf;
@@ -20,7 +20,7 @@ use ratatui::{
 };
 
 use self::app::{App, GraphViewMode, Panel, View};
-use self::dag_layout::{CellStyle, render_to_buffer};
+use self::graph_layout::{CellStyle, render_to_buffer};
 use workgraph::AgentStatus;
 use workgraph::graph::Status;
 
@@ -685,7 +685,7 @@ fn draw_graph_dag_view(frame: &mut Frame, app: &mut App) {
         None => return,
     };
 
-    let dag = match &explorer.dag_layout {
+    let dag = match &explorer.graph_layout {
         Some(d) => d,
         None => {
             let content = Paragraph::new(vec![
@@ -805,7 +805,7 @@ fn draw_dag_help_bar(frame: &mut Frame, explorer: &app::GraphExplorer, area: Rec
     };
 
     let node_info = explorer
-        .dag_layout
+        .graph_layout
         .as_ref()
         .and_then(|l| l.nodes.get(explorer.dag_selected))
         .map(|n| format!(" [{}]", n.task_id))
@@ -813,19 +813,19 @@ fn draw_dag_help_bar(frame: &mut Frame, explorer: &app::GraphExplorer, area: Rec
 
     // Check if graph has cycles
     let has_cycles = explorer
-        .dag_layout
+        .graph_layout
         .as_ref()
         .map(|l| l.has_cycles)
         .unwrap_or(false);
 
     let cycle_count = explorer
-        .dag_layout
+        .graph_layout
         .as_ref()
         .map(|l| l.back_edges.len())
         .unwrap_or(0);
 
     let loop_count = explorer
-        .dag_layout
+        .graph_layout
         .as_ref()
         .map(|l| l.loop_edges.len())
         .unwrap_or(0);
