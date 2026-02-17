@@ -1134,6 +1134,10 @@ enum ServiceCommands {
         /// Model to use for spawned agents (overrides config.toml coordinator.model)
         #[arg(long)]
         model: Option<String>,
+
+        /// Kill existing daemon before starting (prevents stacked daemons)
+        #[arg(long)]
+        force: bool,
     },
 
     /// Stop the agent service daemon
@@ -2191,6 +2195,7 @@ fn main() -> Result<()> {
                 executor,
                 interval,
                 model,
+                force,
             } => commands::service::run_start(
                 &workgraph_dir,
                 socket.as_deref(),
@@ -2200,6 +2205,7 @@ fn main() -> Result<()> {
                 interval,
                 model.as_deref(),
                 cli.json,
+                force,
             ),
             ServiceCommands::Stop { force, kill_agents } => {
                 commands::service::run_stop(&workgraph_dir, force, kill_agents, cli.json)
