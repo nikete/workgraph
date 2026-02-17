@@ -701,18 +701,25 @@ fn generate_ascii(
         let loop_info = task
             .filter(|t| !t.loops_to.is_empty() || t.loop_iteration > 0)
             .map(|t| {
-                let mut parts = Vec::new();
-                for edge in &t.loops_to {
+                // Show iteration progress: pick the max iteration / max from loops_to,
+                // or use loop_iteration directly if this task is a loop target.
+                let (iter, max) = if !t.loops_to.is_empty() {
+                    // Task has outgoing loop edges — show target iteration info
+                    let edge = &t.loops_to[0];
                     let iter = graph
                         .get_task(&edge.target)
                         .map(|tgt| tgt.loop_iteration)
                         .unwrap_or(0);
-                    parts.push(format!("↻{}:{}/{}", edge.target, iter, edge.max_iterations));
+                    (iter, edge.max_iterations)
+                } else {
+                    // Task is a loop target (has loop_iteration > 0 but no outgoing loops)
+                    (t.loop_iteration, 0)
+                };
+                if max > 0 {
+                    format!(" ↺ (iter {}/{})", iter, max)
+                } else {
+                    format!(" ↺ (iter {})", iter)
                 }
-                if t.loop_iteration > 0 {
-                    parts.push(format!("iter={}", t.loop_iteration));
-                }
-                format!("  [{}]", parts.join(", "))
             })
             .unwrap_or_default();
         let phase_info = annotations
@@ -868,7 +875,7 @@ fn generate_ascii(
                             .map(|t| t.loop_iteration)
                             .unwrap_or(0);
                         lines.push(format!(
-                            "{}{}↑ loops to {} ({}/{})",
+                            "{}{}↺ loops to {} (iter {}/{})",
                             child_prefix, magenta, loop_edge.target, iter, loop_edge.max_iterations
                         ));
                         if use_color {
@@ -1494,6 +1501,104 @@ mod tests {
         assert!(result.contains("my-task"));
         // No phase annotation when shown as literal nodes
         assert!(!result.contains("[assigning]"));
+    }
+
+    #[test]
+    fn test_ascii_loop_symbol_on_task_with_loops_to() {
+        use workgraph::graph::LoopEdge;
+
+        let mut graph = WorkGraph::new();
+        let mut src = make_task("src", "Source");
+        src.loops_to.push(LoopEdge {
+            target: "tgt".to_string(),
+            guard: None,
+            max_iterations: 10,
+            delay: None,
+        });
+        let mut tgt = make_task("tgt", "Target");
+        tgt.loop_iteration = 3;
+        tgt.blocked_by = vec!["src".to_string()];
+        // Need src blocked_by tgt for the loop chain
+        src.blocked_by = vec!["tgt".to_string()];
+        graph.add_node(Node::Task(src));
+        graph.add_node(Node::Task(tgt));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
+
+        // The source task (which has loops_to) should show the ↺ symbol
+        assert!(result.contains("↺"), "Expected ↺ symbol in output:\n{}", result);
+        // Should show iteration info like (iter 3/10)
+        assert!(result.contains("3/10"), "Expected iteration count in output:\n{}", result);
+    }
+
+    #[test]
+    fn test_ascii_loop_symbol_independent_task() {
+        use workgraph::graph::LoopEdge;
+
+        let mut graph = WorkGraph::new();
+        let mut task = make_task("looper", "Looping task");
+        task.loops_to.push(LoopEdge {
+            target: "looper".to_string(),
+            guard: None,
+            max_iterations: 5,
+            delay: None,
+        });
+        task.loop_iteration = 2;
+        graph.add_node(Node::Task(task));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
+
+        // Should show ↺ symbol in the node label
+        assert!(result.contains("↺"), "Expected ↺ symbol in output:\n{}", result);
+        assert!(result.contains("2/5"), "Expected iteration count in output:\n{}", result);
+    }
+
+    #[test]
+    fn test_ascii_loop_backedge_uses_loop_symbol() {
+        use workgraph::graph::LoopEdge;
+
+        let mut graph = WorkGraph::new();
+        let mut src = make_task("src", "Source");
+        src.loops_to.push(LoopEdge {
+            target: "tgt".to_string(),
+            guard: None,
+            max_iterations: 5,
+            delay: None,
+        });
+        let mut tgt = make_task("tgt", "Target");
+        tgt.blocked_by = vec!["src".to_string()];
+        graph.add_node(Node::Task(src));
+        graph.add_node(Node::Task(tgt));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
+
+        // The loop back-edge line should contain ↺
+        assert!(result.contains("↺"), "Expected ↺ symbol in back-edge line:\n{}", result);
+    }
+
+    #[test]
+    fn test_ascii_no_loop_symbol_on_normal_tasks() {
+        let mut graph = WorkGraph::new();
+        let t1 = make_task("normal", "Normal task");
+        graph.add_node(Node::Task(t1));
+
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
+
+        // No loop symbol on tasks without loops
+        assert!(!result.contains("↺"), "Should NOT contain ↺ on normal task:\n{}", result);
+        assert!(!result.contains("↻"), "Should NOT contain ↻ on normal task:\n{}", result);
     }
 
     #[test]
