@@ -771,13 +771,18 @@ fn spawn_agents_for_ready_tasks(
             continue;
         }
 
-        // Resolve executor: agent.executor > config.coordinator.executor
-        let effective_executor = task
-            .agent
-            .as_ref()
-            .and_then(|agent_hash| agency::find_agent_by_prefix(&agents_dir, agent_hash).ok())
-            .map(|agent| agent.executor)
-            .unwrap_or_else(|| executor.to_string());
+        // Resolve executor: tasks with exec commands use shell executor directly
+        // (avoids nested Claude when evaluation tasks run `wg evaluate`),
+        // otherwise: agent.executor > config.coordinator.executor
+        let effective_executor = if task.exec.is_some() {
+            "shell".to_string()
+        } else {
+            task.agent
+                .as_ref()
+                .and_then(|agent_hash| agency::find_agent_by_prefix(&agents_dir, agent_hash).ok())
+                .map(|agent| agent.executor)
+                .unwrap_or_else(|| executor.to_string())
+        };
 
         // Task-level model takes priority over service-level model
         let effective_model = task.model.as_deref().or(model);
