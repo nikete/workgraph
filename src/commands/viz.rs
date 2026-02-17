@@ -4,7 +4,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use workgraph::format_hours;
-use workgraph::graph::{Status, WorkGraph};
+use workgraph::graph::{Status, Task, WorkGraph};
 
 /// Output format for visualization
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +37,8 @@ pub struct VizOptions {
     pub critical_path: bool,
     pub format: OutputFormat,
     pub output: Option<String>,
+    /// Show internal tasks (assign-*, evaluate-*) that are normally hidden
+    pub show_internal: bool,
 }
 
 impl Default for VizOptions {
@@ -47,8 +49,79 @@ impl Default for VizOptions {
             critical_path: false,
             format: OutputFormat::Ascii,
             output: None,
+            show_internal: false,
         }
     }
+}
+
+/// Returns true if the task is an auto-generated internal task (assignment or evaluation).
+fn is_internal_task(task: &Task) -> bool {
+    task.tags
+        .iter()
+        .any(|t| t == "assignment" || t == "evaluation")
+}
+
+/// Determine the phase annotation for a parent task based on its related internal tasks.
+///
+/// - If an assignment task exists and is not done → "[assigning]"
+/// - If an evaluation task exists and is not done → "[evaluating]"
+fn compute_phase_annotation(internal_task: &Task) -> &'static str {
+    if internal_task.tags.iter().any(|t| t == "assignment") {
+        "[assigning]"
+    } else {
+        "[evaluating]"
+    }
+}
+
+/// Filter out internal tasks and compute phase annotations for their parent tasks.
+///
+/// Returns:
+/// - The filtered list of tasks (internal tasks removed)
+/// - A map of parent_task_id → phase annotation string
+fn filter_internal_tasks<'a>(
+    _graph: &'a WorkGraph,
+    tasks: Vec<&'a Task>,
+    _existing_annotations: &HashMap<String, String>,
+) -> (Vec<&'a Task>, HashMap<String, String>) {
+    let mut annotations: HashMap<String, String> = HashMap::new();
+    let mut internal_ids: HashSet<&str> = HashSet::new();
+
+    // First pass: identify internal tasks and compute annotations
+    for task in &tasks {
+        if !is_internal_task(task) {
+            continue;
+        }
+        internal_ids.insert(task.id.as_str());
+
+        // Determine the parent task ID.
+        // For assign-X: the parent is X (assign task has no blocked_by from parent,
+        //   but parent has blocked_by assign-X)
+        // For evaluate-X: the parent is X (evaluate task is blocked_by X)
+        let parent_id = if task.tags.iter().any(|t| t == "assignment") {
+            // assign-{parent_id}: strip the prefix
+            task.id.strip_prefix("assign-").map(|s| s.to_string())
+        } else {
+            // evaluate-{parent_id}: strip the prefix
+            task.id.strip_prefix("evaluate-").map(|s| s.to_string())
+        };
+
+        if let Some(pid) = parent_id {
+            // Only annotate if the internal task is not yet done
+            if task.status != Status::Done {
+                let annotation = compute_phase_annotation(task);
+                annotations.insert(pid, annotation.to_string());
+            }
+        }
+    }
+
+    // Second pass: filter out internal tasks and fix edges
+    // For tasks that were blocked by internal tasks, rewire to the internal task's blockers
+    let filtered: Vec<&'a Task> = tasks
+        .into_iter()
+        .filter(|t| !internal_ids.contains(t.id.as_str()))
+        .collect();
+
+    (filtered, annotations)
 }
 
 pub fn run(dir: &Path, options: &VizOptions) -> Result<()> {
@@ -81,6 +154,14 @@ pub fn run(dir: &Path, options: &VizOptions) -> Result<()> {
         })
         .collect();
 
+    // Filter out internal tasks (assign-*, evaluate-*) unless --show-internal
+    let empty_annotations = HashMap::new();
+    let (tasks_to_show, annotations) = if options.show_internal {
+        (tasks_to_show, empty_annotations)
+    } else {
+        filter_internal_tasks(&graph, tasks_to_show, &empty_annotations)
+    };
+
     let task_ids: HashSet<&str> = tasks_to_show.iter().map(|t| t.id.as_str()).collect();
 
     // Calculate critical path if requested
@@ -92,11 +173,21 @@ pub fn run(dir: &Path, options: &VizOptions) -> Result<()> {
 
     // Generate output
     let output = match options.format {
-        OutputFormat::Dot => generate_dot(&graph, &tasks_to_show, &task_ids, &critical_path_set),
-        OutputFormat::Mermaid => {
-            generate_mermaid(&graph, &tasks_to_show, &task_ids, &critical_path_set)
-        }
-        OutputFormat::Ascii => generate_ascii(&graph, &tasks_to_show, &task_ids),
+        OutputFormat::Dot => generate_dot(
+            &graph,
+            &tasks_to_show,
+            &task_ids,
+            &critical_path_set,
+            &annotations,
+        ),
+        OutputFormat::Mermaid => generate_mermaid(
+            &graph,
+            &tasks_to_show,
+            &task_ids,
+            &critical_path_set,
+            &annotations,
+        ),
+        OutputFormat::Ascii => generate_ascii(&graph, &tasks_to_show, &task_ids, &annotations),
     };
 
     // If output file is specified, render with dot
@@ -118,6 +209,7 @@ fn generate_dot(
     tasks: &[&workgraph::graph::Task],
     task_ids: &HashSet<&str>,
     critical_path: &HashSet<String>,
+    annotations: &HashMap<String, String>,
 ) -> String {
     let mut lines = vec![
         "digraph workgraph {".to_string(),
@@ -145,7 +237,13 @@ fn generate_dot(
             .map(|h| format!("\\n{}h", format_hours(h)))
             .unwrap_or_default();
 
-        let label = format!("{}\\n{}{}", task.id, task.title, hours_str);
+        // Add phase annotation if present
+        let phase_str = annotations
+            .get(&task.id)
+            .map(|a| format!(" {}", a))
+            .unwrap_or_default();
+
+        let label = format!("{}\\n{}{}{}", task.id, task.title, hours_str, phase_str);
 
         // Check if on critical path
         let node_style = if critical_path.contains(&task.id) {
@@ -261,6 +359,7 @@ fn generate_mermaid(
     tasks: &[&workgraph::graph::Task],
     task_ids: &HashSet<&str>,
     critical_path: &HashSet<String>,
+    annotations: &HashMap<String, String>,
 ) -> String {
     let mut lines = Vec::new();
 
@@ -277,7 +376,14 @@ fn generate_mermaid(
 
         // Sanitize title for mermaid (escape quotes)
         let title = task.title.replace('"', "'");
-        let label = format!("{}: {}{}", task.id, title, hours_str);
+
+        // Add phase annotation if present
+        let phase_str = annotations
+            .get(&task.id)
+            .map(|a| format!(" {}", a))
+            .unwrap_or_default();
+
+        let label = format!("{}: {}{}{}", task.id, title, hours_str, phase_str);
 
         // Mermaid node shape based on status
         let node = match task.status {
@@ -516,6 +622,7 @@ fn generate_ascii(
     graph: &WorkGraph,
     tasks: &[&workgraph::graph::Task],
     task_ids: &HashSet<&str>,
+    annotations: &HashMap<String, String>,
 ) -> String {
     if tasks.is_empty() {
         return String::from("(no tasks to display)");
@@ -608,7 +715,14 @@ fn generate_ascii(
                 format!("  [{}]", parts.join(", "))
             })
             .unwrap_or_default();
-        format!("{}{}{}  ({}){}", color, id, reset, status, loop_info)
+        let phase_info = annotations
+            .get(id)
+            .map(|a| format!(" {}", a))
+            .unwrap_or_default();
+        format!(
+            "{}{}{}  ({}){}{}",
+            color, id, reset, status, phase_info, loop_info
+        )
     };
 
     // Find connected components using union-find
@@ -897,7 +1011,8 @@ mod tests {
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
         let critical_path = HashSet::new();
 
-        let dot = generate_dot(&graph, &tasks, &task_ids, &critical_path);
+        let no_annots = HashMap::new();
+        let dot = generate_dot(&graph, &tasks, &task_ids, &critical_path, &no_annots);
         assert!(dot.contains("digraph workgraph"));
         assert!(dot.contains("\"t1\""));
         assert!(dot.contains("Task 1"));
@@ -912,8 +1027,9 @@ mod tests {
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
         let critical_path = HashSet::new();
+        let no_annots = HashMap::new();
 
-        let dot = generate_dot(&graph, &tasks, &task_ids, &critical_path);
+        let dot = generate_dot(&graph, &tasks, &task_ids, &critical_path, &no_annots);
         assert!(dot.contains("8h"));
     }
 
@@ -932,8 +1048,9 @@ mod tests {
         let mut critical_path = HashSet::new();
         critical_path.insert("t1".to_string());
         critical_path.insert("t2".to_string());
+        let no_annots = HashMap::new();
 
-        let dot = generate_dot(&graph, &tasks, &task_ids, &critical_path);
+        let dot = generate_dot(&graph, &tasks, &task_ids, &critical_path, &no_annots);
         assert!(dot.contains("color=red"));
         assert!(dot.contains("penwidth"));
     }
@@ -947,8 +1064,9 @@ mod tests {
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
         let critical_path = HashSet::new();
+        let no_annots = HashMap::new();
 
-        let mermaid = generate_mermaid(&graph, &tasks, &task_ids, &critical_path);
+        let mermaid = generate_mermaid(&graph, &tasks, &task_ids, &critical_path, &no_annots);
         assert!(mermaid.contains("flowchart LR"));
         assert!(mermaid.contains("t1"));
     }
@@ -966,8 +1084,9 @@ mod tests {
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
         let critical_path = HashSet::new();
+        let no_annots = HashMap::new();
 
-        let mermaid = generate_mermaid(&graph, &tasks, &task_ids, &critical_path);
+        let mermaid = generate_mermaid(&graph, &tasks, &task_ids, &critical_path, &no_annots);
         assert!(mermaid.contains("t1 --> t2"));
     }
 
@@ -1040,7 +1159,8 @@ mod tests {
         let graph = WorkGraph::new();
         let tasks: Vec<&workgraph::graph::Task> = vec![];
         let task_ids: HashSet<&str> = HashSet::new();
-        let result = generate_ascii(&graph, &tasks, &task_ids);
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
         assert_eq!(result, "(no tasks to display)");
     }
 
@@ -1055,7 +1175,8 @@ mod tests {
 
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        let result = generate_ascii(&graph, &tasks, &task_ids);
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // Tree output: src is root, tgt is child
         assert!(result.contains("src"));
@@ -1078,7 +1199,8 @@ mod tests {
 
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        let result = generate_ascii(&graph, &tasks, &task_ids);
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // a is root with two children
         assert!(result.contains("├→"));
@@ -1101,7 +1223,8 @@ mod tests {
 
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        let result = generate_ascii(&graph, &tasks, &task_ids);
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // c should appear under one parent with a fan-in annotation
         assert!(result.contains('c'));
@@ -1116,7 +1239,8 @@ mod tests {
 
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        let result = generate_ascii(&graph, &tasks, &task_ids);
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         assert!(result.contains("solo"));
         assert!(result.contains("(independent)"));
@@ -1135,7 +1259,8 @@ mod tests {
 
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        let result = generate_ascii(&graph, &tasks, &task_ids);
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         assert!(result.contains("(in-progress)"));
         assert!(result.contains("(blocked)"));
@@ -1155,7 +1280,8 @@ mod tests {
 
         let tasks: Vec<_> = graph.tasks().collect();
         let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
-        let result = generate_ascii(&graph, &tasks, &task_ids);
+        let no_annots = HashMap::new();
+        let result = generate_ascii(&graph, &tasks, &task_ids, &no_annots);
 
         // Should show indented chain: a -> b -> c
         assert!(result.contains("a"));
@@ -1203,5 +1329,198 @@ mod tests {
         assert_eq!(format_hours(f64::NEG_INFINITY), "?");
         assert_eq!(format_hours(5.0), "5");
         assert_eq!(format_hours(2.5), "2.5");
+    }
+
+    // --- Internal task filtering tests ---
+
+    fn make_internal_task(id: &str, title: &str, tag: &str, blocked_by: Vec<&str>) -> Task {
+        Task {
+            id: id.to_string(),
+            title: title.to_string(),
+            tags: vec![tag.to_string(), "agency".to_string()],
+            blocked_by: blocked_by.into_iter().map(String::from).collect(),
+            ..Task::default()
+        }
+    }
+
+    #[test]
+    fn test_is_internal_task() {
+        let assign = make_internal_task("assign-foo", "Assign agent to foo", "assignment", vec![]);
+        let eval = make_internal_task("evaluate-foo", "Evaluate foo", "evaluation", vec!["foo"]);
+        let normal = make_task("foo", "Normal task");
+
+        assert!(is_internal_task(&assign));
+        assert!(is_internal_task(&eval));
+        assert!(!is_internal_task(&normal));
+    }
+
+    #[test]
+    fn test_ascii_hides_internal_tasks_by_default() {
+        let mut graph = WorkGraph::new();
+        let mut parent = make_task("my-task", "My Task");
+        parent.status = Status::Open;
+        let assign = make_internal_task(
+            "assign-my-task",
+            "Assign agent to my-task",
+            "assignment",
+            vec![],
+        );
+        // assign task blocks parent (parent is blocked by assign)
+        parent.blocked_by = vec!["assign-my-task".to_string()];
+        graph.add_node(Node::Task(parent));
+        graph.add_node(Node::Task(assign));
+
+        let annotations = HashMap::new();
+        let (filtered, annots) =
+            filter_internal_tasks(&graph, graph.tasks().collect(), &annotations);
+        let task_ids: HashSet<&str> = filtered.iter().map(|t| t.id.as_str()).collect();
+
+        let result = generate_ascii(&graph, &filtered, &task_ids, &annots);
+
+        // Internal task should NOT appear
+        assert!(!result.contains("assign-my-task"));
+        // Parent task should appear with phase annotation
+        assert!(result.contains("my-task"));
+        assert!(result.contains("[assigning]"));
+    }
+
+    #[test]
+    fn test_ascii_shows_evaluating_phase() {
+        let mut graph = WorkGraph::new();
+        let mut parent = make_task("my-task", "My Task");
+        parent.status = Status::Done;
+        let mut eval = make_internal_task(
+            "evaluate-my-task",
+            "Evaluate my-task",
+            "evaluation",
+            vec!["my-task"],
+        );
+        eval.status = Status::InProgress;
+        graph.add_node(Node::Task(parent));
+        graph.add_node(Node::Task(eval));
+
+        let annotations = HashMap::new();
+        let (filtered, annots) =
+            filter_internal_tasks(&graph, graph.tasks().collect(), &annotations);
+        let task_ids: HashSet<&str> = filtered.iter().map(|t| t.id.as_str()).collect();
+
+        let result = generate_ascii(&graph, &filtered, &task_ids, &annots);
+
+        assert!(!result.contains("evaluate-my-task"));
+        assert!(result.contains("my-task"));
+        assert!(result.contains("[evaluating]"));
+    }
+
+    #[test]
+    fn test_dot_hides_internal_tasks_by_default() {
+        let mut graph = WorkGraph::new();
+        let mut parent = make_task("my-task", "My Task");
+        parent.status = Status::Open;
+        let assign = make_internal_task(
+            "assign-my-task",
+            "Assign agent to my-task",
+            "assignment",
+            vec![],
+        );
+        parent.blocked_by = vec!["assign-my-task".to_string()];
+        graph.add_node(Node::Task(parent));
+        graph.add_node(Node::Task(assign));
+
+        let annotations = HashMap::new();
+        let (filtered, annots) =
+            filter_internal_tasks(&graph, graph.tasks().collect(), &annotations);
+        let task_ids: HashSet<&str> = filtered.iter().map(|t| t.id.as_str()).collect();
+        let critical_path = HashSet::new();
+
+        let result = generate_dot(&graph, &filtered, &task_ids, &critical_path, &annots);
+
+        assert!(!result.contains("assign-my-task"));
+        assert!(result.contains("my-task"));
+        assert!(result.contains("[assigning]"));
+    }
+
+    #[test]
+    fn test_mermaid_hides_internal_tasks_by_default() {
+        let mut graph = WorkGraph::new();
+        let mut parent = make_task("my-task", "My Task");
+        parent.status = Status::Open;
+        let assign = make_internal_task(
+            "assign-my-task",
+            "Assign agent to my-task",
+            "assignment",
+            vec![],
+        );
+        parent.blocked_by = vec!["assign-my-task".to_string()];
+        graph.add_node(Node::Task(parent));
+        graph.add_node(Node::Task(assign));
+
+        let annotations = HashMap::new();
+        let (filtered, annots) =
+            filter_internal_tasks(&graph, graph.tasks().collect(), &annotations);
+        let task_ids: HashSet<&str> = filtered.iter().map(|t| t.id.as_str()).collect();
+        let critical_path = HashSet::new();
+
+        let result = generate_mermaid(&graph, &filtered, &task_ids, &critical_path, &annots);
+
+        assert!(!result.contains("assign-my-task"));
+        assert!(result.contains("my-task"));
+        assert!(result.contains("[assigning]"));
+    }
+
+    #[test]
+    fn test_show_internal_reveals_all_tasks() {
+        let mut graph = WorkGraph::new();
+        let mut parent = make_task("my-task", "My Task");
+        parent.status = Status::Open;
+        let assign = make_internal_task(
+            "assign-my-task",
+            "Assign agent to my-task",
+            "assignment",
+            vec![],
+        );
+        parent.blocked_by = vec!["assign-my-task".to_string()];
+        graph.add_node(Node::Task(parent));
+        graph.add_node(Node::Task(assign));
+
+        // When show_internal is true, we skip filtering
+        let tasks: Vec<_> = graph.tasks().collect();
+        let task_ids: HashSet<&str> = tasks.iter().map(|t| t.id.as_str()).collect();
+        let annots = HashMap::new();
+
+        let result = generate_ascii(&graph, &tasks, &task_ids, &annots);
+
+        // Both tasks should be visible
+        assert!(result.contains("assign-my-task"));
+        assert!(result.contains("my-task"));
+        // No phase annotation when shown as literal nodes
+        assert!(!result.contains("[assigning]"));
+    }
+
+    #[test]
+    fn test_internal_task_filtering_preserves_edges_through_internal() {
+        // If A -> assign-B -> B, after filtering we should see A -> B
+        let mut graph = WorkGraph::new();
+        let task_a = make_task("a", "Task A");
+        let mut assign_b =
+            make_internal_task("assign-b", "Assign agent to b", "assignment", vec!["a"]);
+        assign_b.status = Status::Open;
+        let mut task_b = make_task("b", "Task B");
+        task_b.blocked_by = vec!["assign-b".to_string()];
+        graph.add_node(Node::Task(task_a));
+        graph.add_node(Node::Task(assign_b));
+        graph.add_node(Node::Task(task_b));
+
+        let annotations = HashMap::new();
+        let (filtered, annots) =
+            filter_internal_tasks(&graph, graph.tasks().collect(), &annotations);
+        let task_ids: HashSet<&str> = filtered.iter().map(|t| t.id.as_str()).collect();
+
+        // Both a and b should be in the filtered set
+        assert!(task_ids.contains("a"));
+        assert!(task_ids.contains("b"));
+        assert!(!task_ids.contains("assign-b"));
+
+        // b should show [assigning] annotation
+        assert!(annots.contains_key("b"));
     }
 }

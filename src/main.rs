@@ -311,6 +311,10 @@ enum Commands {
         /// Render directly to file (requires dot installed)
         #[arg(long, short)]
         output: Option<String>,
+
+        /// Show internal tasks (assign-*, evaluate-*) normally hidden
+        #[arg(long)]
+        show_internal: bool,
     },
 
     /// Output the full graph data (DOT format with archive support)
@@ -1740,6 +1744,7 @@ fn main() -> Result<()> {
             dot,
             mermaid,
             output,
+            show_internal,
         } => {
             let fmt = if dot {
                 commands::viz::OutputFormat::Dot
@@ -1754,6 +1759,7 @@ fn main() -> Result<()> {
                 critical_path,
                 format: fmt,
                 output,
+                show_internal,
             };
             commands::viz::run(&workgraph_dir, &options)
         }
