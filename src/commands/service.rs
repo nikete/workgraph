@@ -1782,8 +1782,15 @@ pub fn run_start(
 
     let log_path_str = log_path.to_string_lossy().to_string();
 
+    // Warn if auto_assign is enabled but no agency agents are defined
+    let no_agents_defined = {
+        let agents_dir = dir.join("agency").join("agents");
+        agency::load_all_agents_or_warn(&agents_dir).is_empty()
+    };
+    let warn_no_agents = config.agency.auto_assign && no_agents_defined;
+
     if json {
-        let output = serde_json::json!({
+        let mut output = serde_json::json!({
             "status": "started",
             "pid": pid,
             "socket": socket_str,
@@ -1795,6 +1802,11 @@ pub fn run_start(
                 "model": eff_model,
             }
         });
+        if warn_no_agents {
+            output["warning"] = serde_json::json!(
+                "auto_assign is enabled but no agents are defined. Run 'wg agency init' or 'wg agent create' to create agents."
+            );
+        }
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("Service started (PID {})", pid);
@@ -1805,6 +1817,11 @@ pub fn run_start(
             "Coordinator: max_agents={}, poll_interval={}s, executor={}, model={}",
             eff_max_agents, eff_poll_interval, eff_executor, model_str
         );
+        if warn_no_agents {
+            println!();
+            println!("Warning: auto_assign is enabled but no agents are defined.");
+            println!("  Run 'wg agency init' or 'wg agent create' to create agents.");
+        }
     }
 
     Ok(())
@@ -2583,10 +2600,14 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
         return Ok(());
     }
 
-    // Get agent summary
+    // Get agent summary (runtime registry = spawned processes)
     let registry = AgentRegistry::load_or_warn(dir);
     let alive_count = registry.active_count();
     let idle_count = registry.idle_count();
+
+    // Check if any agency agents are defined (YAML definitions, not runtime processes)
+    let agency_agents_dir = dir.join("agency").join("agents");
+    let agency_agents_defined = !agency::load_all_agents_or_warn(&agency_agents_dir).is_empty();
 
     // Calculate uptime
     let uptime = chrono::DateTime::parse_from_rfc3339(&state.started_at)
@@ -2618,6 +2639,7 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
                 "alive": alive_count,
                 "idle": idle_count,
                 "total": registry.agents.len(),
+                "agents_defined": agency_agents_defined,
             },
             "coordinator": {
                 "enabled": coord.enabled,
@@ -2637,6 +2659,11 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
                 "exists": log_exists,
             }
         });
+        if !agency_agents_defined {
+            output["warning"] = serde_json::json!(
+                "No agents defined — run 'wg agency init' or 'wg agent create'"
+            );
+        }
         if !recent_errors.is_empty() || !recent_fatals.is_empty() {
             let mut all_errors: Vec<String> = recent_fatals;
             all_errors.extend(recent_errors);
@@ -2647,12 +2674,16 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
         println!("Service: running (PID {})", state.pid);
         println!("Socket: {}", state.socket_path);
         println!("Uptime: {}", uptime);
-        println!(
-            "Agents: {} alive, {} idle, {} total",
-            alive_count,
-            idle_count,
-            registry.agents.len()
-        );
+        if !agency_agents_defined {
+            println!("Agents: No agents defined — run 'wg agency init' or 'wg agent create'");
+        } else {
+            println!(
+                "Agents: {} alive, {} idle, {} total",
+                alive_count,
+                idle_count,
+                registry.agents.len()
+            );
+        }
         let model_str = coord.model.as_deref().unwrap_or("default");
         let pause_str = if coord.paused { ", PAUSED" } else { "" };
         println!(
@@ -3761,5 +3792,114 @@ poll_interval = 120
                 .unwrap()
                 .contains("Max retries exceeded")
         );
+    }
+
+    #[test]
+    fn test_no_agents_warning_when_auto_assign_enabled() {
+        // When auto_assign is enabled but no agency agents exist,
+        // the service start output should include a warning.
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path();
+        fs::create_dir_all(wg_dir.join("agency").join("agents")).unwrap();
+
+        // Enable auto_assign in config
+        let mut config = Config::load_or_default(wg_dir);
+        config.agency.auto_assign = true;
+        config.save(wg_dir).unwrap();
+
+        // Check: no agency agents defined
+        let agents_dir = wg_dir.join("agency").join("agents");
+        let agents = agency::load_all_agents_or_warn(&agents_dir);
+        assert!(agents.is_empty(), "Expected no agents defined");
+
+        // The condition that triggers the warning
+        let no_agents_defined = agents.is_empty();
+        let warn_no_agents = config.agency.auto_assign && no_agents_defined;
+        assert!(
+            warn_no_agents,
+            "Should warn: auto_assign enabled, no agents defined"
+        );
+    }
+
+    #[test]
+    fn test_no_warning_when_agents_exist() {
+        // When agency agents exist, no warning should be shown.
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path();
+
+        // Use agency init to create roles, motivations, and a default agent
+        super::super::agency_init::run(wg_dir).unwrap();
+
+        let mut config = Config::load_or_default(wg_dir);
+        config.agency.auto_assign = true;
+        config.save(wg_dir).unwrap();
+
+        let agents_dir = wg_dir.join("agency").join("agents");
+        let agents = agency::load_all_agents_or_warn(&agents_dir);
+        assert!(!agents.is_empty(), "Expected at least one agent");
+
+        let no_agents_defined = agents.is_empty();
+        let warn_no_agents = config.agency.auto_assign && no_agents_defined;
+        assert!(
+            !warn_no_agents,
+            "Should NOT warn when agents are defined"
+        );
+    }
+
+    #[test]
+    fn test_status_distinguishes_no_agents_from_dead_agents() {
+        // When no agency agents are defined, status should say "No agents defined"
+        // rather than just showing agents_alive=0.
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path();
+        fs::create_dir_all(wg_dir.join("agency").join("agents")).unwrap();
+
+        let agents_dir = wg_dir.join("agency").join("agents");
+        let agency_agents_defined =
+            !agency::load_all_agents_or_warn(&agents_dir).is_empty();
+
+        // No agents defined — should show the "No agents defined" message
+        assert!(!agency_agents_defined);
+
+        let status_line = if !agency_agents_defined {
+            "Agents: No agents defined — run 'wg agency init' or 'wg agent create'"
+                .to_string()
+        } else {
+            format!("Agents: 0 alive, 0 idle, 0 total")
+        };
+        assert!(
+            status_line.contains("No agents defined"),
+            "Expected 'No agents defined' message, got: {}",
+            status_line
+        );
+    }
+
+    #[test]
+    fn test_status_shows_counts_when_agents_defined() {
+        // When agency agents exist but none are alive (process-wise),
+        // status should show the alive/idle/total counts, NOT "No agents defined".
+        let temp_dir = TempDir::new().unwrap();
+        let wg_dir = temp_dir.path();
+
+        // Create an agent via agency init
+        super::super::agency_init::run(wg_dir).unwrap();
+
+        let agents_dir = wg_dir.join("agency").join("agents");
+        let agency_agents_defined =
+            !agency::load_all_agents_or_warn(&agents_dir).is_empty();
+        assert!(agency_agents_defined);
+
+        let status_line = if !agency_agents_defined {
+            "Agents: No agents defined — run 'wg agency init' or 'wg agent create'"
+                .to_string()
+        } else {
+            format!("Agents: 0 alive, 0 idle, 0 total")
+        };
+        assert!(
+            !status_line.contains("No agents defined"),
+            "Should show counts when agents are defined, got: {}",
+            status_line
+        );
+        assert!(status_line.contains("0 alive"));
     }
 }
