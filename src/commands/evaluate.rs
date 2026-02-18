@@ -7,8 +7,28 @@ use workgraph::agency::{
     render_evaluator_prompt,
 };
 use workgraph::config::Config;
-use workgraph::graph::Status;
+use workgraph::graph::{LogEntry, Status};
 use workgraph::parser::load_graph;
+
+/// Extract the model from a task's spawn log entry.
+///
+/// Spawn log entries have the format:
+///   "Spawned by coordinator --executor claude --model anthropic/claude-opus-4-6"
+/// Returns the model string if found.
+fn extract_spawn_model(log: &[LogEntry]) -> Option<String> {
+    for entry in log {
+        if let Some(rest) = entry.message.strip_prefix("Spawned by ") {
+            if let Some(idx) = rest.find("--model ") {
+                let model_start = idx + "--model ".len();
+                let model = rest[model_start..].trim();
+                if !model.is_empty() {
+                    return Some(model.to_string());
+                }
+            }
+        }
+    }
+    None
+}
 
 /// Run `wg evaluate <task-id>` — trigger evaluation of a completed task.
 pub fn run(
@@ -133,6 +153,9 @@ pub fn run(
         .or(task.model.clone())
         .unwrap_or_else(|| config.agent.model.clone());
 
+    // Resolve the task execution model early so dry-run can show it
+    let task_model_preview = extract_spawn_model(&task.log).or_else(|| task.model.clone());
+
     // Step 5: --dry-run shows what would be evaluated
     if dry_run {
         println!("=== Dry Run: wg evaluate {} ===\n", task_id);
@@ -145,6 +168,10 @@ pub fn run(
         } else {
             println!("Agent: (none)");
         }
+        println!(
+            "Task model:     {}",
+            task_model_preview.as_deref().unwrap_or("(unknown)")
+        );
         println!("Artifacts: {}", artifacts.len());
         println!("Log entries: {}", log_entries.len());
         println!("Evaluator model: {}", model);
@@ -193,6 +220,11 @@ pub fn run(
     let role_id = agent_role_id;
     let motivation_id = agent_motivation_id;
 
+    // Resolve the model that was used to execute this task.
+    // Best source: the spawn log entry which records the effective model.
+    // Fallback: task.model field.
+    let task_model = extract_spawn_model(&task.log).or_else(|| task.model.clone());
+
     let timestamp = chrono::Utc::now().to_rfc3339();
     let eval_id = format!("eval-{}-{}", task_id, timestamp.replace(':', "-"));
 
@@ -207,6 +239,7 @@ pub fn run(
         notes: parsed.notes,
         evaluator: format!("claude:{}", model),
         timestamp,
+        model: task_model.clone(),
     };
 
     // Step 8: Save evaluation and update performance records
@@ -222,12 +255,16 @@ pub fn run(
                 "dimensions": evaluation.dimensions,
                 "notes": evaluation.notes,
                 "evaluator": evaluation.evaluator,
+                "model": evaluation.model,
                 "path": eval_path.display().to_string(),
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
         } else {
             println!("\n=== Evaluation Complete ===");
             println!("Task:       {} ({})", task.title, task_id);
+            if let Some(ref m) = evaluation.model {
+                println!("Model:      {}", m);
+            }
             println!("Score:      {:.2}", evaluation.score);
             if let Some(c) = evaluation.dimensions.get("correctness") {
                 println!("  correctness:      {:.2}", c);
@@ -259,6 +296,7 @@ pub fn run(
                 "dimensions": evaluation.dimensions,
                 "notes": evaluation.notes,
                 "evaluator": evaluation.evaluator,
+                "model": evaluation.model,
                 "path": eval_path.display().to_string(),
                 "warning": "No identity assigned — performance records not updated",
             });
@@ -266,6 +304,9 @@ pub fn run(
         } else {
             println!("\n=== Evaluation Complete ===");
             println!("Task:       {} ({})", task.title, task_id);
+            if let Some(ref m) = evaluation.model {
+                println!("Model:      {}", m);
+            }
             println!("Score:      {:.2}", evaluation.score);
             println!("Notes:      {}", evaluation.notes);
             println!("Evaluator:  {}", evaluation.evaluator);
