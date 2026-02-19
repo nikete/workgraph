@@ -6,6 +6,7 @@ Workgraph (`wg`) is a task coordination system designed for both humans and AI a
 
 - [Core Concepts](#core-concepts)
 - [Quick Start](#quick-start)
+  - [First-Time Setup](#first-time-setup)
 - [Command Reference](./COMMANDS.md)
 - [Agent Guide](./AGENT-GUIDE.md)
 - [Storage Format](#storage-format)
@@ -107,6 +108,40 @@ The `wg context` command shows available inputs from completed dependencies.
 For AI agents with limited context windows, trajectories provide an optimal task ordering that minimizes context switching. The `wg trajectory` command computes paths through related tasks based on shared files and skills.
 
 ## Quick Start
+
+### First-Time Setup
+
+Before initializing a project, configure your global defaults:
+
+```bash
+wg setup
+```
+
+The interactive wizard walks you through:
+
+- **Executor backend**: `claude` (default), `amplifier`, or custom
+- **Default model**: `opus`, `sonnet`, or `haiku`
+- **Agency**: Whether to auto-assign agents and auto-evaluate completed work
+- **Max agents**: Number of parallel agents the coordinator can spawn
+
+This creates `~/.workgraph/config.toml`:
+
+```toml
+[coordinator]
+executor = "claude"
+model = "opus"
+max_agents = 4
+
+[agent]
+executor = "claude"
+model = "opus"
+
+[agency]
+auto_assign = true
+auto_evaluate = true
+```
+
+Project-local `.workgraph/config.toml` overrides global settings. Use `wg config --global` or `wg config --local` to adjust individual values, and `wg config --list` to see the merged configuration with source indicators.
 
 ### Initialize a New Project
 

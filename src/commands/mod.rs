@@ -57,6 +57,7 @@ pub mod retry;
 pub mod role;
 pub mod runs_cmd;
 pub mod service;
+pub mod setup;
 pub mod show;
 pub mod skills;
 pub mod spawn;

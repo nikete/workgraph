@@ -68,6 +68,15 @@ pub fn run(dir: &Path) -> Result<()> {
         "Seeded agency with {} roles and {} motivations.",
         roles, motivations
     );
+
+    // Hint about global config if it doesn't exist
+    if let Ok(global_path) = workgraph::config::Config::global_config_path() {
+        if !global_path.exists() {
+            println!();
+            println!("No global config found. Run `wg setup` to configure defaults.");
+        }
+    }
+
     Ok(())
 }
 

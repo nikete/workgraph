@@ -911,6 +911,9 @@ enum Commands {
         refresh_rate: u64,
     },
 
+    /// Interactive configuration wizard for first-time setup
+    Setup,
+
     /// Print a concise cheat sheet for agent onboarding
     Quickstart,
 
@@ -1613,6 +1616,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Kill { .. } => "kill",
         Commands::Service { .. } => "service",
         Commands::Tui { .. } => "tui",
+        Commands::Setup => "setup",
         Commands::Quickstart => "quickstart",
         Commands::Status => "status",
         #[cfg(any(feature = "matrix", feature = "matrix-lite"))]
@@ -2451,6 +2455,7 @@ fn main() -> Result<()> {
             ),
         },
         Commands::Tui { refresh_rate } => tui::run(workgraph_dir, refresh_rate),
+        Commands::Setup => commands::setup::run(),
         Commands::Quickstart => commands::quickstart::run(cli.json),
         Commands::Status => commands::status::run(&workgraph_dir, cli.json),
         #[cfg(any(feature = "matrix", feature = "matrix-lite"))]

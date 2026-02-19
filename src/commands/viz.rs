@@ -107,7 +107,7 @@ fn filter_internal_tasks<'a>(
 
         if let Some(pid) = parent_id {
             // Only annotate if the internal task is not yet done
-            if task.status != Status::Done {
+            if task.status == Status::InProgress {
                 let annotation = compute_phase_annotation(task);
                 annotations.insert(pid, annotation.to_string());
             }
@@ -1366,12 +1366,13 @@ mod tests {
         let mut graph = WorkGraph::new();
         let mut parent = make_task("my-task", "My Task");
         parent.status = Status::Open;
-        let assign = make_internal_task(
+        let mut assign = make_internal_task(
             "assign-my-task",
             "Assign agent to my-task",
             "assignment",
             vec![],
         );
+        assign.status = Status::InProgress;
         // assign task blocks parent (parent is blocked by assign)
         parent.blocked_by = vec!["assign-my-task".to_string()];
         graph.add_node(Node::Task(parent));
@@ -1423,12 +1424,13 @@ mod tests {
         let mut graph = WorkGraph::new();
         let mut parent = make_task("my-task", "My Task");
         parent.status = Status::Open;
-        let assign = make_internal_task(
+        let mut assign = make_internal_task(
             "assign-my-task",
             "Assign agent to my-task",
             "assignment",
             vec![],
         );
+        assign.status = Status::InProgress;
         parent.blocked_by = vec!["assign-my-task".to_string()];
         graph.add_node(Node::Task(parent));
         graph.add_node(Node::Task(assign));
@@ -1451,12 +1453,13 @@ mod tests {
         let mut graph = WorkGraph::new();
         let mut parent = make_task("my-task", "My Task");
         parent.status = Status::Open;
-        let assign = make_internal_task(
+        let mut assign = make_internal_task(
             "assign-my-task",
             "Assign agent to my-task",
             "assignment",
             vec![],
         );
+        assign.status = Status::InProgress;
         parent.blocked_by = vec!["assign-my-task".to_string()];
         graph.add_node(Node::Task(parent));
         graph.add_node(Node::Task(assign));
@@ -1636,7 +1639,7 @@ mod tests {
         let task_a = make_task("a", "Task A");
         let mut assign_b =
             make_internal_task("assign-b", "Assign agent to b", "assignment", vec!["a"]);
-        assign_b.status = Status::Open;
+        assign_b.status = Status::InProgress;
         let mut task_b = make_task("b", "Task B");
         task_b.blocked_by = vec!["assign-b".to_string()];
         graph.add_node(Node::Task(task_a));

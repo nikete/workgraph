@@ -751,6 +751,148 @@ fn build_auto_evaluate_tasks(
     modified
 }
 
+/// Spawn an evaluation task directly without the full agent spawn machinery.
+///
+/// Instead of coordinator → run.sh → bash → `wg evaluate` → claude, this
+/// forks a single process: `wg evaluate <source-task> --model <model>` that
+/// marks the eval task done/failed on exit.  This eliminates:
+///   - Executor config resolution & template processing
+///   - run.sh wrapper script
+///   - prompt.txt / metadata.json generation
+///
+/// The forked process is still tracked in the agent registry for dead-agent
+/// detection.
+fn spawn_eval_inline(
+    dir: &Path,
+    eval_task_id: &str,
+    evaluator_model: Option<&str>,
+) -> Result<(String, u32)> {
+    use std::process::{Command, Stdio};
+
+    let graph_path = graph_path(dir);
+    let mut graph = load_graph(&graph_path).context("Failed to load graph for eval spawn")?;
+
+    let task = graph.get_task_mut_or_err(eval_task_id)?;
+    if task.status != Status::Open {
+        anyhow::bail!("Eval task '{}' is not open (status: {:?})", eval_task_id, task.status);
+    }
+
+    // Extract source task ID from the exec command ("wg evaluate <source-id>")
+    let source_task_id = task
+        .exec
+        .as_deref()
+        .and_then(|e| e.strip_prefix("wg evaluate "))
+        .unwrap_or_else(|| {
+            eval_task_id
+                .strip_prefix("evaluate-")
+                .unwrap_or(eval_task_id)
+        })
+        .to_string();
+
+    // Set up minimal agent tracking
+    let mut agent_registry = AgentRegistry::load(dir)?;
+    let agent_id = format!("agent-{}", agent_registry.next_agent_id);
+
+    // Create minimal output directory for log capture
+    let output_dir = dir.join("agents").join(&agent_id);
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("Failed to create eval output dir: {:?}", output_dir))?;
+    let output_file = output_dir.join("output.log");
+    let output_file_str = output_file.to_string_lossy().to_string();
+
+    // Build the eval command with explicit model
+    let mut eval_cmd = format!("wg evaluate '{}'", source_task_id.replace('\'', "'\\''"));
+    if let Some(model) = evaluator_model {
+        eval_cmd.push_str(&format!(" --model '{}'", model.replace('\'', "'\\''")));
+    }
+
+    let escaped_eval_id = eval_task_id.replace('\'', "'\\''");
+    let escaped_output = output_file_str.replace('\'', "'\\''");
+
+    // Single script: run eval, then mark done/failed based on exit code
+    let script = format!(
+        r#"unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT
+{eval_cmd} >> '{escaped_output}' 2>&1
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ]; then
+    wg done '{escaped_eval_id}' 2>> '{escaped_output}'
+else
+    wg fail '{escaped_eval_id}' --reason "wg evaluate exited with code $EXIT_CODE" 2>> '{escaped_output}'
+fi
+exit $EXIT_CODE"#,
+    );
+
+    // Claim the task before spawning
+    task.status = Status::InProgress;
+    task.started_at = Some(Utc::now().to_rfc3339());
+    task.assigned = Some(agent_id.clone());
+    task.log.push(LogEntry {
+        timestamp: Utc::now().to_rfc3339(),
+        actor: Some(agent_id.clone()),
+        message: format!(
+            "Spawned eval inline{}",
+            evaluator_model
+                .map(|m| format!(" --model {}", m))
+                .unwrap_or_default()
+        ),
+    });
+    save_graph(&graph, &graph_path).context("Failed to save graph after claiming eval task")?;
+
+    // Fork the process
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c").arg(&script);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+
+    // Detach into own session so it survives daemon restart
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            // Rollback the claim
+            if let Ok(mut rollback_graph) = load_graph(&graph_path) {
+                if let Some(t) = rollback_graph.get_task_mut(eval_task_id) {
+                    t.status = Status::Open;
+                    t.started_at = None;
+                    t.assigned = None;
+                    t.log.push(LogEntry {
+                        timestamp: Utc::now().to_rfc3339(),
+                        actor: Some(agent_id.clone()),
+                        message: format!("Eval spawn failed, reverting claim: {}", e),
+                    });
+                    let _ = save_graph(&rollback_graph, &graph_path);
+                }
+            }
+            return Err(anyhow::anyhow!("Failed to spawn eval process: {}", e));
+        }
+    };
+
+    let pid = child.id();
+
+    // Register in agent registry for dead-agent detection
+    agent_registry.register_agent_with_model(
+        pid,
+        eval_task_id,
+        "eval",
+        &output_file_str,
+        evaluator_model,
+    );
+    agent_registry.save(dir).context("Failed to save agent registry after eval spawn")?;
+
+    Ok((agent_id, pid))
+}
+
 /// Spawn agents on ready tasks, up to `slots_available`. Returns the number of
 /// agents successfully spawned.
 fn spawn_agents_for_ready_tasks(
@@ -771,8 +913,29 @@ fn spawn_agents_for_ready_tasks(
             continue;
         }
 
-        // Resolve executor: tasks with exec commands use shell executor directly
-        // (avoids nested Claude when evaluation tasks run `wg evaluate`),
+        // Evaluation tasks run inline: fork `wg evaluate` directly instead of
+        // going through the full spawn machinery (run.sh, executor config, etc.)
+        if task.tags.iter().any(|t| t == "evaluation") && task.exec.is_some() {
+            let eval_model = task.model.as_deref();
+            eprintln!(
+                "[coordinator] Spawning eval inline for: {} - {}{}",
+                task.id,
+                task.title,
+                eval_model.map(|m| format!(" (model: {})", m)).unwrap_or_default(),
+            );
+            match spawn_eval_inline(dir, &task.id, eval_model) {
+                Ok((agent_id, pid)) => {
+                    eprintln!("[coordinator] Spawned eval {} (PID {})", agent_id, pid);
+                    spawned += 1;
+                }
+                Err(e) => {
+                    eprintln!("[coordinator] Failed to spawn eval for {}: {}", task.id, e);
+                }
+            }
+            continue;
+        }
+
+        // Resolve executor: tasks with exec commands use shell executor directly,
         // otherwise: agent.executor > config.coordinator.executor
         let effective_executor = if task.exec.is_some() {
             "shell".to_string()
@@ -3893,5 +4056,59 @@ poll_interval = 120
             status_line
         );
         assert!(status_line.contains("0 alive"));
+    }
+
+    #[test]
+    fn test_eval_inline_extracts_source_task_from_exec() {
+        // spawn_eval_inline extracts the source task ID from exec command
+        // This tests the extraction logic used in the function
+        let exec = Some("wg evaluate my-source-task".to_string());
+        let source_id = exec
+            .as_deref()
+            .and_then(|e| e.strip_prefix("wg evaluate "))
+            .unwrap_or("fallback");
+        assert_eq!(source_id, "my-source-task");
+    }
+
+    #[test]
+    fn test_eval_inline_extracts_source_task_from_id_fallback() {
+        // When exec is missing the prefix, fall back to stripping evaluate- from task ID
+        let exec: Option<String> = None;
+        let eval_task_id = "evaluate-some-task";
+        let source_id = exec
+            .as_deref()
+            .and_then(|e| e.strip_prefix("wg evaluate "))
+            .unwrap_or_else(|| {
+                eval_task_id
+                    .strip_prefix("evaluate-")
+                    .unwrap_or(eval_task_id)
+            });
+        assert_eq!(source_id, "some-task");
+    }
+
+    #[test]
+    fn test_eval_routing_condition() {
+        // The routing condition for inline eval: has "evaluation" tag AND exec is set
+        let mut task = Task::default();
+        task.id = "evaluate-t1".to_string();
+        task.tags = vec!["evaluation".to_string(), "agency".to_string()];
+        task.exec = Some("wg evaluate t1".to_string());
+
+        let is_inline_eval = task.tags.iter().any(|t| t == "evaluation") && task.exec.is_some();
+        assert!(is_inline_eval);
+
+        // Non-eval exec task should NOT match
+        let mut shell_task = Task::default();
+        shell_task.exec = Some("bash run.sh".to_string());
+        let is_inline_eval2 =
+            shell_task.tags.iter().any(|t| t == "evaluation") && shell_task.exec.is_some();
+        assert!(!is_inline_eval2);
+
+        // Eval tag but no exec should NOT match
+        let mut no_exec = Task::default();
+        no_exec.tags = vec!["evaluation".to_string()];
+        let is_inline_eval3 =
+            no_exec.tags.iter().any(|t| t == "evaluation") && no_exec.exec.is_some();
+        assert!(!is_inline_eval3);
     }
 }

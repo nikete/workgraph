@@ -803,6 +803,142 @@ fn test_auto_evaluate_unblocks_on_failed_source() {
     assert!(ready_ids.contains(&"evaluate-source-task"));
 }
 
+#[test]
+fn test_auto_evaluate_task_has_exec_and_model() {
+    // Verify that auto-evaluate tasks get the exec command and evaluator_model
+    let tmp = TempDir::new().unwrap();
+    let (wg_dir, graph_path) = setup_workgraph(&tmp);
+
+    // Write config with evaluator_model
+    let config_content = r#"
+[agency]
+auto_evaluate = true
+evaluator_model = "sonnet"
+"#;
+    fs::write(wg_dir.join("config.toml"), config_content).unwrap();
+
+    let mut graph = WorkGraph::new();
+    graph.add_node(Node::Task(make_task("my-task", "My Task", Status::Open)));
+    save_graph(&graph, &graph_path).unwrap();
+
+    let config = Config::load(&wg_dir).unwrap();
+
+    // Simulate build_auto_evaluate_tasks logic
+    let mut mutable_graph = load_graph(&graph_path).unwrap();
+    let tasks_needing_eval: Vec<_> = mutable_graph
+        .tasks()
+        .filter(|t| {
+            let eval_id = format!("evaluate-{}", t.id);
+            if mutable_graph.get_task(&eval_id).is_some() {
+                return false;
+            }
+            let dominated_tags = ["evaluation", "assignment", "evolution"];
+            !t.tags
+                .iter()
+                .any(|tag| dominated_tags.contains(&tag.as_str()))
+                && !matches!(t.status, Status::Abandoned)
+        })
+        .map(|t| (t.id.clone(), t.title.clone()))
+        .collect();
+
+    for (task_id, task_title) in &tasks_needing_eval {
+        let eval_task_id = format!("evaluate-{}", task_id);
+        let eval_task = Task {
+            id: eval_task_id.clone(),
+            title: format!("Evaluate: {}", task_title),
+            status: Status::Open,
+            blocked_by: vec![task_id.clone()],
+            tags: vec!["evaluation".to_string(), "agency".to_string()],
+            exec: Some(format!("wg evaluate {}", task_id)),
+            model: config.agency.evaluator_model.clone(),
+            agent: config.agency.evaluator_agent.clone(),
+            ..Task::default()
+        };
+        mutable_graph.add_node(Node::Task(eval_task));
+    }
+    save_graph(&mutable_graph, &graph_path).unwrap();
+
+    let final_graph = load_graph(&graph_path).unwrap();
+    let eval = final_graph.get_task("evaluate-my-task").unwrap();
+
+    // The eval task should have exec and model set
+    assert_eq!(eval.exec.as_deref(), Some("wg evaluate my-task"));
+    assert_eq!(eval.model.as_deref(), Some("sonnet"));
+    assert!(eval.tags.contains(&"evaluation".to_string()));
+}
+
+#[test]
+fn test_eval_task_routes_to_inline_spawn() {
+    // Verify that evaluation tasks with "evaluation" tag and exec field
+    // would be detected by the routing logic in spawn_agents_for_ready_tasks
+    let tmp = TempDir::new().unwrap();
+    let (wg_dir, graph_path) = setup_workgraph(&tmp);
+
+    let mut graph = WorkGraph::new();
+
+    // Source task (done)
+    graph.add_node(Node::Task(make_task(
+        "source-task",
+        "Source Task",
+        Status::Done,
+    )));
+
+    // Eval task (ready, with evaluation tag and exec)
+    let mut eval_task = make_task("evaluate-source-task", "Evaluate: Source Task", Status::Open);
+    eval_task.tags = vec!["evaluation".to_string(), "agency".to_string()];
+    eval_task.exec = Some("wg evaluate source-task".to_string());
+    eval_task.model = Some("sonnet".to_string());
+    graph.add_node(Node::Task(eval_task));
+
+    save_graph(&graph, &graph_path).unwrap();
+    let loaded = load_graph(&graph_path).unwrap();
+
+    let ready = ready_tasks(&loaded);
+    assert_eq!(ready.len(), 1);
+
+    let task = &ready[0];
+    assert_eq!(task.id, "evaluate-source-task");
+
+    // This is the routing condition used in spawn_agents_for_ready_tasks
+    let is_inline_eval = task.tags.iter().any(|t| t == "evaluation") && task.exec.is_some();
+    assert!(
+        is_inline_eval,
+        "Eval tasks should be routed to inline spawn"
+    );
+
+    // Verify model propagation
+    assert_eq!(task.model.as_deref(), Some("sonnet"));
+}
+
+#[test]
+fn test_non_eval_exec_task_uses_shell_executor() {
+    // Tasks with exec but without "evaluation" tag should still use shell executor
+    let tmp = TempDir::new().unwrap();
+    let (_wg_dir, graph_path) = setup_workgraph(&tmp);
+
+    let mut graph = WorkGraph::new();
+    let mut shell_task = make_task("run-script", "Run Script", Status::Open);
+    shell_task.exec = Some("bash my-script.sh".to_string());
+    // No "evaluation" tag
+    graph.add_node(Node::Task(shell_task));
+    save_graph(&graph, &graph_path).unwrap();
+
+    let loaded = load_graph(&graph_path).unwrap();
+    let ready = ready_tasks(&loaded);
+    assert_eq!(ready.len(), 1);
+
+    let task = &ready[0];
+    // This task should NOT be routed to inline eval
+    let is_inline_eval = task.tags.iter().any(|t| t == "evaluation") && task.exec.is_some();
+    assert!(
+        !is_inline_eval,
+        "Non-eval exec tasks should use shell executor, not inline eval"
+    );
+
+    // It should use shell executor (exec.is_some() without evaluation tag)
+    assert!(task.exec.is_some());
+}
+
 // ===========================================================================
 // 8. Slot accounting
 // ===========================================================================
