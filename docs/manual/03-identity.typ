@@ -5,7 +5,7 @@
 A generic AI assistant is a blank slate. It has no declared priorities, no persistent
 personality, no way to accumulate craft. Every session starts from zero. The identity
 system exists to change this. It gives agents _composable identities_---a role that
-defines what the agent does, paired with a objective that defines why it acts the way
+defines what the agent does, paired with an objective that defines why it acts the way
 it does. The same role combined with a different objective produces a different agent.
 This is the key insight: identity is not a name tag, it is a _function_---the
 Cartesian product of competence and intent.
@@ -30,7 +30,7 @@ It carries three identity-defining fields:
   instructions (see @skills below).
 
 - *Desired outcome.* What good output looks like. This is the standard against which
-  the agent's work will be rewardd---not a vague aspiration, but a crisp definition
+  the agent's work will be rewarded---not a vague aspiration, but a crisp definition
   of success.
 
 A role also carries a _name_ (a human-readable label like "Programmer" or
@@ -39,16 +39,16 @@ metadata (evolutionary history). These are mutable---they can change without alt
 the role's identity. The name is for humans. The identity is for the system.
 
 Consider two roles: one describes a code reviewer who checks for correctness, testing
-gaps, and style violations; the other describes an architect who rewards structural
+gaps, and style violations; the other describes an architect who evaluates structural
 decisions and dependency management. They may share some skills, but their descriptions
 and desired outcomes differ, so they produce different content-hash IDs---different
 identities, different agents, different behaviors when paired with the same objective.
 
 == Objectives <objectives>
 
-A objective answers the complementary question: _why does this agent act the way it does?_
+An objective answers the complementary question: _why does this agent act the way it does?_
 
-Where a role defines competence, a objective defines character. It carries three
+Where a role defines competence, an objective defines character. It carries three
 identity-defining fields:
 
 - *Description.* What this objective prioritizes---the values and principles that
@@ -230,7 +230,7 @@ property.
 
 The identity system does not distinguish between human and AI agents at the identity
 level. Both are entries in the same agent registry. Both can have roles, objectives,
-capabilities, and trust levels. Both are tracked, rewardd, and appear in the synergy
+capabilities, and trust levels. Both are tracked, rewarded, and appear in the synergy
 matrix. The identity model is uniform.
 
 The difference is the *executor*---the backend that delivers work to the agent.
@@ -253,7 +253,7 @@ role and objective are _optional_. Humans bring their own judgment, priorities, 
 character. A human agent might have a role (to signal what kind of work to route to
 them) or might operate without one (receiving any work that matches their capabilities).
 
-Both types are rewardd using the same rubric. But human agent rewards are excluded
+Both types are rewarded using the same rubric. But human agent rewards are excluded
 from the evolution signal---the system does not attempt to "improve" humans through
 the evolutionary process. Evolution operates only on AI identities, where changing the
 role or objective has a direct, mechanistic effect on behavior through prompt injection.
@@ -326,5 +326,5 @@ the same role.
 The identity model described here is the _identity layer_ of the system. How these
 identities are dispatched to tasks---the claim-before-spawn protocol, the wrapper
 script, the coordinator's tick loop---is detailed in #emph[Section 4]. How agents are
-rewardd after completing work, and how reward data feeds back into evolution, is
+rewarded after completing work, and how reward data feeds back into evolution, is
 detailed in #emph[Section 5].

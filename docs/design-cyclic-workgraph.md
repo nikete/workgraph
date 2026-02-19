@@ -32,7 +32,7 @@ Real workflows need cycles: review-revise loops, CI retry pipelines, monitor-ale
 
 ### Concept
 
-A new edge type, `loops_to`, represents a conditional back-edge. It says: "when this task completes, reward a condition — if true and iterations remain, re-open the target task."
+A new edge type, `loops_to`, represents a conditional back-edge. It says: "when this task completes, evaluate a condition — if true and iterations remain, re-open the target task."
 
 Loop edges are **not** blocking edges. They are ignored by `ready_tasks()`, topological sort, and critical path. They only fire on task completion.
 
@@ -107,7 +107,7 @@ When a task with `loops_to` edges transitions to Done:
 This is the critical design choice. `loops_to` edges:
 - Are **not** in `blocked_by`. They don't prevent execution.
 - Are **not** traversed by `ready_tasks()`. They don't affect scheduling.
-- Are **only** rewardd when the source task completes.
+- Are **only** evaluated when the source task completes.
 - Are **rendered** distinctly (magenta upward arrows, as `dag_layout.rs` already does for back-edges).
 
 This means we don't need to modify `ready_tasks()` or `wg done`'s blocker check at all. The cycle is expressed as a forward chain of `blocked_by` edges (which are acyclic) plus a backward `loops_to` edge (which is separate).
@@ -235,7 +235,7 @@ Loop iterations provide natural reward points. If `auto_reward` is on:
 - Reward results accumulate, giving the evolution system data on how the agent/task pattern is performing.
 - A consistently-failing loop (e.g., iterations 1-3 all fail review) signals that the agent type needs adjustment.
 
-No special changes to the evolution system are needed — it already rewards tasks on completion, and a re-activated task simply gets rewardd again each time.
+No special changes to the evolution system are needed — it already rewards tasks on completion, and a re-activated task simply gets rewarded again each time.
 
 ---
 

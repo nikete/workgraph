@@ -2,7 +2,7 @@
 
 The identity does not merely execute work. It learns from it.
 
-Every completed task generates a signal—a scored reward measuring how well the agent performed against the task's requirements and the agent's own declared standards. These signals accumulate into performance records on agents, roles, and objectives. When enough data exists, an evolution cycle reads the aggregate picture and proposes structural changes: sharpen a role's description, tighten a objective's constraints, combine two high-performers into something new, retire what consistently underperforms. The changed entities receive new content-hash IDs, linked to their parents by lineage metadata. Better identities produce better work. Better work produces sharper rewards. The loop closes.
+Every completed task generates a signal—a scored reward measuring how well the agent performed against the task's requirements and the agent's own declared standards. These signals accumulate into performance records on agents, roles, and objectives. When enough data exists, an evolution cycle reads the aggregate picture and proposes structural changes: sharpen a role's description, tighten an objective's constraints, combine two high-performers into something new, retire what consistently underperforms. The changed entities receive new content-hash IDs, linked to their parents by lineage metadata. Better identities produce better work. Better work produces sharper rewards. The loop closes.
 
 This is the autopoietic core of the identity system—a structured feedback loop where work produces the data that drives its own improvement.
 
@@ -37,11 +37,11 @@ A single reward does not merely update one record. It propagates to three levels
 
 This three-level, cross-referenced propagation creates the data structure that makes synergy analysis possible. A role's aggregate score tells you how it performs _in general_. The context IDs tell you how it performs _with specific objectives_. The distinction matters: a role might score 0.9 with one objective and 0.5 with another. The aggregate alone would hide this.
 
-=== What gets rewardd
+=== What gets rewarded
 
-Both done and failed tasks can be rewardd. This is intentional—there is useful signal in failure. Which agents fail on which kinds of tasks reveals mismatches between identity and work that evolution can address.
+Both done and failed tasks can be rewarded. This is intentional—there is useful signal in failure. Which agents fail on which kinds of tasks reveals mismatches between identity and work that evolution can address.
 
-Human agents are tracked by the same reward machinery, but their rewards are excluded from the evolution signal. The system does not attempt to "improve" humans. Human reward data exists for reporting and trend analysis, not for evolutionary pressure.
+Human agents are tracked by the same reward machinery, but their rewards are excluded from the evolution signal. The system does not attempt to "improve" humans. Huma reward data exists for reporting and trend analysis, not for evolutionary pressure.
 
 == Performance Records and Aggregation <performance>
 
@@ -51,7 +51,7 @@ From these records, two analytical tools emerge.
 
 === The synergy matrix <synergy>
 
-The synergy matrix is a cross-reference of every (role, objective) pair that has been rewardd together. For each pair, it shows the average score and the number of rewards. `wg identity stats` renders this automatically.
+The synergy matrix is a cross-reference of every (role, objective) pair that has been rewarded together. For each pair, it shows the average score and the number of rewards. `wg identity stats` renders this automatically.
 
 High-synergy pairs—those scoring 0.8 or above—represent effective identity combinations worth preserving and expanding. Low-synergy pairs—0.4 or below—represent mismatches. Under-explored combinations with too few rewards are surfaced as hypotheses: try this pairing and see what happens.
 
@@ -147,11 +147,11 @@ Lineage commands—`wg role lineage`, `wg objective lineage`, `wg agent lineage`
 
 Step back from the mechanics and see the shape of the whole.
 
-Work enters the system as tasks. The coordinator dispatches agents—each carrying an identity composed of a role and a objective—to execute those tasks. When a task completes, auto-reward creates an reward meta-task. The evaluator agent scores the work across four dimensions. Scores propagate to the agent, the role, and the objective. Over time, performance records accumulate. Trends emerge. The synergy matrix fills in.
+Work enters the system as tasks. The coordinator dispatches agents—each carrying an identity composed of a role and an objective—to execute those tasks. When a task completes, auto-reward creates a reward meta-task. The evaluator agent scores the work across four dimensions. Scores propagate to the agent, the role, and the objective. Over time, performance records accumulate. Trends emerge. The synergy matrix fills in.
 
-When the human decides enough signal has accumulated, `wg evolve` runs. The evolver reads the full performance picture and proposes changes. A role that consistently scores low on efficiency gets its description sharpened to emphasize economy. A objective whose constraints are too tight gets its trade-offs relaxed. Two high-performing roles get crossed to produce a child that inherits both strengths. A consistently poor performer gets retired.
+When the human decides enough signal has accumulated, `wg evolve` runs. The evolver reads the full performance picture and proposes changes. A role that consistently scores low on efficiency gets its description sharpened to emphasize economy. An objective whose constraints are too tight gets its trade-offs relaxed. Two high-performing roles get crossed to produce a child that inherits both strengths. A consistently poor performer gets retired.
 
-The changed entities—new roles, new objectives—are paired into new agents. These agents are dispatched to the next round of tasks. Their work is rewardd. Their rewards feed the next evolution cycle.
+The changed entities—new roles, new objectives—are paired into new agents. These agents are dispatched to the next round of tasks. Their work is rewarded. Their rewards feed the next evolution cycle.
 
 ```
         ┌──────────┐
@@ -177,13 +177,13 @@ The changed entities—new roles, new objectives—are paired into new agents. T
         ┌──────────┐
         │  Better  │
         │  roles & │ ──► new agents
-        │  motiv.  │
+        │  obj.    │
         └────┬─────┘
              │
              └──────────► back to dispatch
 ```
 
-The meta-agents—the assigner that picks which agent gets which task, the evaluator that scores the work, the evolver that proposes changes—are themselves identity entities with roles and objectives. They too can be rewardd. They too can be evolved. The evolver can propose improvements to the evaluator's role. It can propose improvements to _its own_ role, subject to the self-mutation safety check that routes such proposals through human review.
+The meta-agents—the assigner that picks which agent gets which task, the evaluator that scores the work, the evolver that proposes changes—are themselves identity entities with roles and objectives. They too can be rewarded. They too can be evolved. The evolver can propose improvements to the evaluator's role. It can propose improvements to _its own_ role, subject to the self-mutation safety check that routes such proposals through human review.
 
 This is what makes the system autopoietic: it does not just produce work, it produces the conditions for better work. It does not just execute, it reflects on execution and restructures itself in response. The identity space of the identity—the set of roles, objectives, and their pairings—is not static. It is a living population subject to selective pressure from the reward signal and evolutionary operations from the evolver.
 

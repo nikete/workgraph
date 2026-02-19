@@ -600,13 +600,13 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
 /// Auto-reward: create reward tasks for completed/active tasks.
 ///
 /// Per the identity design (§4.3), when auto_reward is enabled the coordinator
-/// creates an reward task `reward-{task-id}` that is blocked by the
+/// creates a reward task `reward-{task-id}` that is blocked by the
 /// original task.  When the original task completes (done or failed),
 /// the reward task becomes ready and the coordinator spawns an
 /// evaluator agent on it.
 ///
 /// Tasks tagged "reward", "assignment", or "evolution" are NOT
-/// auto-rewardd to prevent infinite regress.  Abandoned tasks are also
+/// auto-rewarded to prevent infinite regress.  Abandoned tasks are also
 /// excluded.
 ///
 /// Returns `true` if the graph was modified.
@@ -632,7 +632,7 @@ fn build_auto_reward_tasks(
     let tasks_needing_eval: Vec<_> = graph
         .tasks()
         .filter(|t| {
-            // Skip tasks that already have an reward task
+            // Skip tasks that already have a reward task
             let eval_id = format!("reward-{}", t.id);
             if graph.get_task(&eval_id).is_some() {
                 return false;
@@ -719,7 +719,7 @@ fn build_auto_reward_tasks(
     // Unblock reward tasks whose source task has Failed.
     // `ready_tasks()` only unblocks when the blocker is Done. For Failed
     // tasks we still want reward to proceed (§4.3: "Failed tasks also
-    // get rewardd"), so we remove the blocker explicitly.
+    // get rewarded"), so we remove the blocker explicitly.
     let eval_fixups: Vec<(String, String)> = graph
         .tasks()
         .filter(|t| t.id.starts_with("reward-") && t.status == Status::Open)

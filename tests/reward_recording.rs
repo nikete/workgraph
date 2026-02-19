@@ -52,7 +52,7 @@ impl TestFixture {
 
         let objective = identity::build_objective(
             "Test Objective",
-            "A objective for testing rewards.",
+            "An objective for testing rewards.",
             vec!["Slower pace".to_string()],
             vec!["Untested code".to_string()],
         );

@@ -687,7 +687,7 @@ enum Commands {
         #[arg(long)]
         evaluator_model: Option<String>,
 
-        /// Show what would be rewardd without spawning the evaluator agent
+        /// Show what would be rewarded without spawning the evaluator agent
         #[arg(long)]
         dry_run: bool,
     },
@@ -1101,13 +1101,13 @@ enum ObjectiveCommands {
         id: String,
     },
 
-    /// Remove a objective
+    /// Remove an objective
     Rm {
         /// Objective ID
         id: String,
     },
 
-    /// Show evolutionary lineage/ancestry tree for a objective
+    /// Show evolutionary lineage/ancestry tree for an objective
     Lineage {
         /// Objective ID
         id: String,

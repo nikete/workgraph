@@ -42,7 +42,7 @@ Agent = Role + Objective  (deterministic pairing)
 Task.agent → Agent.id      (optional assignment on task)
 
 Reward references: task_id, agent_id, role_id, objective_id
-  - Recording an reward updates performance on all three entities
+  - Recording a reward updates performance on all three entities
   - Role.performance.rewards[].context_id = objective_id
   - Objective.performance.rewards[].context_id = role_id
 

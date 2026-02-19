@@ -64,7 +64,7 @@ fn is_internal_task(task: &Task) -> bool {
 /// Determine the phase annotation for a parent task based on its related internal tasks.
 ///
 /// - If an assignment task exists and is not done → "[assigning]"
-/// - If an reward task exists and is not done → "[evaluating]"
+/// - If a reward task exists and is not done → "[evaluating]"
 fn compute_phase_annotation(internal_task: &Task) -> &'static str {
     if internal_task.tags.iter().any(|t| t == "assignment") {
         "[assigning]"

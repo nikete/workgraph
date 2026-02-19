@@ -103,7 +103,7 @@ pub fn run(dir: &Path, id: &str, reason: Option<&str>) -> Result<()> {
     }
 
     // Capture task output (git diff, artifacts, log) for reward.
-    // Failed tasks are also rewardd when auto_reward is enabled — there is
+    // Failed tasks are also rewarded when auto_reward is enabled — there is
     // useful signal in what kinds of tasks cause which agents to fail.
     if let Some(task) = graph.get_task(id) {
         match capture_task_output(dir, task) {

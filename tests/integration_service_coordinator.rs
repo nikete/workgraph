@@ -1291,7 +1291,7 @@ Step 1 — Create a role:
 wg role add "CodeReviewer" --outcome "High-quality code reviews with constructive feedback" --skill code-review --description "Reviews code for quality and correctness"
 ```
 
-Step 2 — Create a objective:
+Step 2 — Create an objective:
 ```
 wg objective add "Thorough" --accept "Slower delivery" --reject "Incomplete reviews" --description "Prioritizes thoroughness over speed"
 ```

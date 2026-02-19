@@ -59,7 +59,7 @@ Existing JSON files with `"score"` key are accepted via `#[serde(alias = "score"
 
 ### `PerformanceRecord` -> `RewardHistory`
 
-The aggregated statistics struct (mean reward, count, individual reward references) is a reward
+The aggregated statistics struct (mea reward, count, individual reward references) is a reward
 history -- standard RL terminology for an experience summary.
 
 ### `avg_score` -> `mean_reward`

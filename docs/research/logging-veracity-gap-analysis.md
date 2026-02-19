@@ -84,7 +84,7 @@ Nikete's veracity exchange concept (from the research-veracity-exchange task) pr
 - **No domain-specific outcome scores.** Rewards are LLM-judged quality assessments, not real-world outcomes (P&L, MSE, prediction accuracy). The veracity exchange needs ground-truth metrics, not proxy quality scores.
 - **No latent outcome mechanism.** There's no way to attach an outcome to a task weeks after completion. Rewards happen once, at completion time. Veracity exchange explicitly requires deferred scoring.
 - **No outcome taxonomy.** The system has one score type (reward). Veracity exchange needs multiple score types: quality (current), financial return, prediction accuracy, peer review, etc.
-- **No score update/revision.** Once an reward is written, it's immutable. Latent payoffs require updating scores over time.
+- **No score update/revision.** Once a reward is written, it's immutable. Latent payoffs require updating scores over time.
 
 **Gap to close:** Add an `outcome` field to tasks or a separate outcomes store that supports: (a) multiple score types with arbitrary keys, (b) deferred attachment (score added long after task completion), (c) score revision/update. The reward system provides the infrastructure pattern — the gap is semantic, not architectural. Estimated: ~200 lines for a basic `wg outcome add <task-id> --type pnl --value 0.12` command + storage.
 

@@ -26,7 +26,7 @@ pub enum SkillRef {
     Inline(String),
 }
 
-/// Reference to an reward, stored inline in a RewardHistory.
+/// Reference to a reward, stored inline in a RewardHistory.
 ///
 /// For roles, `context_id` holds the objective_id used during the task.
 /// For objectives, `context_id` holds the role_id used during the task.
@@ -36,7 +36,7 @@ pub struct RewardRef {
     pub value: f64,
     pub task_id: String,
     pub timestamp: String,
-    /// objective_id (when stored on a role) or role_id (when stored on a objective)
+    /// objective_id (when stored on a role) or role_id (when stored on an objective)
     pub context_id: String,
 }
 
@@ -121,7 +121,7 @@ pub struct Role {
     pub lineage: Lineage,
 }
 
-/// A objective defines why an agent acts: its goals and ethical boundaries.
+/// An objective defines why an agent acts: its goals and ethical boundaries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Objective {
     pub id: String,
@@ -140,7 +140,7 @@ fn default_executor() -> String {
     "claude".to_string()
 }
 
-/// A first-class agent entity: a persistent, reusable, named pairing of a role and a objective.
+/// A first-class agent entity: a persistent, reusable, named pairing of a role and an objective.
 ///
 /// Agent ID = SHA-256(role_id + objective_id). Performance is tracked at the agent level
 /// (distinct from its constituent role and objective individually). Stored as YAML in
@@ -204,7 +204,7 @@ fn default_reward_source() -> String {
     "llm".to_string()
 }
 
-/// An reward of agent performance on a specific task.
+/// A reward of agent performance on a specific task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Reward {
     pub id: String,
@@ -575,7 +575,7 @@ pub fn content_hash_role(skills: &[SkillRef], desired_outcome: &str, description
     format!("{:x}", digest)
 }
 
-/// Compute the SHA-256 content hash for a objective based on its immutable fields:
+/// Compute the SHA-256 content hash for an objective based on its immutable fields:
 /// acceptable_tradeoffs + unacceptable_tradeoffs + description (canonical YAML).
 ///
 /// Performance, lineage, name, and id are excluded because they are mutable.
@@ -643,7 +643,7 @@ pub fn find_role_by_prefix(roles_dir: &Path, prefix: &str) -> Result<Role, Ident
     }
 }
 
-/// Find a objective in a directory by full ID or unique prefix match.
+/// Find an objective in a directory by full ID or unique prefix match.
 ///
 /// Returns the loaded objective, or an error if no match or ambiguous match.
 pub fn find_objective_by_prefix(
@@ -747,7 +747,7 @@ pub fn load_objective(path: &Path) -> Result<Objective, IdentityError> {
     Ok(objective)
 }
 
-/// Save a objective as `<objective.id>.yaml` inside `dir`.
+/// Save an objective as `<objective.id>.yaml` inside `dir`.
 pub fn save_objective(objective: &Objective, dir: &Path) -> Result<PathBuf, IdentityError> {
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.yaml", objective.id));
@@ -782,7 +782,7 @@ pub fn load_reward(path: &Path) -> Result<Reward, IdentityError> {
     Ok(eval)
 }
 
-/// Save an reward as `<reward.id>.json` inside `dir`.
+/// Save a reward as `<reward.id>.json` inside `dir`.
 pub fn save_reward(reward: &Reward, dir: &Path) -> Result<PathBuf, IdentityError> {
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.json", reward.id));
@@ -946,7 +946,7 @@ pub fn role_ancestry(role_id: &str, roles_dir: &Path) -> Result<Vec<AncestryNode
     Ok(ancestry)
 }
 
-/// Build the ancestry tree for a objective by walking parent_ids.
+/// Build the ancestry tree for an objective by walking parent_ids.
 pub fn objective_ancestry(
     objective_id: &str,
     objectives_dir: &Path,
@@ -1011,7 +1011,7 @@ pub fn update_performance(record: &mut RewardHistory, eval_ref: RewardRef) {
     record.mean_reward = recalculate_mean_reward(&record.rewards);
 }
 
-/// Record an reward: persist the eval JSON, and update agent, role, and objective performance.
+/// Record a reward: persist the eval JSON, and update agent, role, and objective performance.
 ///
 /// Steps:
 /// 1. Save the `Reward` as JSON in `identity_dir/rewards/eval-{task_id}-{timestamp}.json`.
@@ -1110,7 +1110,7 @@ pub fn build_role(
     }
 }
 
-/// Helper to build a Objective with its content-hash ID computed automatically.
+/// Helper to build an Objective with its content-hash ID computed automatically.
 pub fn build_objective(
     name: impl Into<String>,
     description: impl Into<String>,

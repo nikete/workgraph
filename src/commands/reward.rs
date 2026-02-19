@@ -47,7 +47,7 @@ pub fn run(
     let task = graph.get_task_or_err(task_id)?;
 
     // Step 1: Verify task is done or failed
-    // Failed tasks are also rewardd — there is useful signal in what kinds
+    // Failed tasks are also rewarded — there is useful signal in what kinds
     // of tasks cause which agents to fail (see §4.3 of identity design).
     match task.status {
         Status::Done | Status::Failed => {}
@@ -156,7 +156,7 @@ pub fn run(
     // Resolve the task execution model early so dry-run can show it
     let task_model_preview = extract_spawn_model(&task.log).or_else(|| task.model.clone());
 
-    // Step 5: --dry-run shows what would be rewardd
+    // Step 5: --dry-run shows what would be rewarded
     if dry_run {
         println!("=== Dry Run: wg reward {} ===\n", task_id);
         println!("Task: {} ({})", task.title, task_id);

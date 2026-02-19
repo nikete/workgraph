@@ -151,9 +151,9 @@ When `auto_reward` is enabled, the coordinator creates reward meta-tasks for com
 
 Reward tasks use the shell executor to run `wg reward <task-id>`, which spawns a separate evaluator that reads the task definition, artifacts, and output logs, then scores the work on four dimensions: correctness (40% weight), completeness (30%), efficiency (15%), and style adherence (15%). The scores propagate to the agent, its role, and its objective, building the performance data that drives evolution (see §5). #label("forward-ref-evolution")
 
-Two exclusions apply. Tasks assigned to human agents are not auto-rewardd—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"reward"`, `"assignment"`, or `"evolution"`) are excluded to prevent reward of rewards.
+Two exclusions apply. Tasks assigned to human agents are not auto-rewarded—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"reward"`, `"assignment"`, or `"evolution"`) are excluded to prevent reward of rewards.
 
-Failed tasks also get rewardd. When a task's status is failed, the coordinator removes the blocker from the reward task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-objective pairing that the evolution system can act on.
+Failed tasks also get rewarded. When a task's status is failed, the coordinator removes the blocker from the reward task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-objective pairing that the evolution system can act on.
 
 == Dead Agent Detection and Triage <dead-agents>
 
@@ -163,7 +163,7 @@ But simple restart is wasteful when the agent made significant progress before d
 
 When `auto_triage` is enabled in the identity configuration, the coordinator does not immediately unclaim a dead agent's task. Instead, it reads the agent's output log and sends it to a fast, cheap LLM (defaulting to Haiku) with a structured prompt. The triage model classifies the result into one of three verdicts:
 
-- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are rewardd.
+- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are rewarded.
 - *Continue.* Significant progress was made. The task is reopened with recovery context injected into its description: a summary of what was accomplished, with instructions to continue from where the previous agent left off rather than starting over.
 - *Restart.* Little or no meaningful progress. The task is reopened cleanly for a fresh attempt.
 

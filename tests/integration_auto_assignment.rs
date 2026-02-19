@@ -1228,8 +1228,8 @@ Begin working on the task now.
         );
     }
 
-    /// Test that `wg reward` can reward a completed task and record
-    /// an reward JSON file with values and dimensions.
+    /// Test that `wg reward` ca reward a completed task and record
+    /// a reward JSON file with values and dimensions.
     ///
     /// Flow:
     /// 1. Set up identity with an agent, assign it to a task

@@ -89,7 +89,7 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
     }
 
     // Capture task output (git diff, artifacts, log) for reward.
-    // When auto_reward is enabled, the coordinator creates an reward task
+    // When auto_reward is enabled, the coordinator creates a reward task
     // in the graph that becomes ready once this task is done; the captured output
     // feeds that evaluator.
     if let Some(task) = graph.get_task(id) {

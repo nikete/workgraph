@@ -113,7 +113,7 @@ The recommended minimal change for workgraph: add a `loop` edge type with a guar
 **Loop types**:
 
 1. **Standard Loop** (loop marker ↻ on activity):
-   - Condition-based repetition (rewardd before or after each iteration via `testBefore`)
+   - Condition-based repetition (evaluated before or after each iteration via `testBefore`)
    - Optional `loopMaximum` to cap iterations
    - Always sequential
 
@@ -335,7 +335,7 @@ Add a new edge type to the task model:
 ```rust
 struct LoopEdge {
     target: String,          // task ID to re-activate
-    guard: Option<String>,   // condition expression (rewardd at runtime)
+    guard: Option<String>,   // condition expression (evaluated at runtime)
     max_iterations: u32,     // hard cap (required, no default unlimited)
 }
 ```

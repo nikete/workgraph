@@ -495,7 +495,7 @@ wg service status
 
 ## Identity system
 
-The identity system gives agents composable identities — a **role** (what it does) paired with a **objective** (why it acts that way). Instead of every spawned agent being a generic assistant, the identity system lets you define specialized agents that are rewardd and evolved over time.
+The identity system gives agents composable identities — a **role** (what it does) paired with a **objective** (why it acts that way). Instead of every spawned agent being a generic assistant, the identity system lets you define specialized agents that are rewarded and evolved over time.
 
 ### Quick start
 
@@ -590,7 +590,7 @@ Some workflows repeat: write → review → revise → write again. Loop edges l
 
 ### How it works
 
-When the source task completes (via `wg done`), each of its loop edges is rewardd:
+When the source task completes (via `wg done`), each of its loop edges is evaluated:
 
 1. **Guard check** — if a guard condition is set, it must be true for the loop to fire.
 2. **Iteration check** — the target's `loop_iteration` must be below `max_iterations`.
@@ -664,7 +664,7 @@ wg viz                 # Loop edges appear as dashed lines in graph output
 
 **Trajectories**: For AI agents, `wg trajectory <task>` suggests the best order to claim related tasks, minimizing context switches.
 
-**Identity**: Composable agent identities (role + objective) that are assigned to tasks, rewardd after completion, and evolved over time based on performance data.
+**Identity**: Composable agent identities (role + objective) that are assigned to tasks, rewarded after completion, and evolved over time based on performance data.
 
 ## Query and analysis
 

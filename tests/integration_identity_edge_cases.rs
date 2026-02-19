@@ -58,7 +58,7 @@ fn test_create_agent_with_nonexistent_role_and_objective() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Recording an reward for a nonexistent agent
+// 2. Recording a reward for a nonexistent agent
 // ---------------------------------------------------------------------------
 
 /// record_reward gracefully handles a nonexistent agent_id — it still saves
@@ -229,7 +229,7 @@ fn test_delete_role_referenced_by_agent() {
     let result = identity::find_role_by_prefix(&roles_dir, &role.id);
     assert!(result.is_err());
 
-    // Recording an reward still succeeds (role update is skipped gracefully)
+    // Recording a reward still succeeds (role update is skipped gracefully)
     let eval = Reward {
         id: "eval-after-delete-1".to_string(),
         task_id: "task-1".to_string(),
@@ -257,10 +257,10 @@ fn test_delete_role_referenced_by_agent() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. Deleting a objective referenced by an existing agent
+// 4. Deleting an objective referenced by an existing agent
 // ---------------------------------------------------------------------------
 
-/// Deleting a objective YAML that is referenced by an agent. The agent still
+/// Deleting an objective YAML that is referenced by an agent. The agent still
 /// loads, and rewards recording gracefully skips the missing objective.
 #[test]
 fn test_delete_objective_referenced_by_agent() {

@@ -59,7 +59,7 @@ The following terms have precise meanings throughout this manual. They are defin
   [*loop iteration*], [A counter tracking how many times a task has been re-activated by a loop edge.],
   [*role*], [An identity entity defining _what_ an agent does. Contains a description, skills, and a desired outcome. Identified by a content-hash of its identity-defining fields.],
   [*objective*], [An identity entity defining _why_ an agent acts the way it does. Contains a description, acceptable trade-offs, and unacceptable trade-offs. Identified by a content-hash of its identity-defining fields.],
-  [*agent*], [The unified identity in the identity system—a named pairing of a role and a objective. Identified by a content-hash of `(role_id, objective_id)`.],
+  [*agent*], [The unified identity in the identity system—a named pairing of a role and an objective. Identified by a content-hash of `(role_id, objective_id)`.],
   [*identity*], [The collective system of roles, objectives, and agents. Also refers to the storage directory (`.workgraph/identity/`).],
   [*content-hash ID*], [A SHA-256 hash of an entity's identity-defining fields. Deterministic, deduplicating, and immutable. Displayed as 8-character hex prefixes.],
   [*capability*], [A flat string tag on an agent used for task-to-agent matching at dispatch time. Distinct from role skills: capabilities are for _routing_, skills are for _prompt injection_.],
@@ -125,7 +125,7 @@ When an agent is dispatched to a task, its role and objective are resolved---ski
 
 The identity as a whole---the collection of roles, objectives, and their pairings---functions as a _stable_ of specialized workers. Each agent in the stable has a distinct behavioral signature derived from its role-objective combination. You design the stable to match your project's needs: a few generalists for routine work, specialists for domain-specific tasks, careful reviewers, fast prototypers. The stable evolves over time as reward data reveals which identities perform well and which need improvement.
 
-Human agents participate in the same model. The only difference is the _executor_: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or objectives---they bring their own judgment. But both human and AI agents are tracked, rewardd, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
+Human agents participate in the same model. The only difference is the _executor_: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or objectives---they bring their own judgment. But both human and AI agents are tracked, rewarded, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
 
 == The Core Loop
 
@@ -175,7 +175,7 @@ The identity system extends the core loop with a second, slower cycle of improve
   caption: [The identity improvement cycle.],
 ) <fig-identity-loop>
 
-*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent rewards the available agents and picks the best fit. _Assignment_ sets identity; it is distinct from _claiming_, which sets execution state.
+*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent evaluates the available agents and picks the best fit. _Assignment_ sets identity; it is distinct from _claiming_, which sets execution state.
 
 *Execute task.* The agent works with its assigned identity injected into the prompt.
 
@@ -322,7 +322,7 @@ A task is _ready_ when four conditions hold simultaneously:
 + *Past time constraints.* If the task has a `not_before` timestamp, the current time must be past it. If the task has a `ready_after` timestamp (set by loop edge delays), the current time must be past that too. Invalid or missing timestamps are treated as satisfied—they do not block.
 + *All blockers terminal.* Every task ID in the `blocked_by` list must correspond to a task in a terminal status (done, failed, or abandoned). Non-existent blockers are treated as resolved.
 
-These four conditions are rewardd by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
+These four conditions are evaluated by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
 
 The `not_before` field enables future scheduling: "do not start this task before next Monday." The `ready_after` field serves a different purpose—it is set automatically by loop edges with delays, creating pacing between loop iterations. Both are checked against the current wall-clock time.
 
@@ -336,7 +336,7 @@ These patterns are cycles, and they are not bugs. They are the structure of iter
 
 === The `loops_to` Mechanism
 
-A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, reward a condition—if true and iterations remain, re-open the target task upstream."
+A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, evaluate a condition—if true and iterations remain, re-open the target task upstream."
 
 #figure(
   table(
@@ -352,7 +352,7 @@ A loop edge is a conditional back-edge declared via the `loops_to` field on a ta
   caption: [Loop edge fields. Every loop edge requires a target and a max_iterations cap.],
 ) <loop-edge-fields>
 
-The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—rewardd when the source task transitions to done, and ignored at all other times.
+The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—evaluated when the source task transitions to done, and ignored at all other times.
 
 This separation is the key insight of the design. The forward dependency chain (via `blocked_by`) remains acyclic and schedulable. The backward loop edge (via `loops_to`) layers iteration on top without disturbing the scheduler.
 
@@ -540,7 +540,7 @@ A well-designed task graph does not just organize work. It makes the structure o
 A generic AI assistant is a blank slate. It has no declared priorities, no persistent
 personality, no way to accumulate craft. Every session starts from zero. The identity
 system exists to change this. It gives agents _composable identities_---a role that
-defines what the agent does, paired with a objective that defines why it acts the way
+defines what the agent does, paired with an objective that defines why it acts the way
 it does. The same role combined with a different objective produces a different agent.
 This is the key insight: identity is not a name tag, it is a _function_---the
 Cartesian product of competence and intent.
@@ -565,7 +565,7 @@ It carries three identity-defining fields:
   instructions (see @skills below).
 
 - *Desired outcome.* What good output looks like. This is the standard against which
-  the agent's work will be rewardd---not a vague aspiration, but a crisp definition
+  the agent's work will be rewarded---not a vague aspiration, but a crisp definition
   of success.
 
 A role also carries a _name_ (a human-readable label like "Programmer" or
@@ -574,16 +574,16 @@ metadata (evolutionary history). These are mutable---they can change without alt
 the role's identity. The name is for humans. The identity is for the system.
 
 Consider two roles: one describes a code reviewer who checks for correctness, testing
-gaps, and style violations; the other describes an architect who rewards structural
+gaps, and style violations; the other describes an architect who evaluates structural
 decisions and dependency management. They may share some skills, but their descriptions
 and desired outcomes differ, so they produce different content-hash IDs---different
 identities, different agents, different behaviors when paired with the same objective.
 
 == Objectives <objectives>
 
-A objective answers the complementary question: _why does this agent act the way it does?_
+An objective answers the complementary question: _why does this agent act the way it does?_
 
-Where a role defines competence, a objective defines character. It carries three
+Where a role defines competence, an objective defines character. It carries three
 identity-defining fields:
 
 - *Description.* What this objective prioritizes---the values and principles that
@@ -765,7 +765,7 @@ property.
 
 The identity system does not distinguish between human and AI agents at the identity
 level. Both are entries in the same agent registry. Both can have roles, objectives,
-capabilities, and trust levels. Both are tracked, rewardd, and appear in the synergy
+capabilities, and trust levels. Both are tracked, rewarded, and appear in the synergy
 matrix. The identity model is uniform.
 
 The difference is the *executor*---the backend that delivers work to the agent.
@@ -788,7 +788,7 @@ role and objective are _optional_. Humans bring their own judgment, priorities, 
 character. A human agent might have a role (to signal what kind of work to route to
 them) or might operate without one (receiving any work that matches their capabilities).
 
-Both types are rewardd using the same rubric. But human agent rewards are excluded
+Both types are rewarded using the same rubric. But human agent rewards are excluded
 from the evolution signal---the system does not attempt to "improve" humans through
 the evolutionary process. Evolution operates only on AI identities, where changing the
 role or objective has a direct, mechanistic effect on behavior through prompt injection.
@@ -1015,9 +1015,9 @@ When `auto_reward` is enabled, the coordinator creates reward meta-tasks for com
 
 Reward tasks use the shell executor to run `wg reward <task-id>`, which spawns a separate evaluator that reads the task definition, artifacts, and output logs, then scores the work on four dimensions: correctness (40% weight), completeness (30%), efficiency (15%), and style adherence (15%). The scores propagate to the agent, its role, and its objective, building the performance data that drives the evolution process described in @sec-evolution.
 
-Two exclusions apply. Tasks assigned to human agents are not auto-rewardd—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"reward"`, `"assignment"`, or `"evolution"`) are excluded to prevent reward of rewards.
+Two exclusions apply. Tasks assigned to human agents are not auto-rewarded—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"reward"`, `"assignment"`, or `"evolution"`) are excluded to prevent reward of rewards.
 
-Failed tasks also get rewardd. When a task's status is failed, the coordinator removes the blocker from the reward task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-objective pairing that the evolution system can act on.
+Failed tasks also get rewarded. When a task's status is failed, the coordinator removes the blocker from the reward task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-objective pairing that the evolution system can act on.
 
 == Dead Agent Detection and Triage <dead-agents>
 
@@ -1027,7 +1027,7 @@ But simple restart is wasteful when the agent made significant progress before d
 
 When `auto_triage` is enabled in the identity configuration, the coordinator does not immediately unclaim a dead agent's task. Instead, it reads the agent's output log and sends it to a fast, cheap LLM (defaulting to Haiku) with a structured prompt. The triage model classifies the result into one of three verdicts:
 
-- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are rewardd.
+- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are evaluated.
 - *Continue.* Significant progress was made. The task is reopened with recovery context injected into its description: a summary of what was accomplished, with instructions to continue from where the previous agent left off rather than starting over.
 - *Restart.* Little or no meaningful progress. The task is reopened cleanly for a fresh attempt.
 
@@ -1103,7 +1103,7 @@ This is coordination: a loop that converts a plan into action, one tick at a tim
 
 The identity does not merely execute work. It learns from it.
 
-Every completed task generates a signal—a scored reward measuring how well the agent performed against the task's requirements and the agent's own declared standards. These signals accumulate into performance records on agents, roles, and objectives. When enough data exists, an evolution cycle reads the aggregate picture and proposes structural changes: sharpen a role's description, tighten a objective's constraints, combine two high-performers into something new, retire what consistently underperforms. The changed entities receive new content-hash IDs, linked to their parents by lineage metadata. Better identities produce better work. Better work produces sharper rewards. The loop closes.
+Every completed task generates a signal—a scored reward measuring how well the agent performed against the task's requirements and the agent's own declared standards. These signals accumulate into performance records on agents, roles, and objectives. When enough data exists, an evolution cycle reads the aggregate picture and proposes structural changes: sharpen a role's description, tighten an objective's constraints, combine two high-performers into something new, retire what consistently underperforms. The changed entities receive new content-hash IDs, linked to their parents by lineage metadata. Better identities produce better work. Better work produces sharper rewards. The loop closes.
 
 This is the autopoietic core of the identity system—a structured feedback loop where work produces the data that drives its own improvement.
 
@@ -1140,9 +1140,9 @@ This three-level, cross-referenced propagation creates the data structure that m
 
 === What Gets Rewardd
 
-Both done and failed tasks can be rewardd. This is intentional—there is useful signal in failure. Which agents fail on which kinds of tasks reveals mismatches between identity and work that evolution can address.
+Both done and failed tasks can be rewarded. This is intentional—there is useful signal in failure. Which agents fail on which kinds of tasks reveals mismatches between identity and work that evolution can address.
 
-Human agents are tracked by the same reward machinery, but their rewards are excluded from the evolution signal. The system does not attempt to "improve" humans. Human reward data exists for reporting and trend analysis, not for evolutionary pressure.
+Human agents are tracked by the same reward machinery, but their rewards are excluded from the evolution signal. The system does not attempt to "improve" humans. Huma reward data exists for reporting and trend analysis, not for evolutionary pressure.
 
 == Performance Records and Aggregation <performance>
 
@@ -1152,7 +1152,7 @@ From these records, two analytical tools emerge.
 
 === The Synergy Matrix <synergy>
 
-The synergy matrix is a cross-reference of every (role, objective) pair that has been rewardd together. For each pair, it shows the average score and the number of rewards. `wg identity stats` renders this automatically.
+The synergy matrix is a cross-reference of every (role, objective) pair that has been rewarded together. For each pair, it shows the average score and the number of rewards. `wg identity stats` renders this automatically.
 
 High-synergy pairs—those scoring 0.8 or above—represent effective identity combinations worth preserving and expanding. Low-synergy pairs—0.4 or below—represent mismatches. Under-explored combinations with too few rewards are surfaced as hypotheses: try this pairing and see what happens.
 
@@ -1248,11 +1248,11 @@ Lineage commands—`wg role lineage`, `wg objective lineage`, `wg agent lineage`
 
 Step back from the mechanics and see the shape of the whole.
 
-Work enters the system as tasks. The coordinator (see @sec-coordination) dispatches agents—each carrying an identity composed of a role and a objective (see @sec-identity)—to execute those tasks. When a task completes, auto-reward creates an reward meta-task. The evaluator agent scores the work across four dimensions. Scores propagate to the agent, the role, and the objective. Over time, performance records accumulate. Trends emerge. The synergy matrix fills in.
+Work enters the system as tasks. The coordinator (see @sec-coordination) dispatches agents—each carrying an identity composed of a role and an objective (see @sec-identity)—to execute those tasks. When a task completes, auto-reward creates a reward meta-task. The evaluator agent scores the work across four dimensions. Scores propagate to the agent, the role, and the objective. Over time, performance records accumulate. Trends emerge. The synergy matrix fills in.
 
-When the human decides enough signal has accumulated, `wg evolve` runs. The evolver reads the full performance picture and proposes changes. A role that consistently scores low on efficiency gets its description sharpened to emphasize economy. A objective whose constraints are too tight gets its trade-offs relaxed. Two high-performing roles get crossed to produce a child that inherits both strengths. A consistently poor performer gets retired.
+When the human decides enough signal has accumulated, `wg evolve` runs. The evolver reads the full performance picture and proposes changes. A role that consistently scores low on efficiency gets its description sharpened to emphasize economy. An objective whose constraints are too tight gets its trade-offs relaxed. Two high-performing roles get crossed to produce a child that inherits both strengths. A consistently poor performer gets retired.
 
-The changed entities—new roles, new objectives—are paired into new agents. These agents are dispatched to the next round of tasks. Their work is rewardd. Their rewards feed the next evolution cycle.
+The changed entities—new roles, new objectives—are paired into new agents. These agents are dispatched to the next round of tasks. Their work is rewarded. Their rewards feed the next evolution cycle.
 
 ```
         ┌──────────┐
@@ -1278,13 +1278,13 @@ The changed entities—new roles, new objectives—are paired into new agents. T
         ┌──────────┐
         │  Better  │
         │  roles & │ ──► new agents
-        │  motiv.  │
+        │  obj.    │
         └────┬─────┘
              │
              └──────────► back to dispatch
 ```
 
-The meta-agents—the assigner that picks which agent gets which task, the evaluator that scores the work, the evolver that proposes changes—are themselves identity entities with roles and objectives. They too can be rewardd. They too can be evolved. The evolver can propose improvements to the evaluator's role. It can propose improvements to _its own_ role, subject to the self-mutation safety check that routes such proposals through human review.
+The meta-agents—the assigner that picks which agent gets which task, the evaluator that scores the work, the evolver that proposes changes—are themselves identity entities with roles and objectives. They too can be rewarded. They too can be evolved. The evolver can propose improvements to the evaluator's role. It can propose improvements to _its own_ role, subject to the self-mutation safety check that routes such proposals through human review.
 
 This is what makes the system autopoietic: it does not just produce work, it produces the conditions for better work. It does not just execute, it reflects on execution and restructures itself in response. The identity space of the identity—the set of roles, objectives, and their pairings—is not static. It is a living population subject to selective pressure from the reward signal and evolutionary operations from the evolver.
 

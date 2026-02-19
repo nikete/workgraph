@@ -60,7 +60,7 @@ Each tick does:
      Skip meta-tasks (tagged reward/assignment/evolution)
      Create reward-{task-id} blocked by the original task
      Set evaluator_model and evaluator_agent on the new task
-     Unblock eval tasks whose source task is Failed (so failures get rewardd too)
+     Unblock eval tasks whose source task is Failed (so failures get rewarded too)
 
 7. Spawn agents on ready tasks:
      Resolve effective model: task.model > coordinator.model > agent.model

@@ -39,7 +39,7 @@ fn make_task(
 /// 3. Create a task with an agent assigned.
 /// 4. Render the identity prompt and verify it contains role skills and objective constraints.
 /// 5. Simulate task completion.
-/// 6. Record an reward and verify performance records update.
+/// 6. Record a reward and verify performance records update.
 /// 7. Run role-task matching and verify the role ranks appropriately.
 /// 8. Verify objective selection respects constraint compatibility.
 #[test]
@@ -201,7 +201,7 @@ fn test_full_identity_lifecycle() {
     assert_eq!(task.artifacts.len(), 2);
 
     // ---------------------------------------------------------------
-    // Step 6: Record an reward and verify performance records update
+    // Step 6: Record a reward and verify performance records update
     // ---------------------------------------------------------------
     let mut dimensions = HashMap::new();
     dimensions.insert("correctness".to_string(), 0.9);
@@ -923,7 +923,7 @@ performance:
         all_mots.len()
     );
 
-    // 9d. Recording an reward referencing a slug-based role should NOT crash
+    // 9d. Recording a reward referencing a slug-based role should NOT crash
     //     (the role gets found by prefix, performance is updated)
     let slug_eval = Reward {
         id: "eval-legacy-task-1".to_string(),

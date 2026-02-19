@@ -260,11 +260,11 @@ wg service resume           # Resume dispatching
 | `wg role show <id>` | Show role details |
 | `wg role edit <id>` | Edit a role |
 | `wg role rm <id>` | Remove a role |
-| `wg objective add <id>` | Create a objective |
+| `wg objective add <id>` | Create an objective |
 | `wg objective list` | List objectives |
 | `wg objective show <id>` | Show objective details |
-| `wg objective edit <id>` | Edit a objective |
-| `wg objective rm <id>` | Remove a objective |
+| `wg objective edit <id>` | Edit an objective |
+| `wg objective rm <id>` | Remove an objective |
 | `wg agent create` | Create agent (role+objective pairing) |
 | `wg agent list` | List agents |
 | `wg agent show <hash>` | Show agent details |

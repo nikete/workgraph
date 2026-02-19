@@ -28,7 +28,7 @@ Every writer must use these terms with these exact meanings. If a term is not in
 | **resource** | A non-task node in the graph representing a consumable or limited asset (budget, compute, etc.). Tasks may `require` resources. Currently informational — not enforced by the scheduler. |
 | **role** | An identity entity defining *what* an agent does. Contains a description, a desired outcome, and a list of skills. Identified by a content-hash of its identity-defining fields. |
 | **objective** | An identity entity defining *why* an agent acts the way it does. Contains a description, acceptable trade-offs (compromises the agent may make), and unacceptable trade-offs (hard constraints it must never violate). Identified by a content-hash of its identity-defining fields. |
-| **agent** | The unified identity in the identity system — a named pairing of a role and a objective. Can represent a human or an AI. For AI agents, the role and objective are injected into the prompt. For human agents, role and objective are optional. Identified by a content-hash of `(role_id, objective_id)`. |
+| **agent** | The unified identity in the identity system — a named pairing of a role and an objective. Can represent a human or an AI. For AI agents, the role and objective are injected into the prompt. For human agents, role and objective are optional. Identified by a content-hash of `(role_id, objective_id)`. |
 | **identity** | The collective system of roles, objectives, and agents. Also refers to the storage directory (`.workgraph/identity/`) and configuration namespace (`[identity]` in config.toml). |
 | **content-hash ID** | A SHA-256 hash of an entity's identity-defining fields. Deterministic (same content = same ID), deduplicating (cannot create two identical entities), and immutable (changing identity-defining fields produces a *new* entity). Displayed as 8-character hex prefixes. All commands accept unique prefixes. |
 | **capability** | A flat string tag on an agent (e.g., `"rust"`, `"testing"`) used for task-to-agent matching at dispatch time. Distinct from role skills: capabilities are for *routing*, skills are for *prompt injection*. |
@@ -71,11 +71,11 @@ Every writer must use these terms with these exact meanings. If a term is not in
 
 2. **The core loop.** Add tasks with dependencies → the scheduler finds ready work → agents (human or AI) are dispatched → completed work unblocks downstream tasks → repeat. This is the heartbeat of any workgraph project.
 
-3. **What the identity system adds.** Without the identity, every AI agent is a generic assistant. The identity gives agents *composable identities* — a role (what they do) paired with a objective (why they do it that way). Different pairings produce different agents. These identities are immutable (content-hashed), rewardd (scored after task completion), and evolved (improved by an LLM evolver based on performance data).
+3. **What the identity system adds.** Without the identity, every AI agent is a generic assistant. The identity gives agents *composable identities* — a role (what they do) paired with an objective (why they do it that way). Different pairings produce different agents. These identities are immutable (content-hashed), rewarded (scored after task completion), and evolved (improved by an LLM evolver based on performance data).
 
 4. **The full identity loop.** Assign identity → execute task → reward results → evolve identity. Each step can be manual or automated. The system is designed to run as a self-improving cycle.
 
-5. **Human and AI agents in the same model.** The identity system is uniform. The only difference is the executor: AI agents receive prompts; human agents receive notifications. Both are tracked, rewardd, and evolved using the same mechanisms. (Human rewards are excluded from the evolution signal.)
+5. **Human and AI agents in the same model.** The identity system is uniform. The only difference is the executor: AI agents receive prompts; human agents receive notifications. Both are tracked, rewarded, and evolved using the same mechanisms. (Huma rewards are excluded from the evolution signal.)
 
 6. **Storage and simplicity.** Everything is files: JSONL for the graph, YAML for identity entities, TOML for configuration. No database, no server dependency. The service daemon is optional — you can run workgraph purely from the CLI.
 
@@ -139,13 +139,13 @@ Every writer must use these terms with these exact meanings. If a term is not in
 
 7. **Trust levels.** Verified, Provisional (default), Unknown. Verified agents get a small priority bonus in task matching. Trust is set on agent creation and can be changed.
 
-8. **Human vs. AI agents.** The executor field distinguishes them: `claude` = AI, `matrix`/`email`/`shell` = human. Human agents don't need roles or objectives — they bring their own judgment. Both types are tracked and rewardd uniformly. Human agent rewards are excluded from evolution to prevent the system from trying to "improve" humans.
+8. **Human vs. AI agents.** The executor field distinguishes them: `claude` = AI, `matrix`/`email`/`shell` = human. Human agents don't need roles or objectives — they bring their own judgment. Both types are tracked and rewarded uniformly. Human agent rewards are excluded from evolution to prevent the system from trying to "improve" humans.
 
 9. **Creating an identity from scratch.** The `wg identity init` command seeds four starter roles (Programmer, Reviewer, Documenter, Architect) and four starter objectives (Careful, Fast, Thorough, Balanced). Then pair them into agents. Walk through the setup process.
 
 10. **Task-agent matching.** `wg match` compares a task's required skills against agents' capabilities. Scores by match count + trust bonus. This is used by the auto-assign system and can be used manually.
 
-**Cross-references:** Back-reference to Section 1 (identity overview). Forward-reference to Section 4 (how agents are dispatched). Forward-reference to Section 5 (how agents are rewardd and evolved).
+**Cross-references:** Back-reference to Section 1 (identity overview). Forward-reference to Section 4 (how agents are dispatched). Forward-reference to Section 5 (how agents are rewarded and evolved).
 
 **Tone notes:** Emphasize the design philosophy — why content-hashing, why immutability, why the role/objective split. These are choices, not accidents.
 
@@ -211,7 +211,7 @@ Every writer must use these terms with these exact meanings. If a term is not in
 
 9. **Lineage tracking.** Every role, objective, and agent records: parent IDs (none for manual creation, one for mutation, two+ for crossover), generation number (0 for manual, incrementing), creator identity (`"human"` or `"evolver-{run_id}"`), and timestamp. Lineage can be walked with `wg role lineage`, `wg objective lineage`, `wg agent lineage`. Content-hash IDs make lineage unfalsifiable — the original entity is never modified, only new children are created.
 
-10. **The autopoietic dimension.** The meta-agents (assigner, evaluator, evolver) are themselves identity entities with roles and objectives. They can be rewardd and evolved. The evolver can propose changes to the assigner or evaluator. Self-mutations of the evolver itself require human approval. This creates a system that can improve not just its workers but its coordination mechanisms — subject to human oversight at every evolution step. Evolution is intentionally kept as a manual trigger (`wg evolve`), not automated, because the human decides when there is enough reward data to act on.
+10. **The autopoietic dimension.** The meta-agents (assigner, evaluator, evolver) are themselves identity entities with roles and objectives. They can be rewarded and evolved. The evolver can propose changes to the assigner or evaluator. Self-mutations of the evolver itself require human approval. This creates a system that can improve not just its workers but its coordination mechanisms — subject to human oversight at every evolution step. Evolution is intentionally kept as a manual trigger (`wg evolve`), not automated, because the human decides when there is enough reward data to act on.
 
 11. **Practical guidance.** When to evolve: after accumulating enough rewards (at least 5-10 per role). How to use `--budget`: start small (2-3 operations), review results, iterate. How to use `--dry-run`: always preview first. How to seed: `wg identity init` for starters, then evolve. How to experiment: use the under-explored combinations from `wg identity stats` as hypotheses.
 
@@ -231,7 +231,7 @@ Every writer must use these terms with these exact meanings. If a term is not in
 | 02-task-graph | 04-coordination | "How the coordinator uses readiness — §4" |
 | 02-task-graph | 05-evolution | "Loop edges as natural reward points — §5" |
 | 03-identity | 04-coordination | "How agents are dispatched — §4" |
-| 03-identity | 05-evolution | "How agents are rewardd and evolved — §5" |
+| 03-identity | 05-evolution | "How agents are rewarded and evolved — §5" |
 | 04-coordination | 02-task-graph | "Readiness calculation — §2" |
 | 04-coordination | 03-identity | "Agent identity injection — §3" |
 | 04-coordination | 05-evolution | "Auto-reward creates the data pipeline for §5" |

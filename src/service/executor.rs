@@ -713,7 +713,7 @@ template = "Work on {{task_id}}"
         let role_id = role.id.clone();
         identity::save_role(&role, &roles_dir).unwrap();
 
-        // Create a objective using content-hash ID builder
+        // Create an objective using content-hash ID builder
         let objective = identity::build_objective(
             "Quality First",
             "Prioritize quality",

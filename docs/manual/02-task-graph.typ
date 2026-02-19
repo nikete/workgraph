@@ -121,7 +121,7 @@ A task is _ready_ when four conditions hold simultaneously:
 + *Past time constraints.* If the task has a `not_before` timestamp, the current time must be past it. If the task has a `ready_after` timestamp (set by loop edge delays), the current time must be past that too. Invalid or missing timestamps are treated as satisfied—they do not block.
 + *All blockers terminal.* Every task ID in the `blocked_by` list must correspond to a task in a terminal status (done, failed, or abandoned). Non-existent blockers are treated as resolved.
 
-These four conditions are rewardd by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
+These four conditions are evaluated by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
 
 The `not_before` field enables future scheduling: "do not start this task before next Monday." The `ready_after` field serves a different purpose—it is set automatically by loop edges with delays, creating pacing between loop iterations. Both are checked against the current wall-clock time.
 
@@ -135,7 +135,7 @@ These patterns are cycles, and they are not bugs. They are the structure of iter
 
 === The `loops_to` Mechanism
 
-A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, reward a condition—if true and iterations remain, re-open the target task upstream."
+A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, evaluate a condition—if true and iterations remain, re-open the target task upstream."
 
 #figure(
   table(
@@ -151,7 +151,7 @@ A loop edge is a conditional back-edge declared via the `loops_to` field on a ta
   caption: [Loop edge fields. Every loop edge requires a target and a max_iterations cap.],
 ) <loop-edge-fields>
 
-The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—rewardd when the source task transitions to done, and ignored at all other times.
+The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—evaluated when the source task transitions to done, and ignored at all other times.
 
 This separation is the key insight of the design. The forward dependency chain (via `blocked_by`) remains acyclic and schedulable. The backward loop edge (via `loops_to`) layers iteration on top without disturbing the scheduler.
 

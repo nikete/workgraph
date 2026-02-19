@@ -880,7 +880,7 @@ Manage objectives — the "why" of agent identity. Also aliased as `wg mot`.
 | `wg objective list` | List all objectives |
 | `wg objective show <id>` | Show details |
 | `wg objective edit <id>` | Edit in `$EDITOR` (re-hashes on save) |
-| `wg objective rm <id>` | Delete a objective |
+| `wg objective rm <id>` | Delete an objective |
 | `wg objective lineage <id>` | Show evolutionary ancestry |
 
 ---

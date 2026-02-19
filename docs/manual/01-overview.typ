@@ -28,7 +28,7 @@ Each role, each objective, and each agent is identified by a #emph[content-hash 
 
 When an agent is dispatched to a task, its role and objective are resolved---skills fetched from files, URLs, or inline definitions---and injected into the prompt. The agent doesn't just receive a task description; it receives an identity. This is what separates a workgraph agent from a one-off LLM call.
 
-Human agents participate in the same model. The only difference is the #emph[executor]: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or objectives---they bring their own judgment. But both human and AI agents are tracked, rewardd, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
+Human agents participate in the same model. The only difference is the #emph[executor]: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or objectives---they bring their own judgment. But both human and AI agents are tracked, rewarded, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
 
 == The Core Loop
 
@@ -78,7 +78,7 @@ The identity system extends the core loop with a second, slower cycle of improve
   caption: [The identity improvement cycle.],
 ) <fig-identity-loop>
 
-*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent rewards the available agents and picks the best fit. #emph[Assignment] sets identity; it is distinct from #emph[claiming], which sets execution state.
+*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent evaluates the available agents and picks the best fit. #emph[Assignment] sets identity; it is distinct from #emph[claiming], which sets execution state.
 
 *Execute task.* The agent works with its assigned identity injected into the prompt.
 

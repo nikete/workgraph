@@ -1,6 +1,6 @@
 # Identity System
 
-The identity system gives workgraph agents composable identities. Instead of every agent being a generic assistant, you define **roles** (what an agent does), **objectives** (why it acts that way), and pair them into **agents** that are assigned to tasks, rewardd, and evolved over time.
+The identity system gives workgraph agents composable identities. Instead of every agent being a generic assistant, you define **roles** (what an agent does), **objectives** (why it acts that way), and pair them into **agents** that are assigned to tasks, rewarded, and evolved over time.
 
 Agents can be **human or AI**. The difference is the executor: AI agents use `claude` (or similar), human agents use `matrix`, `email`, or `shell`. Both share the same identity model — roles, objectives, capabilities, trust levels, and performance tracking all work uniformly regardless of who (or what) is doing the work.
 
@@ -21,7 +21,7 @@ A role defines **what** an agent does.
 
 ### Objective
 
-A objective defines **why** an agent acts the way it does.
+An objective defines **why** an agent acts the way it does.
 
 | Field | Description | Identity-defining? |
 |-------|-------------|--------------------|
@@ -34,7 +34,7 @@ A objective defines **why** an agent acts the way it does.
 
 ### Agent
 
-An agent is the **unified identity** in workgraph — it can represent a human or an AI. For AI agents, it is a named pairing of a role and a objective. For human agents, role and objective are optional.
+An agent is the **unified identity** in workgraph — it can represent a human or an AI. For AI agents, it is a named pairing of a role and an objective. For human agents, role and objective are optional.
 
 | Field | Description |
 |-------|-------------|
@@ -130,7 +130,7 @@ wg role add "Programmer" \
   --skill testing \
   --description "Writes, tests, and debugs code"
 
-# Create a objective
+# Create an objective
 wg objective add "Careful" \
   --accept "Slow" \
   --accept "Verbose" \
@@ -279,7 +279,7 @@ Also aliased as `wg mot`.
 | `wg objective list` | List all objectives |
 | `wg objective show <id>` | Show details |
 | `wg objective edit <id>` | Edit in `$EDITOR` (re-hashes on save) |
-| `wg objective rm <id>` | Delete a objective |
+| `wg objective rm <id>` | Delete an objective |
 | `wg objective lineage <id>` | Show evolutionary ancestry |
 
 ### `wg agent`

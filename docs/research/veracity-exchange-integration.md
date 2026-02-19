@@ -325,7 +325,7 @@ An agent might score 0.95 on internal reward (it perfectly implemented the spec)
 The evolution system (`wg evolve`) currently uses reward scores to improve roles and objectives. With outcome scoring, it could also evolve based on real-world results:
 
 - **Outcome-weighted evolution.** Roles whose tasks have high outcome scores should be favored. A role that produces correct-but-useless code (high reward, low outcome) should be deprioritized vs. one that produces imperfect-but-effective code (moderate reward, high outcome).
-- **Outcome-informed gap analysis.** The `gap-analysis` evolution strategy identifies unmet needs. With outcome data, it can identify gaps between _rewardd quality_ and _real-world impact_ — a much more valuable signal.
+- **Outcome-informed gap analysis.** The `gap-analysis` evolution strategy identifies unmet needs. With outcome data, it can identify gaps between _rewarded quality_ and _real-world impact_ — a much more valuable signal.
 - **Latent payoff patience.** The evolution system currently runs on available reward data. With latent payoffs (pillar 5), some tasks won't have outcome scores yet. The evolver needs to handle incomplete outcome data gracefully — probably by weighting available outcome data more heavily as it arrives, rather than blocking on it.
 
 ### 6.3 Credibility as Extended Performance
