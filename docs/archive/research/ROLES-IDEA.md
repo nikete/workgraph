@@ -88,17 +88,17 @@ The matching algorithm:
 3. Assign or queue for claim
 
 
-### 4. Evaluation criteria
+### 4. Reward criteria
 
 
 Success conditions are defined by the project owner, not hardcoded.
 
 
-Evaluation criteria are declared per project or per task:
+Reward criteria are declared per project or per task:
 
 
 ```yaml
-# .workgraph/evaluation/default.md
+# .workgraph/reward/default.md
 ## Success criteria
 - Output passes automated tests (if applicable)
 - Output approved by human reviewer (if task is verified)
@@ -116,7 +116,7 @@ Tasks can override the default:
 
 
 ```
-wg add "Write user guide" --role technical-writer --eval-criteria ./evaluation/documentation.md
+wg add "Write user guide" --role technical-writer --eval-criteria ./reward/documentation.md
 ```
 
 
@@ -126,7 +126,7 @@ wg add "Write user guide" --role technical-writer --eval-criteria ./evaluation/d
 When a task completes, the system:
 
 
-1. Evaluates the output against the declared criteria
+1. Rewards the output against the declared criteria
 2. Records the outcome (success, partial success, failure) with context
 3. Triggers the modification skill if the outcome indicates the role definition should change
 
@@ -155,7 +155,7 @@ This skill defines:
 Because the modification logic is itself a skill, it can be:
 - Customised per project
 - Versioned and rolled back
-- Evaluated and modified (meta-level recursion)
+- Rewardd and modified (meta-level recursion)
 
 
 ## Integration with existing Workgraph
@@ -178,7 +178,7 @@ Because the modification logic is itself a skill, it can be:
     technical-writer.md
     code-reviewer.md
     research-analyst.md
-  evaluation/
+  reward/
     default.md
     documentation.md
     code-quality.md
@@ -204,5 +204,5 @@ Because the modification logic is itself a skill, it can be:
 2. Write the initial role-modifier skill
 3. Implement weight calculation and context budget checking
 4. Extend `wg add` and `wg match` to support `--role`
-5. Build evaluation tracking and modification triggers
+5. Build reward tracking and modification triggers
 

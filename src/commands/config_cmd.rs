@@ -30,38 +30,38 @@ pub fn show(dir: &Path, json: bool) -> Result<()> {
         println!("  poll_interval = {}", config.coordinator.poll_interval);
         println!("  executor = \"{}\"", config.coordinator.executor);
         println!();
-        println!("[agency]");
-        println!("  auto_evaluate = {}", config.agency.auto_evaluate);
-        println!("  auto_assign = {}", config.agency.auto_assign);
-        if let Some(ref agent) = config.agency.assigner_agent {
+        println!("[identity]");
+        println!("  auto_reward = {}", config.identity.auto_reward);
+        println!("  auto_assign = {}", config.identity.auto_assign);
+        if let Some(ref agent) = config.identity.assigner_agent {
             println!("  assigner_agent = \"{}\"", agent);
         }
-        if let Some(ref agent) = config.agency.evaluator_agent {
+        if let Some(ref agent) = config.identity.evaluator_agent {
             println!("  evaluator_agent = \"{}\"", agent);
         }
-        if let Some(ref model) = config.agency.assigner_model {
+        if let Some(ref model) = config.identity.assigner_model {
             println!("  assigner_model = \"{}\"", model);
         }
-        if let Some(ref model) = config.agency.evaluator_model {
+        if let Some(ref model) = config.identity.evaluator_model {
             println!("  evaluator_model = \"{}\"", model);
         }
-        if let Some(ref model) = config.agency.evolver_model {
+        if let Some(ref model) = config.identity.evolver_model {
             println!("  evolver_model = \"{}\"", model);
         }
-        if let Some(ref agent) = config.agency.evolver_agent {
+        if let Some(ref agent) = config.identity.evolver_agent {
             println!("  evolver_agent = \"{}\"", agent);
         }
-        if let Some(ref heuristics) = config.agency.retention_heuristics {
+        if let Some(ref heuristics) = config.identity.retention_heuristics {
             println!("  retention_heuristics = \"{}\"", heuristics);
         }
-        println!("  auto_triage = {}", config.agency.auto_triage);
-        if let Some(ref model) = config.agency.triage_model {
+        println!("  auto_triage = {}", config.identity.auto_triage);
+        if let Some(ref model) = config.identity.triage_model {
             println!("  triage_model = \"{}\"", model);
         }
-        if let Some(timeout) = config.agency.triage_timeout {
+        if let Some(timeout) = config.identity.triage_timeout {
             println!("  triage_timeout = {}", timeout);
         }
-        if let Some(max_bytes) = config.agency.triage_max_log_bytes {
+        if let Some(max_bytes) = config.identity.triage_max_log_bytes {
             println!("  triage_max_log_bytes = {}", max_bytes);
         }
         println!();
@@ -100,7 +100,7 @@ pub fn update(
     coordinator_interval: Option<u64>,
     poll_interval: Option<u64>,
     coordinator_executor: Option<&str>,
-    auto_evaluate: Option<bool>,
+    auto_reward: Option<bool>,
     auto_assign: Option<bool>,
     assigner_model: Option<&str>,
     evaluator_model: Option<&str>,
@@ -161,82 +161,82 @@ pub fn update(
         changed = true;
     }
 
-    // Agency settings
-    if let Some(v) = auto_evaluate {
-        config.agency.auto_evaluate = v;
-        println!("Set agency.auto_evaluate = {}", v);
+    // Identity settings
+    if let Some(v) = auto_reward {
+        config.identity.auto_reward = v;
+        println!("Set identity.auto_reward = {}", v);
         changed = true;
     }
 
     if let Some(v) = auto_assign {
-        config.agency.auto_assign = v;
-        println!("Set agency.auto_assign = {}", v);
+        config.identity.auto_assign = v;
+        println!("Set identity.auto_assign = {}", v);
         changed = true;
     }
 
     if let Some(m) = assigner_model {
-        config.agency.assigner_model = Some(m.to_string());
-        println!("Set agency.assigner_model = \"{}\"", m);
+        config.identity.assigner_model = Some(m.to_string());
+        println!("Set identity.assigner_model = \"{}\"", m);
         changed = true;
     }
 
     if let Some(m) = evaluator_model {
-        config.agency.evaluator_model = Some(m.to_string());
-        println!("Set agency.evaluator_model = \"{}\"", m);
+        config.identity.evaluator_model = Some(m.to_string());
+        println!("Set identity.evaluator_model = \"{}\"", m);
         changed = true;
     }
 
     if let Some(m) = evolver_model {
-        config.agency.evolver_model = Some(m.to_string());
-        println!("Set agency.evolver_model = \"{}\"", m);
+        config.identity.evolver_model = Some(m.to_string());
+        println!("Set identity.evolver_model = \"{}\"", m);
         changed = true;
     }
 
     if let Some(v) = assigner_agent {
-        config.agency.assigner_agent = Some(v.to_string());
-        println!("Set agency.assigner_agent = \"{}\"", v);
+        config.identity.assigner_agent = Some(v.to_string());
+        println!("Set identity.assigner_agent = \"{}\"", v);
         changed = true;
     }
 
     if let Some(v) = evaluator_agent {
-        config.agency.evaluator_agent = Some(v.to_string());
-        println!("Set agency.evaluator_agent = \"{}\"", v);
+        config.identity.evaluator_agent = Some(v.to_string());
+        println!("Set identity.evaluator_agent = \"{}\"", v);
         changed = true;
     }
 
     if let Some(v) = evolver_agent {
-        config.agency.evolver_agent = Some(v.to_string());
-        println!("Set agency.evolver_agent = \"{}\"", v);
+        config.identity.evolver_agent = Some(v.to_string());
+        println!("Set identity.evolver_agent = \"{}\"", v);
         changed = true;
     }
 
     if let Some(v) = retention_heuristics {
-        config.agency.retention_heuristics = Some(v.to_string());
-        println!("Set agency.retention_heuristics = \"{}\"", v);
+        config.identity.retention_heuristics = Some(v.to_string());
+        println!("Set identity.retention_heuristics = \"{}\"", v);
         changed = true;
     }
 
     if let Some(v) = auto_triage {
-        config.agency.auto_triage = v;
-        println!("Set agency.auto_triage = {}", v);
+        config.identity.auto_triage = v;
+        println!("Set identity.auto_triage = {}", v);
         changed = true;
     }
 
     if let Some(m) = triage_model {
-        config.agency.triage_model = Some(m.to_string());
-        println!("Set agency.triage_model = \"{}\"", m);
+        config.identity.triage_model = Some(m.to_string());
+        println!("Set identity.triage_model = \"{}\"", m);
         changed = true;
     }
 
     if let Some(t) = triage_timeout {
-        config.agency.triage_timeout = Some(t);
-        println!("Set agency.triage_timeout = {}", t);
+        config.identity.triage_timeout = Some(t);
+        println!("Set identity.triage_timeout = {}", t);
         changed = true;
     }
 
     if let Some(b) = triage_max_log_bytes {
-        config.agency.triage_max_log_bytes = Some(b);
-        println!("Set agency.triage_max_log_bytes = {}", b);
+        config.identity.triage_max_log_bytes = Some(b);
+        println!("Set identity.triage_max_log_bytes = {}", b);
         changed = true;
     }
 
@@ -525,7 +525,7 @@ mod tests {
     }
 
     #[test]
-    fn test_update_agency() {
+    fn test_update_identity() {
         let temp_dir = TempDir::new().unwrap();
         init(temp_dir.path()).unwrap();
 
@@ -555,25 +555,25 @@ mod tests {
         assert!(result.is_ok());
 
         let config = Config::load(temp_dir.path()).unwrap();
-        assert!(config.agency.auto_evaluate);
-        assert!(config.agency.auto_assign);
-        assert_eq!(config.agency.assigner_model, Some("sonnet".to_string()));
-        assert_eq!(config.agency.evaluator_model, Some("haiku".to_string()));
-        assert_eq!(config.agency.evolver_model, Some("opus-4-5".to_string()));
+        assert!(config.identity.auto_reward);
+        assert!(config.identity.auto_assign);
+        assert_eq!(config.identity.assigner_model, Some("sonnet".to_string()));
+        assert_eq!(config.identity.evaluator_model, Some("haiku".to_string()));
+        assert_eq!(config.identity.evolver_model, Some("opus-4-5".to_string()));
         assert_eq!(
-            config.agency.assigner_agent,
+            config.identity.assigner_agent,
             Some("assigner-hash".to_string())
         );
         assert_eq!(
-            config.agency.evaluator_agent,
+            config.identity.evaluator_agent,
             Some("evaluator-hash".to_string())
         );
         assert_eq!(
-            config.agency.evolver_agent,
+            config.identity.evolver_agent,
             Some("evolver-hash".to_string())
         );
         assert_eq!(
-            config.agency.retention_heuristics,
+            config.identity.retention_heuristics,
             Some("Retire below 0.3 after 10 evals".to_string())
         );
     }

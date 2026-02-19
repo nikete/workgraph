@@ -113,7 +113,7 @@ The recommended minimal change for workgraph: add a `loop` edge type with a guar
 **Loop types**:
 
 1. **Standard Loop** (loop marker ↻ on activity):
-   - Condition-based repetition (evaluated before or after each iteration via `testBefore`)
+   - Condition-based repetition (rewardd before or after each iteration via `testBefore`)
    - Optional `loopMaximum` to cap iterations
    - Always sequential
 
@@ -139,7 +139,7 @@ The recommended minimal change for workgraph: add a `loop` edge type with a guar
 
 **Model**: State machine (Amazon States Language). Allows cycles through `Choice` states pointing backward.
 
-**Cycle mechanism**: A `Choice` state evaluates conditions and either transitions forward (exit) or backward (loop). A `Map` state iterates over arrays with `MaxConcurrency` control.
+**Cycle mechanism**: A `Choice` state rewards conditions and either transitions forward (exit) or backward (loop). A `Map` state iterates over arrays with `MaxConcurrency` control.
 
 **Loop prevention**: Hard limit of **25,000 events** and 1-year maximum duration. Each loop iteration consumes ~3 state transitions. Cost per transition is a natural limiter.
 
@@ -253,7 +253,7 @@ Every system answers this differently:
 
 Three trigger models from the survey:
 
-1. **Condition-based** (BPMN, Step Functions): A guard expression on the back-edge evaluates to true. "If integration tests fail, re-open implementation."
+1. **Condition-based** (BPMN, Step Functions): A guard expression on the back-edge rewards to true. "If integration tests fail, re-open implementation."
 
 2. **Event-based** (Temporal signals, reactive): An external or internal event triggers re-activation. "When a monitoring alert fires, re-open the investigation task."
 
@@ -335,7 +335,7 @@ Add a new edge type to the task model:
 ```rust
 struct LoopEdge {
     target: String,          // task ID to re-activate
-    guard: Option<String>,   // condition expression (evaluated at runtime)
+    guard: Option<String>,   // condition expression (rewardd at runtime)
     max_iterations: u32,     // hard cap (required, no default unlimited)
 }
 ```
@@ -343,7 +343,7 @@ struct LoopEdge {
 **Scheduling behavior**: `loops_to` edges are **ignored** by topological sort and `wg ready`. They only matter when a task completes.
 
 **Completion behavior**: When a task with `loops_to` edges transitions to `Done`:
-1. Evaluate each loop edge's guard condition
+1. Reward each loop edge's guard condition
 2. If guard is true and `target.loop_iteration < max_iterations`:
    - Set target task status to `Open`
    - Increment target's `loop_iteration`
@@ -385,10 +385,10 @@ This is the Cylc/Airflow pattern: the *definition* is cyclic, but each *instance
 
 ### 5.5 Stage 4: Event-Driven Re-Activation (Service Integration)
 
-Extend the service daemon to handle loop edge evaluation:
+Extend the service daemon to handle loop edge reward:
 
 1. When an agent completes a task, the daemon checks for `loops_to` edges
-2. Evaluates guard conditions against current graph state
+2. Rewards guard conditions against current graph state
 3. If re-activation is triggered, resets target task and dispatches a new agent
 4. Backpressure: if multiple re-activations fire simultaneously, queue them with configurable concurrency
 

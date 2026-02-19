@@ -10,13 +10,13 @@
 
 ## 1. Executive Summary
 
-Workgraph is a well-engineered task graph coordinator with a clean core and ambitious feature set. The foundational layer — graph model, parser, query engine, validation — is solid at ~2,100 lines with good test coverage and few issues. The service daemon with IPC-based coordination is architecturally sound. The agency system (roles/motivations/agents) is the most thoroughly tested subsystem.
+Workgraph is a well-engineered task graph coordinator with a clean core and ambitious feature set. The foundational layer — graph model, parser, query engine, validation — is solid at ~2,100 lines with good test coverage and few issues. The service daemon with IPC-based coordination is architecturally sound. The identity system (roles/objectives/agents) is the most thoroughly tested subsystem.
 
 **However, the codebase has grown organically to ~45,800 lines and shows signs of accumulated tech debt:**
 
 - **Significant code duplication** — `make_task` (duplicated 22+ times), `build_reverse_index` (6 times), `spawn.rs` run/spawn_agent (~250 duplicate lines), Matrix command parser (full copy-paste between features), and more. Conservatively **1,500–2,000 lines** of pure duplication.
 - **Dead and vestigial code** — The `Executor` trait is never used in production, `src/executors/` is dead re-exports, `petgraph` dependency is unused, 4 of 7 `AgentStatus` variants are never set, the old `wg agent` loop coexists with the service daemon without clear demarcation.
-- **Test coverage is deeply uneven** — The agency system has ~3,850 lines of excellent tests, but CLI commands (~23,000 lines), TUI (~4,362 lines), Matrix integration (~2,787 lines), and the evolution module (~2,677 lines) have **zero** test coverage. Only 1 of 9 integration test files runs in CI.
+- **Test coverage is deeply uneven** — The identity system has ~3,850 lines of excellent tests, but CLI commands (~23,000 lines), TUI (~4,362 lines), Matrix integration (~2,787 lines), and the evolution module (~2,677 lines) have **zero** test coverage. Only 1 of 9 integration test files runs in CI.
 - **Documentation is stale** — COMMANDS.md documents ~35 of 67 commands. AGENT-SERVICE.md describes a design that doesn't match the implementation. The README is missing significant features (edit, submit/approve/reject, status, dag).
 - **Architectural redundancy** — Two identity systems (Actor vs Agent), two prompt/executor systems (Executor trait vs spawn.rs), two Matrix implementations sharing copy-pasted code.
 
@@ -54,8 +54,8 @@ Workgraph is a well-engineered task graph coordinator with a clean core and ambi
 | Remove unused `petgraph` dependency | 1 line | `Cargo.toml` |
 | Remove duplicate `libc` dependency entry | 2 lines | `Cargo.toml` |
 | Remove `src/executors/` dead re-exports | ~60 lines deleted | 3 files removed |
-| Add `impl Default for PerformanceRecord` | ~5 lines added, ~60 reduced | `src/agency.rs` + 20 call sites |
-| Extract `extract_json()` to shared utility | ~30 lines net reduction | `src/commands/evaluate.rs`, `src/commands/evolve.rs` |
+| Add `impl Default for RewardHistory` | ~5 lines added, ~60 reduced | `src/identity.rs` + 20 call sites |
+| Extract `extract_json()` to shared utility | ~30 lines net reduction | `src/commands/reward.rs`, `src/commands/evolve.rs` |
 | Remove deprecated `start_sync_thread()` and unused `sync_loop()` | ~40 lines deleted | `src/matrix/mod.rs` |
 | Remove `VerificationEvent` stub from matrix-lite | ~10 lines deleted | `src/matrix_lite/mod.rs` |
 
@@ -85,9 +85,9 @@ Workgraph is a well-engineered task graph coordinator with a clean core and ambi
 |--------|--------|
 | Remove `blocks` field from Task, compute on demand | Eliminates data integrity hazard |
 | Decide Executor trait fate: use it or remove it | Clarifies spawning architecture (~1,500 lines) |
-| Refactor `coordinator_tick()` — single graph load, extract auto-assign/auto-evaluate | Reduces 300-line function, eliminates TOCTOU |
+| Refactor `coordinator_tick()` — single graph load, extract auto-assign/auto-reward | Reduces 300-line function, eliminates TOCTOU |
 | Deprecate standalone `wg agent` loop in favor of `wg service start` | Removes user confusion about which system to use |
-| Clarify Actor (graph node) vs Agent (agency entity) — deprecate one | Removes overlapping identity systems |
+| Clarify Actor (graph node) vs Agent (identity entity) — deprecate one | Removes overlapping identity systems |
 | Merge `bottlenecks` + `structure` into `analyze`; consider `aging` + `workload` | Net -700 to -2,100 lines |
 | Clean up unused AgentStatus variants (Starting, Idle, Done, Failed) | Simplifies state machine |
 | Gate `tokio` behind matrix features | Faster builds for non-Matrix users |
@@ -111,7 +111,7 @@ Workgraph is a well-engineered task graph coordinator with a clean core and ambi
 
 ### 4.1 Hotspot: `src/commands/service.rs` (2,293 lines)
 
-The daemon/coordinator module is the complexity center of the codebase. `coordinator_tick()` alone is 300+ lines doing 7 distinct things. It loads the graph up to 5 times per tick. The auto-assign and auto-evaluate blocks are 90-120 lines each, embedded inline. This is the most fragile code path — any bug here affects all agent coordination.
+The daemon/coordinator module is the complexity center of the codebase. `coordinator_tick()` alone is 300+ lines doing 7 distinct things. It loads the graph up to 5 times per tick. The auto-assign and auto-reward blocks are 90-120 lines each, embedded inline. This is the most fragile code path — any bug here affects all agent coordination.
 
 **Risk:** High. Changes to coordinator logic are error-prone due to the function's length and the repeated graph load/save pattern.
 
@@ -133,15 +133,15 @@ The `Executor` trait (`src/service/executor.rs`, `claude.rs`, `shell.rs` — ~2,
 
 ### 4.5 Concern: Two Identity Systems
 
-`Actor` (graph.rs) and `Agent` (agency.rs) both model "who does work" with overlapping fields (capabilities/skills, assignment). The `Actor` system is used by `wg match` and `wg next`; the `Agent` system is used by `wg assign`, identity prompts, and evaluations. Users must understand both to use the system effectively.
+`Actor` (graph.rs) and `Agent` (identity.rs) both model "who does work" with overlapping fields (capabilities/skills, assignment). The `Actor` system is used by `wg match` and `wg next`; the `Agent` system is used by `wg assign`, identity prompts, and rewards. Users must understand both to use the system effectively.
 
 ### 4.6 Concern: Speculative Complexity in Evolution
 
-The evolution system (`src/commands/evolve.rs` — 2,677 lines) implements mutation, crossover, tournament selection, and population management. It requires accumulated evaluation data to be useful. Combined with agency stats (675 lines) and lineage tracking, this is ~3,350 lines of infrastructure for a feature that only becomes valuable after many evaluation cycles — a threshold most projects won't reach. The code has **zero test coverage**.
+The evolution system (`src/commands/evolve.rs` — 2,677 lines) implements mutation, crossover, tournament selection, and population management. It requires accumulated reward data to be useful. Combined with identity stats (675 lines) and lineage tracking, this is ~3,350 lines of infrastructure for a feature that only becomes valuable after many reward cycles — a threshold most projects won't reach. The code has **zero test coverage**.
 
 ### 4.7 Concern: Test Coverage Cliff
 
-The test suite has a dramatic gap: the agency data model is tested at ~3,850 lines (excellent), but **~30,000 lines of CLI commands, TUI, Matrix, and evolution code have no tests**. Only 1 of 9 integration test files runs in CI. Two unit tests are currently failing (stale assertions).
+The test suite has a dramatic gap: the identity data model is tested at ~3,850 lines (excellent), but **~30,000 lines of CLI commands, TUI, Matrix, and evolution code have no tests**. Only 1 of 9 integration test files runs in CI. Two unit tests are currently failing (stale assertions).
 
 ### 4.8 Concern: Data Integrity
 
@@ -175,7 +175,7 @@ The test suite has a dramatic gap: the agency data model is tested at ~3,850 lin
 11. **Refactor `coordinator_tick()`** — Single graph load, extracted sub-functions.
 12. **Atomic file writes in `save_graph`** — Temp file + rename pattern.
 13. **Update COMMANDS.md** — Add all 30+ missing commands.
-14. **Update README** — Add edit, submit/approve/reject, status, dag, link AGENCY.md.
+14. **Update README** — Add edit, submit/approve/reject, status, dag, link IDENTITY.md.
 15. **Add `wg evolve` tests** — At minimum: mutation, crossover, tournament selection unit tests.
 
 ### Long-Term (Next Quarter)
@@ -208,7 +208,7 @@ The test suite has a dramatic gap: the agency data model is tested at ~3,850 lin
 - **Top issues:** `spawn.rs` duplication (HIGH), `coordinator_tick()` complexity (HIGH), dead Executor trait (MED), unused AgentStatus variants (LOW).
 - **Key recommendation:** Deduplicate spawn, refactor coordinator_tick, resolve Executor question.
 
-### Agency System (review-agency-system.md)
+### Identity System (review-identity-system.md)
 - **Health:** Well-designed and well-tested. ~8,328 lines (41% tests).
 - **Top issues:** Speculative evolution complexity (MED), Actor vs Agent confusion (MED), minor duplication (LOW).
 - **Key recommendation:** Defer evolution complexity, clarify Actor vs Agent.
@@ -239,7 +239,7 @@ The test suite has a dramatic gap: the agency data model is tested at ~3,850 lin
 - **Key recommendation:** Update COMMANDS.md and README as top doc priority.
 
 ### Test Coverage (review-tests.md)
-- **Health:** Excellent where it exists, but massive gaps. ~7,650 lines covering agency/coordinator well.
+- **Health:** Excellent where it exists, but massive gaps. ~7,650 lines covering identity/coordinator well.
 - **Top issues:** ~30,000 lines of CLI/TUI/Matrix/evolve code untested (CRITICAL), 8/9 test files not in CI (HIGH), significant test helper duplication (MED).
 - **Key recommendation:** Fix CI first, then add evolve tests and CLI smoke tests.
 

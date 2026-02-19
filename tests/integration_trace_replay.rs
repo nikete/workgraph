@@ -2,7 +2,7 @@
 //!
 //! Tests exercise these CLI commands end-to-end via the `wg` binary:
 //! - `wg trace <id>` / `wg trace <id> --json`
-//! - `wg replay --failed-only` / `--below-score` / `--plan-only` / `--subgraph`
+//! - `wg replay --failed-only` / `--below-reward` / `--plan-only` / `--subgraph`
 //! - `wg runs list` / `wg runs show <run-id>`
 
 use std::fs;
@@ -388,30 +388,30 @@ fn test_replay_plan_only_json_output() {
 }
 
 // ===========================================================================
-// 13. --below-score with evaluation data
+// 13. --below-reward with reward data
 // ===========================================================================
 
 #[test]
-fn test_replay_below_score_with_evaluations() {
+fn test_replay_below_reward_with_rewards() {
     let tmp = TempDir::new().unwrap();
-    let t1 = make_task("scored-high", "High score task", Status::Done);
-    let t2 = make_task("scored-low", "Low score task", Status::Done);
-    let t3 = make_task("no-score", "No score task", Status::Done);
+    let t1 = make_task("valued-high", "High value task", Status::Done);
+    let t2 = make_task("valued-low", "Low value task", Status::Done);
+    let t3 = make_task("no-value", "No value task", Status::Done);
     let wg_dir = setup_workgraph(&tmp, vec![t1, t2, t3]);
 
-    // Create evaluation files directly in agency/ dir
-    // (load_all_evaluations_or_warn scans the agency dir for *.json)
-    let eval_dir = wg_dir.join("agency");
+    // Create reward files directly in identity/ dir
+    // (load_all_rewards_or_warn scans the identity dir for *.json)
+    let eval_dir = wg_dir.join("identity");
     fs::create_dir_all(&eval_dir).unwrap();
 
-    // High score evaluation
+    // High value reward
     let eval_high = serde_json::json!({
         "id": "eval-001",
-        "task_id": "scored-high",
+        "task_id": "valued-high",
         "agent_id": "agent-1",
         "role_id": "implementer",
-        "motivation_id": "quality",
-        "score": 0.95,
+        "objective_id": "quality",
+        "value": 0.95,
         "dimensions": {},
         "notes": "Great work",
         "evaluator": "human",
@@ -423,14 +423,14 @@ fn test_replay_below_score_with_evaluations() {
     )
     .unwrap();
 
-    // Low score evaluation
+    // Low value reward
     let eval_low = serde_json::json!({
         "id": "eval-002",
-        "task_id": "scored-low",
+        "task_id": "valued-low",
         "agent_id": "agent-2",
         "role_id": "implementer",
-        "motivation_id": "quality",
-        "score": 0.3,
+        "objective_id": "quality",
+        "value": 0.3,
         "dimensions": {},
         "notes": "Needs improvement",
         "evaluator": "human",
@@ -442,29 +442,29 @@ fn test_replay_below_score_with_evaluations() {
     )
     .unwrap();
 
-    // Run replay --below-score 0.7
-    wg_ok(&wg_dir, &["replay", "--below-score", "0.7"]);
+    // Run replay --below-reward 0.7
+    wg_ok(&wg_dir, &["replay", "--below-reward", "0.7"]);
 
     let graph = load_wg_graph(&wg_dir);
-    // scored-high (0.95) should be preserved (score >= 0.7)
-    // But wait — by default keep_done_threshold is 0.9, and scored-high scores 0.95 >= 0.9
-    // The --below-score filter determines the seed set. scored-high has score 0.95 >= 0.7,
-    // so it's NOT in the seed set. scored-low (0.3 < 0.7) IS in the seed set.
-    // no-score is terminal with no eval => also in the seed set.
+    // valued-high (0.95) should be preserved (value >= 0.7)
+    // But wait — by default keep_done_threshold is 0.9, and valued-high values 0.95 >= 0.9
+    // The --below-reward filter determines the seed set. valued-high has value 0.95 >= 0.7,
+    // so it's NOT in the seed set. valued-low (0.3 < 0.7) IS in the seed set.
+    // no-value is terminal with no eval => also in the seed set.
     assert_eq!(
-        graph.get_task("scored-high").unwrap().status,
+        graph.get_task("valued-high").unwrap().status,
         Status::Done,
-        "scored-high (0.95) should be preserved (above threshold)"
+        "valued-high (0.95) should be preserved (above threshold)"
     );
     assert_eq!(
-        graph.get_task("scored-low").unwrap().status,
+        graph.get_task("valued-low").unwrap().status,
         Status::Open,
-        "scored-low (0.3) should be reset (below threshold)"
+        "valued-low (0.3) should be reset (below threshold)"
     );
     assert_eq!(
-        graph.get_task("no-score").unwrap().status,
+        graph.get_task("no-value").unwrap().status,
         Status::Open,
-        "no-score (no eval) should be reset"
+        "no-value (no eval) should be reset"
     );
 }
 

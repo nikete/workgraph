@@ -50,17 +50,17 @@ Each tick does:
 
 5. [IF auto_assign enabled]
    For each unassigned ready task (no agent field):
-     Skip meta-tasks (tagged assignment/evaluation/evolution)
+     Skip meta-tasks (tagged assignment/reward/evolution)
      Create assign-{task-id} blocker task
      Set assigner_model and assigner_agent on the new task
      The assigner runs: wg agent list, wg role list, then wg assign <task> <agent-hash>
 
-6. [IF auto_evaluate enabled]
-   For each completed task without an existing evaluate-{task-id}:
-     Skip meta-tasks (tagged evaluation/assignment/evolution)
-     Create evaluate-{task-id} blocked by the original task
+6. [IF auto_reward enabled]
+   For each completed task without an existing reward-{task-id}:
+     Skip meta-tasks (tagged reward/assignment/evolution)
+     Create reward-{task-id} blocked by the original task
      Set evaluator_model and evaluator_agent on the new task
-     Unblock eval tasks whose source task is Failed (so failures get evaluated too)
+     Unblock eval tasks whose source task is Failed (so failures get rewardd too)
 
 7. Spawn agents on ready tasks:
      Resolve effective model: task.model > coordinator.model > agent.model
@@ -151,7 +151,7 @@ When the coordinator spawns an agent for a task:
 
 1. **Claim**: The task is claimed (status → `in-progress`)
 2. **Model resolution**: task.model > coordinator.model > agent.model
-3. **Identity injection**: If the task has an `agent` field, the agent's role and motivation are loaded from `.workgraph/agency/` and rendered into an identity prompt section
+3. **Identity injection**: If the task has an `agent` field, the agent's role and objective are loaded from `.workgraph/identity/` and rendered into an identity prompt section
 4. **Wrapper script**: A bash script is generated at `.workgraph/agents/agent-N/run.sh`:
    - Runs the executor command (e.g., `claude --model opus --print "..."`)
    - Captures stdout/stderr to `output.log`
@@ -241,8 +241,8 @@ executor = "claude"      # default executor
 model = "opus"           # default model
 heartbeat_timeout = 5    # minutes before stale (default: 5)
 
-[agency]
-auto_evaluate = false    # auto-create evaluation tasks
+[identity]
+auto_reward = false    # auto-create reward tasks
 auto_assign = false      # auto-create assignment tasks
 auto_triage = false      # triage dead agents with LLM before respawning
 triage_model = "haiku"   # model for triage (default: haiku)
@@ -264,10 +264,10 @@ For regular tasks:
 3. `coordinator.model`
 4. `agent.model` (lowest)
 
-For agency meta-tasks:
-- Assignment: `agency.assigner_model` > `agent.model`
-- Evaluation: `agency.evaluator_model` > `task.model` > `agent.model`
-- Evolution: `agency.evolver_model` > `agent.model`
+For identity meta-tasks:
+- Assignment: `identity.assigner_model` > `agent.model`
+- Reward: `identity.evaluator_model` > `task.model` > `agent.model`
+- Evolution: `identity.evolver_model` > `agent.model`
 
 ## IPC Protocol
 

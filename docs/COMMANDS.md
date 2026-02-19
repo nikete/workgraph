@@ -8,7 +8,7 @@ Complete reference for all `wg` commands. All commands support `--json` for mach
 - [Query Commands](#query-commands)
 - [Analysis Commands](#analysis-commands)
 - [Agent and Resource Management](#agent-and-resource-management)
-- [Agency Commands](#agency-commands)
+- [Identity Commands](#identity-commands)
 - [Agent Commands](#agent-commands)
 - [Service Commands](#service-commands)
 - [Utility Commands](#utility-commands)
@@ -319,7 +319,7 @@ wg assign <TASK> <AGENT-HASH>    # Assign agent to task
 wg assign <TASK> --clear         # Remove assignment
 ```
 
-When the service spawns that task, the agent's role and motivation are injected into the prompt. The agent hash can be a prefix (minimum 4 characters).
+When the service spawns that task, the agent's role and objective are injected into the prompt. The agent hash can be a prefix (minimum 4 characters).
 
 **Example:**
 ```bash
@@ -684,7 +684,7 @@ wg coordinate --max-parallel 3
 
 ## Agent and Resource Management
 
-Agent creation is covered in the [Agency Commands](#agency-commands) section under `wg agent create`.
+Agent creation is covered in the [Identity Commands](#identity-commands) section under `wg agent create`.
 
 ---
 
@@ -812,40 +812,40 @@ Notifies configured Matrix room(s) about task status changes.
 
 ---
 
-## Agency Commands
+## Identity Commands
 
-The agency system manages composable agent identities (roles + motivations). See [AGENCY.md](AGENCY.md) for the full design.
+The identity system manages composable agent identities (roles + objectives). See [IDENTITY.md](IDENTITY.md) for the full design.
 
-### `wg agency init`
+### `wg identity init`
 
-Seed the agency with starter roles (Programmer, Reviewer, Documenter, Architect) and motivations (Careful, Fast, Thorough, Balanced).
+Seed the identity with starter roles (Programmer, Reviewer, Documenter, Architect) and objectives (Careful, Fast, Thorough, Balanced).
 
 ```bash
-wg agency init
+wg identity init
 ```
 
 **Example:**
 ```bash
-wg agency init
-# Creates default roles and motivations to get started with agent identities
+wg identity init
+# Creates default roles and objectives to get started with agent identities
 ```
 
 ---
 
-### `wg agency stats`
+### `wg identity stats`
 
-Display aggregated performance statistics across the agency.
+Display aggregated performance statistics across the identity.
 
 ```bash
-wg agency stats [--min-evals <N>]
+wg identity stats [--min-evals <N>]
 ```
 
 **Options:**
 | Option | Description |
 |--------|-------------|
-| `--min-evals <N>` | Minimum evaluations to consider a pair "explored" (default: 3) |
+| `--min-evals <N>` | Minimum rewards to consider a pair "explored" (default: 3) |
 
-Shows role leaderboard, motivation leaderboard, synergy matrix, tag breakdown, and under-explored combinations.
+Shows role leaderboard, objective leaderboard, synergy matrix, tag breakdown, and under-explored combinations.
 
 ---
 
@@ -870,18 +870,18 @@ Manage roles — the "what" of agent identity.
 
 ---
 
-### `wg motivation`
+### `wg objective`
 
-Manage motivations — the "why" of agent identity. Also aliased as `wg mot`.
+Manage objectives — the "why" of agent identity. Also aliased as `wg mot`.
 
 | Command | Description |
 |---------|-------------|
-| `wg motivation add <name> --accept <text> --reject <text> [-d <text>]` | Create a new motivation |
-| `wg motivation list` | List all motivations |
-| `wg motivation show <id>` | Show details |
-| `wg motivation edit <id>` | Edit in `$EDITOR` (re-hashes on save) |
-| `wg motivation rm <id>` | Delete a motivation |
-| `wg motivation lineage <id>` | Show evolutionary ancestry |
+| `wg objective add <name> --accept <text> --reject <text> [-d <text>]` | Create a new objective |
+| `wg objective list` | List all objectives |
+| `wg objective show <id>` | Show details |
+| `wg objective edit <id>` | Edit in `$EDITOR` (re-hashes on save) |
+| `wg objective rm <id>` | Delete a objective |
+| `wg objective lineage <id>` | Show evolutionary ancestry |
 
 ---
 
@@ -897,7 +897,7 @@ wg agent create <NAME> [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--role <ROLE-ID>` | Role ID or prefix (required for AI agents, optional for human) |
-| `--motivation <MOTIVATION-ID>` | Motivation ID or prefix (required for AI agents, optional for human) |
+| `--objective <MOTIVATION-ID>` | Objective ID or prefix (required for AI agents, optional for human) |
 | `--capabilities <SKILLS>` | Comma-separated skills for task matching |
 | `--rate <FLOAT>` | Hourly rate for cost tracking |
 | `--capacity <FLOAT>` | Maximum concurrent task capacity |
@@ -909,17 +909,17 @@ IDs can be prefixes (minimum unique match).
 
 **Examples:**
 ```bash
-# AI agent (role + motivation required)
-wg agent create "Careful Coder" --role programmer --motivation careful
+# AI agent (role + objective required)
+wg agent create "Careful Coder" --role programmer --objective careful
 
 # AI agent with operational fields
 wg agent create "Rust Expert" \
   --role programmer \
-  --motivation careful \
+  --objective careful \
   --capabilities rust,testing \
   --rate 50.0
 
-# Human agent (role + motivation optional)
+# Human agent (role + objective optional)
 wg agent create "Erik" \
   --executor matrix \
   --contact "@erik:server" \
@@ -934,19 +934,19 @@ wg agent create "Erik" \
 | Command | Description |
 |---------|-------------|
 | `wg agent list` | List all agents |
-| `wg agent show <id>` | Show agent details with resolved role/motivation |
+| `wg agent show <id>` | Show agent details with resolved role/objective |
 | `wg agent rm <id>` | Remove an agent |
-| `wg agent lineage <id>` | Show agent + role + motivation ancestry |
-| `wg agent performance <id>` | Show evaluation history for an agent |
+| `wg agent lineage <id>` | Show agent + role + objective ancestry |
+| `wg agent performance <id>` | Show reward history for an agent |
 
 ---
 
-### `wg evaluate`
+### `wg reward`
 
-Trigger evaluation of a completed task.
+Trigger reward of a completed task.
 
 ```bash
-wg evaluate <TASK> [--evaluator-model <MODEL>] [--dry-run]
+wg reward <TASK> [--evaluator-model <MODEL>] [--dry-run]
 ```
 
 **Options:**
@@ -961,13 +961,13 @@ The task must be done or failed. Spawns an evaluator agent that scores the task 
 - **efficiency** (15%) — no unnecessary steps
 - **style_adherence** (15%) — project conventions and constraints followed
 
-Scores propagate to the agent, role, and motivation performance records.
+Scores propagate to the agent, role, and objective performance records.
 
 ---
 
 ### `wg evolve`
 
-Trigger an evolution cycle to improve roles and motivations based on performance data.
+Trigger an evolution cycle to improve roles and objectives based on performance data.
 
 ```bash
 wg evolve [--strategy <STRATEGY>] [--budget <N>] [--model <MODEL>] [--dry-run]
@@ -986,9 +986,9 @@ wg evolve [--strategy <STRATEGY>] [--budget <N>] [--model <MODEL>] [--dry-run]
 |----------|-------------|
 | `mutation` | Modify a single existing role to improve weak dimensions |
 | `crossover` | Combine traits from two high-performing roles |
-| `gap-analysis` | Create entirely new roles/motivations for unmet needs |
+| `gap-analysis` | Create entirely new roles/objectives for unmet needs |
 | `retirement` | Remove consistently poor-performing entities |
-| `motivation-tuning` | Adjust trade-offs on existing motivations |
+| `objective-tuning` | Adjust trade-offs on existing objectives |
 | `all` | Use all strategies as appropriate (default) |
 
 ---
@@ -1575,7 +1575,7 @@ With no options (or `--show`), displays current configuration.
 | `--coordinator-interval <SECS>` | Set coordinator tick interval |
 | `--poll-interval <SECS>` | Set service daemon background poll interval |
 | `--coordinator-executor <NAME>` | Set coordinator executor |
-| `--auto-evaluate <BOOL>` | Enable/disable automatic evaluation |
+| `--auto-reward <BOOL>` | Enable/disable automatic reward |
 | `--auto-assign <BOOL>` | Enable/disable automatic identity assignment |
 | `--assigner-model <MODEL>` | Set model for assigner agents |
 | `--evaluator-model <MODEL>` | Set model for evaluator agents |
@@ -1598,8 +1598,8 @@ wg config
 # Set executor and model
 wg config --executor claude --model opus
 
-# Enable the full agency automation loop
-wg config --auto-evaluate true --auto-assign true
+# Enable the full identity automation loop
+wg config --auto-reward true --auto-assign true
 
 # Set per-role model overrides
 wg config --assigner-model haiku --evaluator-model opus --evolver-model opus

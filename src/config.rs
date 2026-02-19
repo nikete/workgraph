@@ -29,9 +29,9 @@ pub struct Config {
     #[serde(default)]
     pub help: HelpConfig,
 
-    /// Agency (evolutionary identity) configuration
+    /// Identity (evolutionary identity) configuration
     #[serde(default)]
-    pub agency: AgencyConfig,
+    pub identity: IdentityConfig,
 
     /// Log configuration
     #[serde(default)]
@@ -107,12 +107,12 @@ impl Default for ReplayConfig {
     }
 }
 
-/// Agency (evolutionary identity system) configuration
+/// Identity (evolutionary identity system) configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AgencyConfig {
-    /// Automatically trigger evaluation when a task completes
+pub struct IdentityConfig {
+    /// Automatically trigger reward when a task completes
     #[serde(default)]
-    pub auto_evaluate: bool,
+    pub auto_reward: bool,
 
     /// Automatically assign an identity when spawning agents
     #[serde(default)]
@@ -146,7 +146,7 @@ pub struct AgencyConfig {
     pub evolver_agent: Option<String>,
 
     /// Prose policy for the evolver describing retention heuristics
-    /// (e.g. when to retire underperforming roles/motivations)
+    /// (e.g. when to retire underperforming roles/objectives)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retention_heuristics: Option<String>,
 
@@ -569,24 +569,24 @@ name = "My Project"
     }
 
     #[test]
-    fn test_default_agency_config() {
+    fn test_default_identity_config() {
         let config = Config::default();
-        assert!(!config.agency.auto_evaluate);
-        assert!(!config.agency.auto_assign);
-        assert!(config.agency.assigner_agent.is_none());
-        assert!(config.agency.assigner_model.is_none());
-        assert!(config.agency.evaluator_agent.is_none());
-        assert!(config.agency.evaluator_model.is_none());
-        assert!(config.agency.evolver_model.is_none());
-        assert!(config.agency.evolver_agent.is_none());
-        assert!(config.agency.retention_heuristics.is_none());
+        assert!(!config.identity.auto_reward);
+        assert!(!config.identity.auto_assign);
+        assert!(config.identity.assigner_agent.is_none());
+        assert!(config.identity.assigner_model.is_none());
+        assert!(config.identity.evaluator_agent.is_none());
+        assert!(config.identity.evaluator_model.is_none());
+        assert!(config.identity.evolver_model.is_none());
+        assert!(config.identity.evolver_agent.is_none());
+        assert!(config.identity.retention_heuristics.is_none());
     }
 
     #[test]
-    fn test_parse_agency_config() {
+    fn test_parse_identity_config() {
         let toml_str = r#"
-[agency]
-auto_evaluate = true
+[identity]
+auto_reward = true
 auto_assign = true
 assigner_model = "haiku"
 evaluator_model = "haiku"
@@ -594,37 +594,37 @@ evolver_model = "opus-4-5"
 assigner_agent = "abc123"
 evaluator_agent = "def456"
 evolver_agent = "ghi789"
-retention_heuristics = "Retire roles scoring below 0.3 after 10 evaluations"
+retention_heuristics = "Retire roles scoring below 0.3 after 10 rewards"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert!(config.agency.auto_evaluate);
-        assert!(config.agency.auto_assign);
-        assert_eq!(config.agency.assigner_model, Some("haiku".to_string()));
-        assert_eq!(config.agency.evaluator_model, Some("haiku".to_string()));
-        assert_eq!(config.agency.evolver_model, Some("opus-4-5".to_string()));
-        assert_eq!(config.agency.assigner_agent, Some("abc123".to_string()));
-        assert_eq!(config.agency.evaluator_agent, Some("def456".to_string()));
-        assert_eq!(config.agency.evolver_agent, Some("ghi789".to_string()));
+        assert!(config.identity.auto_reward);
+        assert!(config.identity.auto_assign);
+        assert_eq!(config.identity.assigner_model, Some("haiku".to_string()));
+        assert_eq!(config.identity.evaluator_model, Some("haiku".to_string()));
+        assert_eq!(config.identity.evolver_model, Some("opus-4-5".to_string()));
+        assert_eq!(config.identity.assigner_agent, Some("abc123".to_string()));
+        assert_eq!(config.identity.evaluator_agent, Some("def456".to_string()));
+        assert_eq!(config.identity.evolver_agent, Some("ghi789".to_string()));
         assert_eq!(
-            config.agency.retention_heuristics,
-            Some("Retire roles scoring below 0.3 after 10 evaluations".to_string())
+            config.identity.retention_heuristics,
+            Some("Retire roles scoring below 0.3 after 10 rewards".to_string())
         );
     }
 
     #[test]
-    fn test_agency_config_roundtrip() {
+    fn test_identity_config_roundtrip() {
         let temp_dir = TempDir::new().unwrap();
 
         let mut config = Config::default();
-        config.agency.auto_evaluate = true;
-        config.agency.evolver_agent = Some("abc123".to_string());
-        config.agency.evaluator_model = Some("sonnet".to_string());
+        config.identity.auto_reward = true;
+        config.identity.evolver_agent = Some("abc123".to_string());
+        config.identity.evaluator_model = Some("sonnet".to_string());
         config.save(temp_dir.path()).unwrap();
 
         let loaded = Config::load(temp_dir.path()).unwrap();
-        assert!(loaded.agency.auto_evaluate);
-        assert_eq!(loaded.agency.evolver_agent, Some("abc123".to_string()));
-        assert_eq!(loaded.agency.evaluator_model, Some("sonnet".to_string()));
+        assert!(loaded.identity.auto_reward);
+        assert_eq!(loaded.identity.evolver_agent, Some("abc123".to_string()));
+        assert_eq!(loaded.identity.evaluator_model, Some("sonnet".to_string()));
     }
 
     #[test]

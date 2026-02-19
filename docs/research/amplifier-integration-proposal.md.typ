@@ -178,7 +178,7 @@ namespace resolution, version management, include graphs, and a registry
 behaviors, but is over-engineering for a few executor configs.
 
 Where bundles become interesting is if wg wanted to package
-#strong[entire project templates] (executor config + agency roles + task
+#strong[entire project templates] (executor config + identity roles + task
 templates + skills). But that’s a different feature from executor
 packaging, and simpler solutions exist (e.g.,
 `wg init --template <git-url>` that clones a `.workgraph/` skeleton).

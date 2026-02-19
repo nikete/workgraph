@@ -16,9 +16,9 @@ Cli (global args: --dir, --json, --help, --help-all, --alphabetical)
 │   ├── ResourceCommands (add, list)
 │   ├── ActorCommands (add, list)
 │   ├── SkillCommands (list, task, find, install)
-│   ├── AgencyCommands (init, stats)
+│   ├── IdentityCommands (init, stats)
 │   ├── RoleCommands (add, list, show, edit, rm, lineage)
-│   ├── MotivationCommands (add, list, show, edit, rm, lineage)
+│   ├── ObjectiveCommands (add, list, show, edit, rm, lineage)
 │   ├── AgentCommands (create, list, show, rm, lineage, performance, run)
 │   ├── ServiceCommands (start, stop, status, reload, pause, resume, install, tick, daemon)
 │   └── MatrixCommands (listen, send, status, login, logout) [feature-gated]
@@ -221,7 +221,7 @@ Use `clap`'s built-in `Command::get_name()` at dispatch time, or derive a `Displ
 - **Test coverage** in `claim.rs`, `reclaim.rs`, and `edit.rs` is thorough
 - **ID auto-generation** in `add.rs` is practical and handles collisions
 - **Verification workflow** (submit → approve/reject) is well-designed
-- **Output capture** on done/fail/submit feeds the evaluation system cleanly
+- **Output capture** on done/fail/submit feeds the reward system cleanly
 
 ## 7. Summary
 

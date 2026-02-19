@@ -37,7 +37,7 @@ pub struct VizOptions {
     pub critical_path: bool,
     pub format: OutputFormat,
     pub output: Option<String>,
-    /// Show internal tasks (assign-*, evaluate-*) that are normally hidden
+    /// Show internal tasks (assign-*, reward-*) that are normally hidden
     pub show_internal: bool,
 }
 
@@ -54,17 +54,17 @@ impl Default for VizOptions {
     }
 }
 
-/// Returns true if the task is an auto-generated internal task (assignment or evaluation).
+/// Returns true if the task is an auto-generated internal task (assignment or reward).
 fn is_internal_task(task: &Task) -> bool {
     task.tags
         .iter()
-        .any(|t| t == "assignment" || t == "evaluation")
+        .any(|t| t == "assignment" || t == "reward")
 }
 
 /// Determine the phase annotation for a parent task based on its related internal tasks.
 ///
 /// - If an assignment task exists and is not done → "[assigning]"
-/// - If an evaluation task exists and is not done → "[evaluating]"
+/// - If an reward task exists and is not done → "[evaluating]"
 fn compute_phase_annotation(internal_task: &Task) -> &'static str {
     if internal_task.tags.iter().any(|t| t == "assignment") {
         "[assigning]"
@@ -96,13 +96,13 @@ fn filter_internal_tasks<'a>(
         // Determine the parent task ID.
         // For assign-X: the parent is X (assign task has no blocked_by from parent,
         //   but parent has blocked_by assign-X)
-        // For evaluate-X: the parent is X (evaluate task is blocked_by X)
+        // For reward-X: the parent is X (reward task is blocked_by X)
         let parent_id = if task.tags.iter().any(|t| t == "assignment") {
             // assign-{parent_id}: strip the prefix
             task.id.strip_prefix("assign-").map(|s| s.to_string())
         } else {
-            // evaluate-{parent_id}: strip the prefix
-            task.id.strip_prefix("evaluate-").map(|s| s.to_string())
+            // reward-{parent_id}: strip the prefix
+            task.id.strip_prefix("reward-").map(|s| s.to_string())
         };
 
         if let Some(pid) = parent_id {
@@ -154,7 +154,7 @@ pub fn run(dir: &Path, options: &VizOptions) -> Result<()> {
         })
         .collect();
 
-    // Filter out internal tasks (assign-*, evaluate-*) unless --show-internal
+    // Filter out internal tasks (assign-*, reward-*) unless --show-internal
     let empty_annotations = HashMap::new();
     let (tasks_to_show, annotations) = if options.show_internal {
         (tasks_to_show, empty_annotations)
@@ -1344,7 +1344,7 @@ mod tests {
         Task {
             id: id.to_string(),
             title: title.to_string(),
-            tags: vec![tag.to_string(), "agency".to_string()],
+            tags: vec![tag.to_string(), "identity".to_string()],
             blocked_by: blocked_by.into_iter().map(String::from).collect(),
             ..Task::default()
         }
@@ -1353,7 +1353,7 @@ mod tests {
     #[test]
     fn test_is_internal_task() {
         let assign = make_internal_task("assign-foo", "Assign agent to foo", "assignment", vec![]);
-        let eval = make_internal_task("evaluate-foo", "Evaluate foo", "evaluation", vec!["foo"]);
+        let eval = make_internal_task("reward-foo", "Reward foo", "reward", vec!["foo"]);
         let normal = make_task("foo", "Normal task");
 
         assert!(is_internal_task(&assign));
@@ -1397,9 +1397,9 @@ mod tests {
         let mut parent = make_task("my-task", "My Task");
         parent.status = Status::Done;
         let mut eval = make_internal_task(
-            "evaluate-my-task",
-            "Evaluate my-task",
-            "evaluation",
+            "reward-my-task",
+            "Reward my-task",
+            "reward",
             vec!["my-task"],
         );
         eval.status = Status::InProgress;
@@ -1413,7 +1413,7 @@ mod tests {
 
         let result = generate_ascii(&graph, &filtered, &task_ids, &annots);
 
-        assert!(!result.contains("evaluate-my-task"));
+        assert!(!result.contains("reward-my-task"));
         assert!(result.contains("my-task"));
         assert!(result.contains("[evaluating]"));
     }

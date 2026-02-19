@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::path::Path;
-use workgraph::agency::{self, SkillRef};
+use workgraph::identity::{self, SkillRef};
 
 /// JSON output for role listing
 #[derive(Debug, Serialize)]
@@ -9,7 +9,7 @@ struct RoleSummary {
     id: String,
     name: String,
     skill_count: usize,
-    avg_score: Option<f64>,
+    mean_reward: Option<f64>,
 }
 
 /// Parse a skill specification string into a SkillRef.
@@ -58,31 +58,31 @@ pub fn run_add(
     skills: &[String],
     description: Option<&str>,
 ) -> Result<()> {
-    let agency_dir = dir.join("agency");
-    agency::init(&agency_dir).context("Failed to initialize agency directory")?;
+    let identity_dir = dir.join("identity");
+    identity::init(&identity_dir).context("Failed to initialize identity directory")?;
 
-    let roles_dir = agency_dir.join("roles");
+    let roles_dir = identity_dir.join("roles");
 
     let skill_refs: Vec<SkillRef> = skills.iter().map(|s| parse_skill_ref(s)).collect();
     let desc = description.unwrap_or("");
 
-    let role = agency::build_role(name, desc, skill_refs, outcome);
+    let role = identity::build_role(name, desc, skill_refs, outcome);
 
     // Check if role with identical content already exists
     let role_path = roles_dir.join(format!("{}.yaml", role.id));
     if role_path.exists() {
         anyhow::bail!(
             "Role with identical content already exists ({})",
-            agency::short_hash(&role.id)
+            identity::short_hash(&role.id)
         );
     }
 
-    let path = agency::save_role(&role, &roles_dir).context("Failed to save role")?;
+    let path = identity::save_role(&role, &roles_dir).context("Failed to save role")?;
 
     println!(
         "Created role '{}' ({}) at {}",
         name,
-        agency::short_hash(&role.id),
+        identity::short_hash(&role.id),
         path.display()
     );
     Ok(())
@@ -90,8 +90,8 @@ pub fn run_add(
 
 /// wg role list [--json]
 pub fn run_list(dir: &Path, json: bool) -> Result<()> {
-    let roles_dir = dir.join("agency").join("roles");
-    let roles = agency::load_all_roles(&roles_dir).context("Failed to load roles")?;
+    let roles_dir = dir.join("identity").join("roles");
+    let roles = identity::load_all_roles(&roles_dir).context("Failed to load roles")?;
 
     if json {
         let output: Vec<RoleSummary> = roles
@@ -100,7 +100,7 @@ pub fn run_list(dir: &Path, json: bool) -> Result<()> {
                 id: r.id.clone(),
                 name: r.name.clone(),
                 skill_count: r.skills.len(),
-                avg_score: r.performance.avg_score,
+                mean_reward: r.performance.mean_reward,
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -109,17 +109,17 @@ pub fn run_list(dir: &Path, json: bool) -> Result<()> {
     } else {
         println!("Roles:\n");
         for role in &roles {
-            let score_str = role
+            let value_str = role
                 .performance
-                .avg_score
+                .mean_reward
                 .map(|s| format!("{:.2}", s))
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "  {}  {:20} skills: {}  avg_score: {}",
-                agency::short_hash(&role.id),
+                "  {}  {:20} skills: {}  mean_reward: {}",
+                identity::short_hash(&role.id),
                 role.name,
                 role.skills.len(),
-                score_str,
+                value_str,
             );
         }
     }
@@ -146,14 +146,14 @@ fn format_skill_ref(skill: &SkillRef) -> String {
 
 /// wg role show <id> [--json]
 pub fn run_show(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let roles_dir = dir.join("agency").join("roles");
-    let role = agency::find_role_by_prefix(&roles_dir, id)
+    let roles_dir = dir.join("identity").join("roles");
+    let role = identity::find_role_by_prefix(&roles_dir, id)
         .with_context(|| format!("Failed to find role '{}'", id))?;
 
     if json {
         println!("{}", serde_json::to_string_pretty(&role)?);
     } else {
-        println!("Role: {} ({})", role.name, agency::short_hash(&role.id));
+        println!("Role: {} ({})", role.name, identity::short_hash(&role.id));
         println!("ID: {}", role.id);
         println!(
             "Description: {}",
@@ -178,14 +178,14 @@ pub fn run_show(dir: &Path, id: &str, json: bool) -> Result<()> {
         println!();
         println!("Performance:");
         println!("  Tasks: {}", role.performance.task_count);
-        let score_str = role
+        let value_str = role
             .performance
-            .avg_score
+            .mean_reward
             .map(|s| format!("{:.2}", s))
             .unwrap_or_else(|| "-".to_string());
-        println!("  Avg score: {}", score_str);
-        if !role.performance.evaluations.is_empty() {
-            println!("  Evaluations: {}", role.performance.evaluations.len());
+        println!("  Avg reward: {}", value_str);
+        if !role.performance.rewards.is_empty() {
+            println!("  Rewards: {}", role.performance.rewards.len());
         }
     }
 
@@ -194,18 +194,18 @@ pub fn run_show(dir: &Path, id: &str, json: bool) -> Result<()> {
 
 /// wg role lineage <id> [--json]
 pub fn run_lineage(dir: &Path, id: &str, json: bool) -> Result<()> {
-    let agency_dir = dir.join("agency");
-    let roles_dir = agency_dir.join("roles");
+    let identity_dir = dir.join("identity");
+    let roles_dir = identity_dir.join("roles");
 
     if !roles_dir.exists() {
-        anyhow::bail!("No agency/roles directory found. Run 'wg agency init' first.");
+        anyhow::bail!("No identity/roles directory found. Run 'wg identity init' first.");
     }
 
     // Resolve prefix to full ID first
-    let role = agency::find_role_by_prefix(&roles_dir, id)
+    let role = identity::find_role_by_prefix(&roles_dir, id)
         .with_context(|| format!("Failed to find role '{}'", id))?;
 
-    let ancestry = agency::role_ancestry(&role.id, &roles_dir)?;
+    let ancestry = identity::role_ancestry(&role.id, &roles_dir)?;
 
     if ancestry.is_empty() {
         anyhow::bail!("Role '{}' not found", id);
@@ -232,7 +232,7 @@ pub fn run_lineage(dir: &Path, id: &str, json: bool) -> Result<()> {
     let target = &ancestry[0];
     println!(
         "Lineage for role: {} ({})",
-        agency::short_hash(&target.id),
+        identity::short_hash(&target.id),
         target.name
     );
     println!();
@@ -251,7 +251,7 @@ pub fn run_lineage(dir: &Path, id: &str, json: bool) -> Result<()> {
             let short_parents: Vec<&str> = node
                 .parent_ids
                 .iter()
-                .map(|p| agency::short_hash(p))
+                .map(|p| identity::short_hash(p))
                 .collect();
             format!(" <- [{}]", short_parents.join(", "))
         };
@@ -259,7 +259,7 @@ pub fn run_lineage(dir: &Path, id: &str, json: bool) -> Result<()> {
         println!(
             "{}{} ({}) [{}] created by: {}{}",
             indent,
-            agency::short_hash(&node.id),
+            identity::short_hash(&node.id),
             node.name,
             gen_label,
             node.created_by,
@@ -280,8 +280,8 @@ pub fn run_lineage(dir: &Path, id: &str, json: bool) -> Result<()> {
 /// After editing, the role is re-hashed. If the content changed, the file is
 /// renamed to the new hash and the old file is removed.
 pub fn run_edit(dir: &Path, id: &str) -> Result<()> {
-    let roles_dir = dir.join("agency").join("roles");
-    let role = agency::find_role_by_prefix(&roles_dir, id)
+    let roles_dir = dir.join("identity").join("roles");
+    let role = identity::find_role_by_prefix(&roles_dir, id)
         .with_context(|| format!("Failed to find role '{}'", id))?;
 
     let role_path = roles_dir.join(format!("{}.yaml", role.id));
@@ -300,7 +300,7 @@ pub fn run_edit(dir: &Path, id: &str) -> Result<()> {
     }
 
     // Validate and re-hash
-    let mut edited = agency::load_role(&role_path).with_context(|| {
+    let mut edited = identity::load_role(&role_path).with_context(|| {
         format!(
             "Edited file is not valid role YAML. File saved at: {}",
             role_path.display()
@@ -308,21 +308,21 @@ pub fn run_edit(dir: &Path, id: &str) -> Result<()> {
     })?;
 
     let new_id =
-        agency::content_hash_role(&edited.skills, &edited.desired_outcome, &edited.description);
+        identity::content_hash_role(&edited.skills, &edited.desired_outcome, &edited.description);
     if new_id != edited.id {
         // Content changed — rename to new hash
         let old_path = role_path;
         edited.id = new_id;
-        agency::save_role(&edited, &roles_dir)?;
+        identity::save_role(&edited, &roles_dir)?;
         std::fs::remove_file(&old_path).ok();
         println!(
             "Role content changed, new ID: {}",
-            agency::short_hash(&edited.id)
+            identity::short_hash(&edited.id)
         );
     } else {
         // Mutable fields (name, etc.) may have changed; re-save in place
-        agency::save_role(&edited, &roles_dir)?;
-        println!("Role '{}' updated", agency::short_hash(&edited.id));
+        identity::save_role(&edited, &roles_dir)?;
+        println!("Role '{}' updated", identity::short_hash(&edited.id));
     }
 
     Ok(())
@@ -330,8 +330,8 @@ pub fn run_edit(dir: &Path, id: &str) -> Result<()> {
 
 /// wg role rm <id>
 pub fn run_rm(dir: &Path, id: &str) -> Result<()> {
-    let roles_dir = dir.join("agency").join("roles");
-    let role = agency::find_role_by_prefix(&roles_dir, id)
+    let roles_dir = dir.join("identity").join("roles");
+    let role = identity::find_role_by_prefix(&roles_dir, id)
         .with_context(|| format!("Failed to find role '{}'", id))?;
 
     let role_path = roles_dir.join(format!("{}.yaml", role.id));
@@ -341,7 +341,7 @@ pub fn run_rm(dir: &Path, id: &str) -> Result<()> {
     println!(
         "Removed role '{}' ({})",
         role.name,
-        agency::short_hash(&role.id)
+        identity::short_hash(&role.id)
     );
     Ok(())
 }
@@ -377,17 +377,17 @@ mod tests {
     #[test]
     fn test_content_hash_deterministic() {
         let skills = vec![SkillRef::Name("rust".into())];
-        let h1 = agency::content_hash_role(&skills, "Working code", "A programmer");
-        let h2 = agency::content_hash_role(&skills, "Working code", "A programmer");
+        let h1 = identity::content_hash_role(&skills, "Working code", "A programmer");
+        let h2 = identity::content_hash_role(&skills, "Working code", "A programmer");
         assert_eq!(h1, h2);
         // Different content produces different hash
-        let h3 = agency::content_hash_role(&skills, "Different outcome", "A programmer");
+        let h3 = identity::content_hash_role(&skills, "Different outcome", "A programmer");
         assert_ne!(h1, h3);
     }
 
     #[test]
     fn test_short_hash() {
         let hash = "a3f7c21deadbeef1234567890abcdef";
-        assert_eq!(agency::short_hash(hash), "a3f7c21d");
+        assert_eq!(identity::short_hash(hash), "a3f7c21d");
     }
 }

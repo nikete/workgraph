@@ -12,10 +12,10 @@ Systematic review of all test files (~7,651 lines across 9 files), cross-referen
 | `integration_service_coordinator.rs` | 1,371 | 28 + 2 LLM | Library-level unit tests (no daemon) |
 | `integration_auto_assignment.rs` | 1,295 | 18 + 2 LLM | Library-level + CLI subprocess tests |
 | `integration_review_workflow.rs` | 473 | 12 | CLI subprocess tests |
-| `integration_agency.rs` | 999 | 5 | Library-level lifecycle tests |
-| `integration_agency_edge_cases.rs` | 960 | 30 | Library-level edge-case tests |
-| `integration_agency_lineage.rs` | 636 | 22 | Library-level ancestry/lineage tests |
-| `evaluation_recording.rs` | 999 | 22 | Library-level + end-to-end recording tests |
+| `integration_identity.rs` | 999 | 5 | Library-level lifecycle tests |
+| `integration_identity_edge_cases.rs` | 960 | 30 | Library-level edge-case tests |
+| `integration_identity_lineage.rs` | 636 | 22 | Library-level ancestry/lineage tests |
+| `reward_recording.rs` | 999 | 22 | Library-level + end-to-end recording tests |
 | `skill_resolution.rs` | 255 | 10 | Library-level skill resolution tests |
 | **Total** | **7,651** | **~152** | |
 
@@ -41,24 +41,24 @@ Covers coordinator logic without starting a daemon:
 4. **Dead agent detection (5 tests):** Process-exited PID, still-running PID, already-dead/done/failed agents.
 5. **Cleanup flow (3 tests):** Unclaim in-progress task, skip done/failed tasks during cleanup.
 6. **Agent registry operations (5 tests):** Register, lookup by task, mark dead, clean stale entries, persistence roundtrip, locked operations.
-7. **Auto-evaluate subgraph (6 tests):** Creates eval tasks, skips evaluation/assignment/abandoned tasks, idempotent, unblocks on failed source.
+7. **Auto-reward subgraph (6 tests):** Creates eval tasks, skips reward/assignment/abandoned tasks, idempotent, unblocks on failed source.
 8. **Slot accounting (4 tests):** Basic slots, mixed statuses, at-zero, saturating_sub no underflow.
 9. **Process liveness (2 tests):** kill(pid, 0) for current and nonexistent PID.
 10. **Agent lifecycle (1 test):** All status transitions (Starting→Working→Idle→Stopping→Done→Failed→Dead).
 11. **Dependency chain (1 test):** A→B→C cascade unblocking.
 12. **Registry counts (1 test):** active_count() and idle_count().
-13. **LLM tests (2, gated behind `llm-tests` feature):** Real Claude agent spawn for simple task completion; LLM-driven agency component creation (role, motivation, agent).
+13. **LLM tests (2, gated behind `llm-tests` feature):** Real Claude agent spawn for simple task completion; LLM-driven identity component creation (role, objective, agent).
 
-**Quality:** Very thorough unit-level testing of coordinator internals. The auto-evaluate tests replicate the production logic faithfully. LLM tests are properly gated.
+**Quality:** Very thorough unit-level testing of coordinator internals. The auto-reward tests replicate the production logic faithfully. LLM tests are properly gated.
 
 ### integration_auto_assignment.rs (18 + 2 LLM tests)
 Covers the auto-assignment pipeline:
 
 1. **Assign subgraph construction (9 tests):** Creates assign-* tasks, blocks original task, includes description/skills, skips already-assigned/claimed tasks, idempotent, respects disabled config, handles multiple ready tasks, skips blocked tasks.
 2. **Assignment CLI (3 tests):** Sets agent field, clear removes agent, prefix matching.
-3. **Full pipeline (2 tests):** End-to-end assignment with agency entities, mixed task states.
+3. **Full pipeline (2 tests):** End-to-end assignment with identity entities, mixed task states.
 4. **Prompt rendering (4 tests):** Agent identity in rendered prompts, empty identity for no-agent, agent field persistence, agent survives subgraph construction.
-5. **LLM tests (2, gated):** Real Claude agent does assignment reasoning; LLM-driven evaluation recording.
+5. **LLM tests (2, gated):** Real Claude agent does assignment reasoning; LLM-driven reward recording.
 
 **Quality:** Strong coverage of the assignment pipeline. The `build_assign_subgraph()` helper faithfully extracts production coordinator logic for testability. Good boundary testing (assigned vs. unassigned, enabled vs. disabled).
 
@@ -72,37 +72,37 @@ Covers submit/approve/reject lifecycle:
 
 **Quality:** Clean, thorough state-machine testing. Each status transition is tested both for the happy path and for precondition enforcement. The full-cycle test verifies the complete log trail.
 
-### integration_agency.rs (5 tests)
-Covers the core agency lifecycle:
+### integration_identity.rs (5 tests)
+Covers the core identity lifecycle:
 
-1. **Full lifecycle:** Init → create role/motivation (content-hash IDs) → create task with agent → render identity prompt → simulate completion → record evaluation → verify cumulative performance → role-task matching.
-2. **Seed starters:** Populates default roles/motivations, verifies idempotent re-seeding.
-3. **Full lifecycle new design:** Three-level evaluation recording (agent, role, motivation), output capture (artifacts.json, log.json, changes.patch), agent lineage (mutation, crossover), legacy slug-based entity coexistence.
+1. **Full lifecycle:** Init → create role/objective (content-hash IDs) → create task with agent → render identity prompt → simulate completion → record reward → verify cumulative performance → role-task matching.
+2. **Seed starters:** Populates default roles/objectives, verifies idempotent re-seeding.
+3. **Full lifecycle new design:** Three-level reward recording (agent, role, objective), output capture (artifacts.json, log.json, changes.patch), agent lineage (mutation, crossover), legacy slug-based entity coexistence.
 4. **Output capture standalone:** Verifies all three output files are created with correct content.
-5. **Agent independent performance:** Two agents share a role but have different motivations; evaluations track independently.
+5. **Agent independent performance:** Two agents share a role but have different objectives; rewards track independently.
 
-**Quality:** Comprehensive lifecycle tests covering the full agency data model. The "new design" test is 500+ lines and verifies many subsystems. Good coverage of the three-level performance recording.
+**Quality:** Comprehensive lifecycle tests covering the full identity data model. The "new design" test is 500+ lines and verifies many subsystems. Good coverage of the three-level performance recording.
 
-### integration_agency_edge_cases.rs (30 tests)
+### integration_identity_edge_cases.rs (30 tests)
 Covers edge cases across 9 categories:
 
-1. **Nonexistent entity references (3 tests):** Agent with fake role/motivation, evaluation for nonexistent/empty agent, evaluation with nonexistent role+motivation.
-2. **Deletion of referenced entities (2 tests):** Delete role/motivation referenced by agent; agent still loads, evaluation recording gracefully skips.
+1. **Nonexistent entity references (3 tests):** Agent with fake role/objective, reward for nonexistent/empty agent, reward with nonexistent role+objective.
+2. **Deletion of referenced entities (2 tests):** Delete role/objective referenced by agent; agent still loads, reward recording gracefully skips.
 3. **Extreme performance scores (6 tests):** Score 0.0, 1.0, negative, mixed extremes, empty list, YAML roundtrip.
-4. **Content hash collision resistance (12 tests):** Different descriptions/outcomes/skills/skill-order for roles; different descriptions/tradeoffs/swapped-categories for motivations; different/swapped agent pairings; determinism; name independence.
+4. **Content hash collision resistance (12 tests):** Different descriptions/outcomes/skills/skill-order for roles; different descriptions/tradeoffs/swapped-categories for objectives; different/swapped agent pairings; determinism; name independence.
 5. **Prefix lookup edge cases (5 tests):** Zero matches, exact one match, ambiguous prefix, empty directory, nonexistent directory.
-6. **Corrupted YAML handling (8 tests):** Corrupted role/motivation/agent YAML, corrupted evaluation JSON, one-corrupted-in-batch, empty YAML, wrong schema, partial fields, nonexistent file.
+6. **Corrupted YAML handling (8 tests):** Corrupted role/objective/agent YAML, corrupted reward JSON, one-corrupted-in-batch, empty YAML, wrong schema, partial fields, nonexistent file.
 7. **Additional edge cases (4 tests):** Empty fields hash, short_hash, unicode/YAML-special chars in descriptions, init idempotent, load_all on nonexistent dirs.
 
 **Quality:** Excellent defensive testing. Covers every graceful-degradation path. The corrupted-data tests ensure no panics.
 
-### integration_agency_lineage.rs (22 tests)
+### integration_identity_lineage.rs (22 tests)
 Covers lineage tracking across 7 categories:
 
-1. **No parents (2 tests):** Gen-0 role and motivation (manual creation).
-2. **Mutation single parent (2 tests):** Role and motivation via mutation → gen 1.
+1. **No parents (2 tests):** Gen-0 role and objective (manual creation).
+2. **Mutation single parent (2 tests):** Role and objective via mutation → gen 1.
 3. **Deep ancestry chain (2 tests):** Chain of 4 generations; verify all nodes walked.
-4. **Crossover two parents (2 tests):** Both parents in ancestry for role and motivation.
+4. **Crossover two parents (2 tests):** Both parents in ancestry for role and objective.
 5. **Generation increments (4 tests):** Mutation increments, crossover max-parent+1, deep chain 5 generations, mixed-gen crossover parents.
 6. **Orphan resilience (4 tests):** Missing intermediate parent, missing crossover parent, nonexistent target.
 7. **AncestryNode format (2 tests):** All fields populated, crossover parent IDs.
@@ -110,17 +110,17 @@ Covers lineage tracking across 7 categories:
 
 **Quality:** Very thorough lineage testing. The diamond-pattern duplicate-visit test is particularly valuable.
 
-### evaluation_recording.rs (22 tests)
-Covers evaluation recording and performance aggregation:
+### reward_recording.rs (22 tests)
+Covers reward recording and performance aggregation:
 
 1. **JSON format (4 tests):** All fields preserved, filename format, round-trip, empty dimensions.
-2. **Multiple evaluations aggregation (2 tests):** Two evals avg, three evals incremental avg.
-3. **Context ID tracking (3 tests):** Agent/role/motivation track different context_ids; role tracks different motivations; motivation tracks different roles.
-4. **Performance record counts (4 tests):** 0, 1, 10+, and 12 evaluations end-to-end.
+2. **Multiple rewards aggregation (2 tests):** Two evals avg, three evals incremental avg.
+3. **Context ID tracking (3 tests):** Agent/role/objective track different context_ids; role tracks different objectives; objective tracks different roles.
+4. **Performance record counts (4 tests):** 0, 1, 10+, and 12 rewards end-to-end.
 5. **Dimension scoring (4 tests):** Standard dimensions, custom dimensions, extreme values, independent of score.
-6. **recalculate_avg_score (9 tests):** Empty, single, identical, 0+1, large count (100), negatives, all zeros, all ones, precision.
+6. **recalculate_mean_reward (9 tests):** Empty, single, identical, 0+1, large count (100), negatives, all zeros, all ones, precision.
 
-**Quality:** Thorough numerical testing with floating-point precision checks. The 12-evaluation end-to-end test validates all three levels (agent, role, motivation) and disk persistence.
+**Quality:** Thorough numerical testing with floating-point precision checks. The 12-reward end-to-end test validates all three levels (agent, role, objective) and disk persistence.
 
 ### skill_resolution.rs (10 tests)
 Covers skill resolution and prompt rendering:
@@ -154,7 +154,7 @@ The test suite tests **0 of 66 CLI command modules** directly. All CLI testing i
 | `forecast.rs` | 813 | Medium | Completion forecasting — no tests |
 | `workload.rs` | 713 | Medium | Workload distribution — no tests |
 | `aging.rs` | 671 | Low | Task age analysis — no tests |
-| `agency_stats.rs` | 675 | Medium | Agency performance stats — no tests |
+| `identity_stats.rs` | 675 | Medium | Identity performance stats — no tests |
 | `critical_path.rs` | 647 | Medium | Critical path calculation — no tests |
 | `velocity.rs` | 637 | Medium | Velocity tracking — no tests |
 | `dead_agents.rs` | 537 | Medium | Dead agent detection CLI — no tests |
@@ -169,7 +169,7 @@ The test suite tests **0 of 66 CLI command modules** directly. All CLI testing i
 | `coordinate.rs` | 405 | Medium | Coordination status — no tests |
 | `archive.rs` | 399 | Medium | Archive completed tasks — no tests |
 | `role.rs` | 394 | Medium | Role management CLI — tested via library only |
-| `motivation.rs` | 447 | Medium | Motivation management CLI — tested via library only |
+| `objective.rs` | 447 | Medium | Objective management CLI — tested via library only |
 | `heartbeat.rs` | 434 | Medium | Agent heartbeat — no tests |
 
 **Total untested CLI command code: ~20,000+ lines.**
@@ -219,7 +219,7 @@ These are **good** — they exist but are separate from the integration test fil
 | Feature | Status | Gap |
 |---------|--------|-----|
 | `wg evolve` (mutation/crossover/tournament) | **Untested** | 2,677-line module with complex evolutionary logic |
-| `wg service` coordinator_tick internals | Partially tested | Auto-evaluate/assign tested via extracted logic; actual tick loop untested |
+| `wg service` coordinator_tick internals | Partially tested | Auto-reward/assign tested via extracted logic; actual tick loop untested |
 | Executor config loading (TOML files) | **Untested** | `ExecutorConfig`, `PromptTemplate` parsing |
 | IPC protocol | Partially tested | GraphChanged only; status/stop commands untested |
 | `wg spawn` wrapper script generation | **Untested** | The shell script that pipes prompts |
@@ -293,21 +293,21 @@ These are **good** — they exist but are separate from the integration test fil
    - `make_task()` with a builder pattern for flexible task construction
    - `wait_for()` — polling helper
    - `setup_workgraph()` — tempdir initialization
-   - `setup_agency()` — agency directory setup
+   - `setup_identity()` — identity directory setup
    - `setup_llm_workgraph()` — LLM test setup
 
    This would reduce ~500 lines of duplicated helper code and ensure consistency.
 
 9. **Consider property-based tests** for:
    - Content hash determinism (same inputs → same hash, always)
-   - Performance average calculation (update_performance matches recalculate_avg_score)
+   - Performance average calculation (update_performance matches recalculate_mean_reward)
    - Graph save/load roundtrip (any valid graph survives serialization)
 
 ### Priority 4: Tests to Remove or Improve
 
 10. **`test_is_process_alive_*` tests** (integration_service_coordinator.rs:846-857) — These test `libc::kill(pid, 0)` directly, not any workgraph code. They're testing the OS. Remove or replace with tests that exercise the actual `is_process_alive()` function in the registry.
 
-11. **Duplicated `recalculate_avg_score` tests** — `test_recalculate_avg_score_empty` appears in both `integration_agency_edge_cases.rs` and `evaluation_recording.rs`. Remove the duplicate.
+11. **Duplicated `recalculate_mean_reward` tests** — `test_recalculate_mean_reward_empty` appears in both `integration_identity_edge_cases.rs` and `reward_recording.rs`. Remove the duplicate.
 
 12. **Reduce LLM test fragility** — The `test_agent_creation_via_llm` test instructs Claude to run 4 specific commands and parse output hashes. Consider pre-creating the entities and only testing the final `wg done` step to reduce failure surface.
 
@@ -317,7 +317,7 @@ These are **good** — they exist but are separate from the integration test fil
 
 | Category | Source Lines | Test Lines | Coverage |
 |----------|-------------|------------|----------|
-| Agency system (agency.rs) | ~2,346 | ~3,850 | **Excellent** |
+| Identity system (identity.rs) | ~2,346 | ~3,850 | **Excellent** |
 | Service coordinator logic | ~2,293 | ~2,034 | **Good** (via extracted logic) |
 | Service registry (registry.rs) | ~917 | ~600 | **Good** |
 | Review workflow | ~219 | ~473 | **Excellent** |
@@ -328,4 +328,4 @@ These are **good** — they exist but are separate from the integration test fil
 | Evolution (evolve.rs) | ~2,677 | 0 | **None** |
 | Executor config/template | ~969 | ~100 | **Minimal** |
 
-**Overall assessment:** The test suite provides excellent coverage of the agency data model, coordinator logic, and review workflow. However, CLI commands (the largest code category at ~23,000 lines), TUI, Matrix integration, and the evolution module are completely untested. The agency system is the most thoroughly tested part of the codebase, with ~3,850 lines of tests covering edge cases, lineage, evaluation recording, and skill resolution in depth.
+**Overall assessment:** The test suite provides excellent coverage of the identity data model, coordinator logic, and review workflow. However, CLI commands (the largest code category at ~23,000 lines), TUI, Matrix integration, and the evolution module are completely untested. The identity system is the most thoroughly tested part of the codebase, with ~3,850 lines of tests covering edge cases, lineage, reward recording, and skill resolution in depth.

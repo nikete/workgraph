@@ -26,29 +26,30 @@ pub enum SkillRef {
     Inline(String),
 }
 
-/// Reference to an evaluation, stored inline in a PerformanceRecord.
+/// Reference to an reward, stored inline in a RewardHistory.
 ///
-/// For roles, `context_id` holds the motivation_id used during the task.
-/// For motivations, `context_id` holds the role_id used during the task.
+/// For roles, `context_id` holds the objective_id used during the task.
+/// For objectives, `context_id` holds the role_id used during the task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EvaluationRef {
-    pub score: f64,
+pub struct RewardRef {
+    #[serde(alias = "score")]
+    pub value: f64,
     pub task_id: String,
     pub timestamp: String,
-    /// motivation_id (when stored on a role) or role_id (when stored on a motivation)
+    /// objective_id (when stored on a role) or role_id (when stored on a objective)
     pub context_id: String,
 }
 
-/// Aggregated performance data for a role or motivation.
+/// Aggregated performance data for a role or objective.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerformanceRecord {
+pub struct RewardHistory {
     pub task_count: u32,
-    pub avg_score: Option<f64>,
+    pub mean_reward: Option<f64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub evaluations: Vec<EvaluationRef>,
+    pub rewards: Vec<RewardRef>,
 }
 
-/// Lineage metadata for tracking evolutionary history of roles and motivations.
+/// Lineage metadata for tracking evolutionary history of roles and objectives.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Lineage {
     /// Parent ID(s). None for manually created items. Single parent for mutation,
@@ -115,14 +116,14 @@ pub struct Role {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<SkillRef>,
     pub desired_outcome: String,
-    pub performance: PerformanceRecord,
+    pub performance: RewardHistory,
     #[serde(default)]
     pub lineage: Lineage,
 }
 
-/// A motivation defines why an agent acts: its goals and ethical boundaries.
+/// A objective defines why an agent acts: its goals and ethical boundaries.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Motivation {
+pub struct Objective {
     pub id: String,
     pub name: String,
     pub description: String,
@@ -130,7 +131,7 @@ pub struct Motivation {
     pub acceptable_tradeoffs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unacceptable_tradeoffs: Vec<String>,
-    pub performance: PerformanceRecord,
+    pub performance: RewardHistory,
     #[serde(default)]
     pub lineage: Lineage,
 }
@@ -139,18 +140,18 @@ fn default_executor() -> String {
     "claude".to_string()
 }
 
-/// A first-class agent entity: a persistent, reusable, named pairing of a role and a motivation.
+/// A first-class agent entity: a persistent, reusable, named pairing of a role and a objective.
 ///
-/// Agent ID = SHA-256(role_id + motivation_id). Performance is tracked at the agent level
-/// (distinct from its constituent role and motivation individually). Stored as YAML in
-/// `.workgraph/agency/agents/{hash}.yaml`.
+/// Agent ID = SHA-256(role_id + objective_id). Performance is tracked at the agent level
+/// (distinct from its constituent role and objective individually). Stored as YAML in
+/// `.workgraph/identity/agents/{hash}.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Agent {
     pub id: String,
     pub role_id: String,
-    pub motivation_id: String,
+    pub objective_id: String,
     pub name: String,
-    pub performance: PerformanceRecord,
+    pub performance: RewardHistory,
     #[serde(default)]
     pub lineage: Lineage,
     /// Skills/capabilities this agent has (for task matching)
@@ -199,16 +200,21 @@ fn is_default_executor(executor: &str) -> bool {
     executor == "claude"
 }
 
-/// An evaluation of agent performance on a specific task.
+fn default_reward_source() -> String {
+    "llm".to_string()
+}
+
+/// An reward of agent performance on a specific task.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Evaluation {
+pub struct Reward {
     pub id: String,
     pub task_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub agent_id: String,
     pub role_id: String,
-    pub motivation_id: String,
-    pub score: f64,
+    pub objective_id: String,
+    #[serde(alias = "score")]
+    pub value: f64,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub dimensions: HashMap<String, f64>,
     pub notes: String,
@@ -217,6 +223,10 @@ pub struct Evaluation {
     /// Model used by the agent for this task (e.g., "anthropic/claude-opus-4-6")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Reward source: how this value was computed.
+    /// "llm" (default), "outcome:<metric>", "manual", "backward_inference", or custom.
+    #[serde(default = "default_reward_source")]
+    pub source: String,
 }
 
 /// Expand `~` at the start of a path to the user's home directory.
@@ -312,7 +322,7 @@ pub fn resolve_all_skills(role: &Role, workgraph_root: &Path) -> Vec<ResolvedSki
 /// The output is placed between system context and task description in the prompt.
 pub fn render_identity_prompt(
     role: &Role,
-    motivation: &Motivation,
+    objective: &Objective,
     resolved_skills: &[ResolvedSkill],
 ) -> String {
     let mut out = String::new();
@@ -334,13 +344,13 @@ pub fn render_identity_prompt(
     out.push_str("### Operational Parameters\n");
 
     out.push_str("#### Acceptable Trade-offs\n");
-    for tradeoff in &motivation.acceptable_tradeoffs {
+    for tradeoff in &objective.acceptable_tradeoffs {
         let _ = writeln!(out, "- {}", tradeoff);
     }
     out.push('\n');
 
     out.push_str("#### Non-negotiable Constraints\n");
-    for constraint in &motivation.unacceptable_tradeoffs {
+    for constraint in &objective.unacceptable_tradeoffs {
         let _ = writeln!(out, "- {}", constraint);
     }
     out.push('\n');
@@ -364,8 +374,8 @@ pub struct EvaluatorInput<'a> {
     pub agent: Option<&'a Agent>,
     /// Role used by the agent (if identity was assigned)
     pub role: Option<&'a Role>,
-    /// Motivation used by the agent (if identity was assigned)
-    pub motivation: Option<&'a Motivation>,
+    /// Objective used by the agent (if identity was assigned)
+    pub objective: Option<&'a Objective>,
     /// Produced artifacts (file paths / references)
     pub artifacts: &'a [String],
     /// Progress log entries
@@ -388,7 +398,7 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
     out.push_str(
         "You are an evaluator assessing the quality of work performed by an AI agent.\n\
          Review the task definition, the agent identity that was used, the produced artifacts,\n\
-         and the task log. Then produce a JSON evaluation.\n\n",
+         and the task log. Then produce a JSON reward.\n\n",
     );
 
     // -- Task definition --
@@ -425,29 +435,29 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
     } else {
         out.push_str("*No role was assigned.*\n\n");
     }
-    if let Some(motivation) = input.motivation {
+    if let Some(objective) = input.objective {
         let _ = writeln!(
             out,
-            "**Motivation:** {} ({})",
-            motivation.name, motivation.id
+            "**Objective:** {} ({})",
+            objective.name, objective.id
         );
-        let _ = writeln!(out, "{}\n", motivation.description);
-        if !motivation.acceptable_tradeoffs.is_empty() {
+        let _ = writeln!(out, "{}\n", objective.description);
+        if !objective.acceptable_tradeoffs.is_empty() {
             out.push_str("**Acceptable Trade-offs:**\n");
-            for t in &motivation.acceptable_tradeoffs {
+            for t in &objective.acceptable_tradeoffs {
                 let _ = writeln!(out, "- {}", t);
             }
             out.push('\n');
         }
-        if !motivation.unacceptable_tradeoffs.is_empty() {
+        if !objective.unacceptable_tradeoffs.is_empty() {
             out.push_str("**Non-negotiable Constraints:**\n");
-            for c in &motivation.unacceptable_tradeoffs {
+            for c in &objective.unacceptable_tradeoffs {
                 let _ = writeln!(out, "- {}", c);
             }
             out.push('\n');
         }
     } else {
-        out.push_str("*No motivation was assigned.*\n\n");
+        out.push_str("*No objective was assigned.*\n\n");
     }
 
     // -- Artifacts --
@@ -489,10 +499,10 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
         out.push('\n');
     }
 
-    // -- Evaluation rubric & output format --
-    out.push_str("## Evaluation Criteria\n\n");
+    // -- Reward rubric & output format --
+    out.push_str("## Reward Criteria\n\n");
     out.push_str(
-        "Assess the agent's work on these dimensions (each scored 0.0 to 1.0):\n\n\
+        "Assess the agent's work on these dimensions (each valued 0.0 to 1.0):\n\n\
          1. **correctness** — Does the output match the desired outcome? Are verification\n\
             criteria satisfied? Is the implementation functionally correct?\n\
          2. **completeness** — Were all aspects of the task addressed? Are there missing\n\
@@ -500,12 +510,12 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
          3. **efficiency** — Was the work done efficiently within the allowed parameters?\n\
             Minimal unnecessary steps, no wasted effort, appropriate scope.\n\
          4. **style_adherence** — Does the output follow project conventions, coding\n\
-            standards, and the constraints set by the motivation (trade-offs respected,\n\
+            standards, and the constraints set by the objective (trade-offs respected,\n\
             non-negotiable constraints honoured)?\n\n",
     );
 
     out.push_str(
-        "Compute an overall **score** as a weighted average:\n\
+        "Compute an overall **value** as a weighted average:\n\
          - correctness: 40%\n\
          - completeness: 30%\n\
          - efficiency: 15%\n\
@@ -517,7 +527,7 @@ pub fn render_evaluator_prompt(input: &EvaluatorInput) -> String {
         "Respond with **only** a JSON object (no markdown fences, no commentary):\n\n\
          ```\n\
          {\n  \
-           \"score\": <0.0-1.0>,\n  \
+           \"value\": <0.0-1.0>,\n  \
            \"dimensions\": {\n    \
              \"correctness\": <0.0-1.0>,\n    \
              \"completeness\": <0.0-1.0>,\n    \
@@ -565,22 +575,22 @@ pub fn content_hash_role(skills: &[SkillRef], desired_outcome: &str, description
     format!("{:x}", digest)
 }
 
-/// Compute the SHA-256 content hash for a motivation based on its immutable fields:
+/// Compute the SHA-256 content hash for a objective based on its immutable fields:
 /// acceptable_tradeoffs + unacceptable_tradeoffs + description (canonical YAML).
 ///
 /// Performance, lineage, name, and id are excluded because they are mutable.
-pub fn content_hash_motivation(
+pub fn content_hash_objective(
     acceptable_tradeoffs: &[String],
     unacceptable_tradeoffs: &[String],
     description: &str,
 ) -> String {
     #[derive(Serialize)]
-    struct MotivationHashInput<'a> {
+    struct ObjectiveHashInput<'a> {
         acceptable_tradeoffs: &'a [String],
         unacceptable_tradeoffs: &'a [String],
         description: &'a str,
     }
-    let input = MotivationHashInput {
+    let input = ObjectiveHashInput {
         acceptable_tradeoffs,
         unacceptable_tradeoffs,
         description,
@@ -591,18 +601,18 @@ pub fn content_hash_motivation(
 }
 
 /// Compute the SHA-256 content hash for an agent based on its constituent IDs:
-/// role_id + motivation_id.
+/// role_id + objective_id.
 ///
-/// This is deterministic: the same (role_id, motivation_id) pair always produces the same agent ID.
-pub fn content_hash_agent(role_id: &str, motivation_id: &str) -> String {
+/// This is deterministic: the same (role_id, objective_id) pair always produces the same agent ID.
+pub fn content_hash_agent(role_id: &str, objective_id: &str) -> String {
     #[derive(Serialize)]
     struct AgentHashInput<'a> {
         role_id: &'a str,
-        motivation_id: &'a str,
+        objective_id: &'a str,
     }
     let input = AgentHashInput {
         role_id,
-        motivation_id,
+        objective_id,
     };
     let yaml = serde_yaml::to_string(&input).expect("serialization of hash input cannot fail");
     let digest = Sha256::digest(yaml.as_bytes());
@@ -612,18 +622,18 @@ pub fn content_hash_agent(role_id: &str, motivation_id: &str) -> String {
 /// Find a role in a directory by full ID or unique prefix match.
 ///
 /// Returns the loaded role, or an error if no match or ambiguous match.
-pub fn find_role_by_prefix(roles_dir: &Path, prefix: &str) -> Result<Role, AgencyError> {
+pub fn find_role_by_prefix(roles_dir: &Path, prefix: &str) -> Result<Role, IdentityError> {
     let all = load_all_roles(roles_dir)?;
     let matches: Vec<&Role> = all.iter().filter(|r| r.id.starts_with(prefix)).collect();
     match matches.len() {
-        0 => Err(AgencyError::NotFound(format!(
+        0 => Err(IdentityError::NotFound(format!(
             "No role matching '{}'",
             prefix
         ))),
         1 => Ok(matches[0].clone()),
         n => {
             let ids: Vec<&str> = matches.iter().map(|r| r.id.as_str()).collect();
-            Err(AgencyError::Ambiguous(format!(
+            Err(IdentityError::Ambiguous(format!(
                 "Prefix '{}' matches {} roles: {}",
                 prefix,
                 n,
@@ -633,25 +643,25 @@ pub fn find_role_by_prefix(roles_dir: &Path, prefix: &str) -> Result<Role, Agenc
     }
 }
 
-/// Find a motivation in a directory by full ID or unique prefix match.
+/// Find a objective in a directory by full ID or unique prefix match.
 ///
-/// Returns the loaded motivation, or an error if no match or ambiguous match.
-pub fn find_motivation_by_prefix(
-    motivations_dir: &Path,
+/// Returns the loaded objective, or an error if no match or ambiguous match.
+pub fn find_objective_by_prefix(
+    objectives_dir: &Path,
     prefix: &str,
-) -> Result<Motivation, AgencyError> {
-    let all = load_all_motivations(motivations_dir)?;
-    let matches: Vec<&Motivation> = all.iter().filter(|m| m.id.starts_with(prefix)).collect();
+) -> Result<Objective, IdentityError> {
+    let all = load_all_objectives(objectives_dir)?;
+    let matches: Vec<&Objective> = all.iter().filter(|m| m.id.starts_with(prefix)).collect();
     match matches.len() {
-        0 => Err(AgencyError::NotFound(format!(
-            "No motivation matching '{}'",
+        0 => Err(IdentityError::NotFound(format!(
+            "No objective matching '{}'",
             prefix
         ))),
         1 => Ok(matches[0].clone()),
         n => {
             let ids: Vec<&str> = matches.iter().map(|m| m.id.as_str()).collect();
-            Err(AgencyError::Ambiguous(format!(
-                "Prefix '{}' matches {} motivations: {}",
+            Err(IdentityError::Ambiguous(format!(
+                "Prefix '{}' matches {} objectives: {}",
                 prefix,
                 n,
                 ids.join(", ")
@@ -665,7 +675,7 @@ pub fn find_motivation_by_prefix(
 // ---------------------------------------------------------------------------
 
 #[derive(Error, Debug)]
-pub enum AgencyError {
+pub enum IdentityError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("YAML error: {0}")]
@@ -678,17 +688,17 @@ pub enum AgencyError {
     Ambiguous(String),
 }
 
-/// Initialise the agency directory structure under `base`.
+/// Initialise the identity directory structure under `base`.
 ///
 /// Creates:
 ///   base/roles/
-///   base/motivations/
-///   base/evaluations/
+///   base/objectives/
+///   base/rewards/
 ///   base/agents/
-pub fn init(base: &Path) -> Result<(), AgencyError> {
+pub fn init(base: &Path) -> Result<(), IdentityError> {
     fs::create_dir_all(base.join("roles"))?;
-    fs::create_dir_all(base.join("motivations"))?;
-    fs::create_dir_all(base.join("evaluations"))?;
+    fs::create_dir_all(base.join("objectives"))?;
+    fs::create_dir_all(base.join("rewards"))?;
     fs::create_dir_all(base.join("agents"))?;
     Ok(())
 }
@@ -696,14 +706,14 @@ pub fn init(base: &Path) -> Result<(), AgencyError> {
 // -- Roles (YAML) -----------------------------------------------------------
 
 /// Load a single role from a YAML file.
-pub fn load_role(path: &Path) -> Result<Role, AgencyError> {
+pub fn load_role(path: &Path) -> Result<Role, IdentityError> {
     let contents = fs::read_to_string(path)?;
     let role: Role = serde_yaml::from_str(&contents)?;
     Ok(role)
 }
 
 /// Save a role as `<role.id>.yaml` inside `dir`.
-pub fn save_role(role: &Role, dir: &Path) -> Result<PathBuf, AgencyError> {
+pub fn save_role(role: &Role, dir: &Path) -> Result<PathBuf, IdentityError> {
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.yaml", role.id));
     let yaml = serde_yaml::to_string(role)?;
@@ -712,7 +722,7 @@ pub fn save_role(role: &Role, dir: &Path) -> Result<PathBuf, AgencyError> {
 }
 
 /// Load all roles from YAML files in `dir`.
-pub fn load_all_roles(dir: &Path) -> Result<Vec<Role>, AgencyError> {
+pub fn load_all_roles(dir: &Path) -> Result<Vec<Role>, IdentityError> {
     let mut roles = Vec::new();
     if !dir.exists() {
         return Ok(roles);
@@ -728,61 +738,61 @@ pub fn load_all_roles(dir: &Path) -> Result<Vec<Role>, AgencyError> {
     Ok(roles)
 }
 
-// -- Motivations (YAML) -----------------------------------------------------
+// -- Objectives (YAML) -----------------------------------------------------
 
-/// Load a single motivation from a YAML file.
-pub fn load_motivation(path: &Path) -> Result<Motivation, AgencyError> {
+/// Load a single objective from a YAML file.
+pub fn load_objective(path: &Path) -> Result<Objective, IdentityError> {
     let contents = fs::read_to_string(path)?;
-    let motivation: Motivation = serde_yaml::from_str(&contents)?;
-    Ok(motivation)
+    let objective: Objective = serde_yaml::from_str(&contents)?;
+    Ok(objective)
 }
 
-/// Save a motivation as `<motivation.id>.yaml` inside `dir`.
-pub fn save_motivation(motivation: &Motivation, dir: &Path) -> Result<PathBuf, AgencyError> {
+/// Save a objective as `<objective.id>.yaml` inside `dir`.
+pub fn save_objective(objective: &Objective, dir: &Path) -> Result<PathBuf, IdentityError> {
     fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.yaml", motivation.id));
-    let yaml = serde_yaml::to_string(motivation)?;
+    let path = dir.join(format!("{}.yaml", objective.id));
+    let yaml = serde_yaml::to_string(objective)?;
     fs::write(&path, yaml)?;
     Ok(path)
 }
 
-/// Load all motivations from YAML files in `dir`.
-pub fn load_all_motivations(dir: &Path) -> Result<Vec<Motivation>, AgencyError> {
-    let mut motivations = Vec::new();
+/// Load all objectives from YAML files in `dir`.
+pub fn load_all_objectives(dir: &Path) -> Result<Vec<Objective>, IdentityError> {
+    let mut objectives = Vec::new();
     if !dir.exists() {
-        return Ok(motivations);
+        return Ok(objectives);
     }
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
-            motivations.push(load_motivation(&path)?);
+            objectives.push(load_objective(&path)?);
         }
     }
-    motivations.sort_by(|a, b| a.id.cmp(&b.id));
-    Ok(motivations)
+    objectives.sort_by(|a, b| a.id.cmp(&b.id));
+    Ok(objectives)
 }
 
-// -- Evaluations (JSON) ------------------------------------------------------
+// -- Rewards (JSON) ------------------------------------------------------
 
-/// Load a single evaluation from a JSON file.
-pub fn load_evaluation(path: &Path) -> Result<Evaluation, AgencyError> {
+/// Load a single reward from a JSON file.
+pub fn load_reward(path: &Path) -> Result<Reward, IdentityError> {
     let contents = fs::read_to_string(path)?;
-    let eval: Evaluation = serde_json::from_str(&contents)?;
+    let eval: Reward = serde_json::from_str(&contents)?;
     Ok(eval)
 }
 
-/// Save an evaluation as `<evaluation.id>.json` inside `dir`.
-pub fn save_evaluation(evaluation: &Evaluation, dir: &Path) -> Result<PathBuf, AgencyError> {
+/// Save an reward as `<reward.id>.json` inside `dir`.
+pub fn save_reward(reward: &Reward, dir: &Path) -> Result<PathBuf, IdentityError> {
     fs::create_dir_all(dir)?;
-    let path = dir.join(format!("{}.json", evaluation.id));
-    let json = serde_json::to_string_pretty(evaluation)?;
+    let path = dir.join(format!("{}.json", reward.id));
+    let json = serde_json::to_string_pretty(reward)?;
     fs::write(&path, json)?;
     Ok(path)
 }
 
-/// Load all evaluations from JSON files in `dir`.
-pub fn load_all_evaluations(dir: &Path) -> Result<Vec<Evaluation>, AgencyError> {
+/// Load all rewards from JSON files in `dir`.
+pub fn load_all_rewards(dir: &Path) -> Result<Vec<Reward>, IdentityError> {
     let mut evals = Vec::new();
     if !dir.exists() {
         return Ok(evals);
@@ -791,23 +801,23 @@ pub fn load_all_evaluations(dir: &Path) -> Result<Vec<Evaluation>, AgencyError> 
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            evals.push(load_evaluation(&path)?);
+            evals.push(load_reward(&path)?);
         }
     }
     evals.sort_by(|a, b| a.id.cmp(&b.id));
     Ok(evals)
 }
 
-/// Load all evaluations, falling back to empty with a warning on errors.
+/// Load all rewards, falling back to empty with a warning on errors.
 ///
-/// Unlike `.load_all_evaluations().unwrap_or_default()`, this emits a stderr
-/// warning when the evaluations directory exists but contains corrupt data.
-pub fn load_all_evaluations_or_warn(dir: &Path) -> Vec<Evaluation> {
-    match load_all_evaluations(dir) {
+/// Unlike `.load_all_rewards().unwrap_or_default()`, this emits a stderr
+/// warning when the rewards directory exists but contains corrupt data.
+pub fn load_all_rewards_or_warn(dir: &Path) -> Vec<Reward> {
+    match load_all_rewards(dir) {
         Ok(evals) => evals,
         Err(e) => {
             eprintln!(
-                "Warning: failed to load evaluations from {}: {}",
+                "Warning: failed to load rewards from {}: {}",
                 dir.display(),
                 e
             );
@@ -819,14 +829,14 @@ pub fn load_all_evaluations_or_warn(dir: &Path) -> Vec<Evaluation> {
 // -- Agents (YAML) -----------------------------------------------------------
 
 /// Load a single agent from a YAML file.
-pub fn load_agent(path: &Path) -> Result<Agent, AgencyError> {
+pub fn load_agent(path: &Path) -> Result<Agent, IdentityError> {
     let contents = fs::read_to_string(path)?;
     let agent: Agent = serde_yaml::from_str(&contents)?;
     Ok(agent)
 }
 
 /// Save an agent as `<agent.id>.yaml` inside `dir`.
-pub fn save_agent(agent: &Agent, dir: &Path) -> Result<PathBuf, AgencyError> {
+pub fn save_agent(agent: &Agent, dir: &Path) -> Result<PathBuf, IdentityError> {
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.yaml", agent.id));
     let yaml = serde_yaml::to_string(agent)?;
@@ -835,7 +845,7 @@ pub fn save_agent(agent: &Agent, dir: &Path) -> Result<PathBuf, AgencyError> {
 }
 
 /// Load all agents from YAML files in `dir`.
-pub fn load_all_agents(dir: &Path) -> Result<Vec<Agent>, AgencyError> {
+pub fn load_all_agents(dir: &Path) -> Result<Vec<Agent>, IdentityError> {
     let mut agents = Vec::new();
     if !dir.exists() {
         return Ok(agents);
@@ -870,18 +880,18 @@ pub fn load_all_agents_or_warn(dir: &Path) -> Vec<Agent> {
 }
 
 /// Find an agent in a directory by full ID or unique prefix match.
-pub fn find_agent_by_prefix(agents_dir: &Path, prefix: &str) -> Result<Agent, AgencyError> {
+pub fn find_agent_by_prefix(agents_dir: &Path, prefix: &str) -> Result<Agent, IdentityError> {
     let all = load_all_agents(agents_dir)?;
     let matches: Vec<&Agent> = all.iter().filter(|a| a.id.starts_with(prefix)).collect();
     match matches.len() {
-        0 => Err(AgencyError::NotFound(format!(
+        0 => Err(IdentityError::NotFound(format!(
             "No agent matching '{}'",
             prefix
         ))),
         1 => Ok(matches[0].clone()),
         n => {
             let ids: Vec<&str> = matches.iter().map(|a| a.id.as_str()).collect();
-            Err(AgencyError::Ambiguous(format!(
+            Err(IdentityError::Ambiguous(format!(
                 "Prefix '{}' matches {} agents: {}",
                 prefix,
                 n,
@@ -908,7 +918,7 @@ pub struct AncestryNode {
 
 /// Build the ancestry tree for a role by walking parent_ids.
 /// Returns nodes ordered from the target (first) up to its oldest ancestors.
-pub fn role_ancestry(role_id: &str, roles_dir: &Path) -> Result<Vec<AncestryNode>, AgencyError> {
+pub fn role_ancestry(role_id: &str, roles_dir: &Path) -> Result<Vec<AncestryNode>, IdentityError> {
     let all_roles = load_all_roles(roles_dir)?;
     let role_map: HashMap<String, &Role> = all_roles.iter().map(|r| (r.id.clone(), r)).collect();
     let mut ancestry = Vec::new();
@@ -936,15 +946,15 @@ pub fn role_ancestry(role_id: &str, roles_dir: &Path) -> Result<Vec<AncestryNode
     Ok(ancestry)
 }
 
-/// Build the ancestry tree for a motivation by walking parent_ids.
-pub fn motivation_ancestry(
-    motivation_id: &str,
-    motivations_dir: &Path,
-) -> Result<Vec<AncestryNode>, AgencyError> {
-    let all = load_all_motivations(motivations_dir)?;
-    let map: HashMap<String, &Motivation> = all.iter().map(|m| (m.id.clone(), m)).collect();
+/// Build the ancestry tree for a objective by walking parent_ids.
+pub fn objective_ancestry(
+    objective_id: &str,
+    objectives_dir: &Path,
+) -> Result<Vec<AncestryNode>, IdentityError> {
+    let all = load_all_objectives(objectives_dir)?;
+    let map: HashMap<String, &Objective> = all.iter().map(|m| (m.id.clone(), m)).collect();
     let mut ancestry = Vec::new();
-    let mut queue = vec![motivation_id.to_string()];
+    let mut queue = vec![objective_id.to_string()];
     let mut visited = std::collections::HashSet::new();
 
     while let Some(id) = queue.pop() {
@@ -969,110 +979,110 @@ pub fn motivation_ancestry(
 }
 
 // ---------------------------------------------------------------------------
-// Evaluation Recording
+// Reward Recording
 // ---------------------------------------------------------------------------
 
-/// Recalculate the average score from a list of EvaluationRefs.
+/// Recalculate the average value from a list of RewardRefs.
 ///
 /// Returns `None` if the list is empty.
-pub fn recalculate_avg_score(evaluations: &[EvaluationRef]) -> Option<f64> {
-    if evaluations.is_empty() {
+pub fn recalculate_mean_reward(rewards: &[RewardRef]) -> Option<f64> {
+    if rewards.is_empty() {
         return None;
     }
-    let valid_scores: Vec<f64> = evaluations
+    let valid_values: Vec<f64> = rewards
         .iter()
-        .map(|e| e.score)
+        .map(|e| e.value)
         .filter(|s| s.is_finite())
         .collect();
-    if valid_scores.is_empty() {
+    if valid_values.is_empty() {
         return None;
     }
-    let sum: f64 = valid_scores.iter().sum();
-    let avg = sum / valid_scores.len() as f64;
+    let sum: f64 = valid_values.iter().sum();
+    let avg = sum / valid_values.len() as f64;
     if avg.is_finite() { Some(avg) } else { None }
 }
 
-/// Update a PerformanceRecord with a new evaluation reference.
+/// Update a RewardHistory with a new reward reference.
 ///
-/// Increments task_count, appends the EvaluationRef, and recalculates avg_score.
-pub fn update_performance(record: &mut PerformanceRecord, eval_ref: EvaluationRef) {
+/// Increments task_count, appends the RewardRef, and recalculates mean_reward.
+pub fn update_performance(record: &mut RewardHistory, eval_ref: RewardRef) {
     record.task_count = record.task_count.saturating_add(1);
-    record.evaluations.push(eval_ref);
-    record.avg_score = recalculate_avg_score(&record.evaluations);
+    record.rewards.push(eval_ref);
+    record.mean_reward = recalculate_mean_reward(&record.rewards);
 }
 
-/// Record an evaluation: persist the eval JSON, and update agent, role, and motivation performance.
+/// Record an reward: persist the eval JSON, and update agent, role, and objective performance.
 ///
 /// Steps:
-/// 1. Save the `Evaluation` as JSON in `agency_dir/evaluations/eval-{task_id}-{timestamp}.json`.
-/// 2. Load the agent (if agent_id is set), add an `EvaluationRef`, recalculate scores, save.
-/// 3. Load the role, add an `EvaluationRef` (with motivation_id as context), recalculate scores, save.
-/// 4. Load the motivation, add an `EvaluationRef` (with role_id as context), recalculate scores, save.
+/// 1. Save the `Reward` as JSON in `identity_dir/rewards/eval-{task_id}-{timestamp}.json`.
+/// 2. Load the agent (if agent_id is set), add an `RewardRef`, recalculate values, save.
+/// 3. Load the role, add an `RewardRef` (with objective_id as context), recalculate values, save.
+/// 4. Load the objective, add an `RewardRef` (with role_id as context), recalculate values, save.
 ///
-/// Returns the path to the saved evaluation JSON.
-pub fn record_evaluation(
-    evaluation: &Evaluation,
-    agency_dir: &Path,
-) -> Result<PathBuf, AgencyError> {
-    init(agency_dir)?;
+/// Returns the path to the saved reward JSON.
+pub fn record_reward(
+    reward: &Reward,
+    identity_dir: &Path,
+) -> Result<PathBuf, IdentityError> {
+    init(identity_dir)?;
 
-    let evals_dir = agency_dir.join("evaluations");
-    let roles_dir = agency_dir.join("roles");
-    let motivations_dir = agency_dir.join("motivations");
-    let agents_dir = agency_dir.join("agents");
+    let evals_dir = identity_dir.join("rewards");
+    let roles_dir = identity_dir.join("roles");
+    let objectives_dir = identity_dir.join("objectives");
+    let agents_dir = identity_dir.join("agents");
 
-    // 1. Save the full Evaluation JSON with task_id-timestamp naming
-    let safe_ts = evaluation.timestamp.replace(':', "-");
-    let eval_filename = format!("eval-{}-{}.json", evaluation.task_id, safe_ts);
+    // 1. Save the full Reward JSON with task_id-timestamp naming
+    let safe_ts = reward.timestamp.replace(':', "-");
+    let eval_filename = format!("eval-{}-{}.json", reward.task_id, safe_ts);
     let eval_path = evals_dir.join(&eval_filename);
-    let json = serde_json::to_string_pretty(evaluation)?;
+    let json = serde_json::to_string_pretty(reward)?;
     fs::write(&eval_path, json)?;
 
     // 2. Update agent performance (if agent_id is present)
-    if !evaluation.agent_id.is_empty()
-        && let Ok(mut agent) = find_agent_by_prefix(&agents_dir, &evaluation.agent_id)
+    if !reward.agent_id.is_empty()
+        && let Ok(mut agent) = find_agent_by_prefix(&agents_dir, &reward.agent_id)
     {
-        let agent_eval_ref = EvaluationRef {
-            score: evaluation.score,
-            task_id: evaluation.task_id.clone(),
-            timestamp: evaluation.timestamp.clone(),
-            context_id: evaluation.role_id.clone(),
+        let agent_eval_ref = RewardRef {
+            value: reward.value,
+            task_id: reward.task_id.clone(),
+            timestamp: reward.timestamp.clone(),
+            context_id: reward.role_id.clone(),
         };
         update_performance(&mut agent.performance, agent_eval_ref);
         save_agent(&agent, &agents_dir)?;
     }
 
     // 3. Update role performance (look up by prefix to support both full and short IDs)
-    if let Ok(mut role) = find_role_by_prefix(&roles_dir, &evaluation.role_id) {
-        let role_eval_ref = EvaluationRef {
-            score: evaluation.score,
-            task_id: evaluation.task_id.clone(),
-            timestamp: evaluation.timestamp.clone(),
-            context_id: evaluation.motivation_id.clone(),
+    if let Ok(mut role) = find_role_by_prefix(&roles_dir, &reward.role_id) {
+        let role_eval_ref = RewardRef {
+            value: reward.value,
+            task_id: reward.task_id.clone(),
+            timestamp: reward.timestamp.clone(),
+            context_id: reward.objective_id.clone(),
         };
         update_performance(&mut role.performance, role_eval_ref);
         save_role(&role, &roles_dir)?;
     }
 
-    // 4. Update motivation performance
-    if let Ok(mut motivation) =
-        find_motivation_by_prefix(&motivations_dir, &evaluation.motivation_id)
+    // 4. Update objective performance
+    if let Ok(mut objective) =
+        find_objective_by_prefix(&objectives_dir, &reward.objective_id)
     {
-        let motivation_eval_ref = EvaluationRef {
-            score: evaluation.score,
-            task_id: evaluation.task_id.clone(),
-            timestamp: evaluation.timestamp.clone(),
-            context_id: evaluation.role_id.clone(),
+        let objective_eval_ref = RewardRef {
+            value: reward.value,
+            task_id: reward.task_id.clone(),
+            timestamp: reward.timestamp.clone(),
+            context_id: reward.role_id.clone(),
         };
-        update_performance(&mut motivation.performance, motivation_eval_ref);
-        save_motivation(&motivation, &motivations_dir)?;
+        update_performance(&mut objective.performance, objective_eval_ref);
+        save_objective(&objective, &objectives_dir)?;
     }
 
     Ok(eval_path)
 }
 
 // ---------------------------------------------------------------------------
-// Starter Roles & Motivations
+// Starter Roles & Objectives
 // ---------------------------------------------------------------------------
 
 /// Helper to build a Role with its content-hash ID computed automatically.
@@ -1091,34 +1101,34 @@ pub fn build_role(
         description,
         skills,
         desired_outcome,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage::default(),
     }
 }
 
-/// Helper to build a Motivation with its content-hash ID computed automatically.
-pub fn build_motivation(
+/// Helper to build a Objective with its content-hash ID computed automatically.
+pub fn build_objective(
     name: impl Into<String>,
     description: impl Into<String>,
     acceptable_tradeoffs: Vec<String>,
     unacceptable_tradeoffs: Vec<String>,
-) -> Motivation {
+) -> Objective {
     let description = description.into();
-    let id = content_hash_motivation(&acceptable_tradeoffs, &unacceptable_tradeoffs, &description);
-    Motivation {
+    let id = content_hash_objective(&acceptable_tradeoffs, &unacceptable_tradeoffs, &description);
+    Objective {
         id,
         name: name.into(),
         description,
         acceptable_tradeoffs,
         unacceptable_tradeoffs,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage::default(),
     }
@@ -1164,28 +1174,28 @@ pub fn starter_roles() -> Vec<Role> {
     ]
 }
 
-/// Return the set of built-in starter motivations that ship with wg.
-pub fn starter_motivations() -> Vec<Motivation> {
+/// Return the set of built-in starter objectives that ship with wg.
+pub fn starter_objectives() -> Vec<Objective> {
     vec![
-        build_motivation(
+        build_objective(
             "Careful",
             "Prioritizes reliability and correctness above speed.",
             vec!["Slow".into(), "Verbose".into()],
             vec!["Unreliable".into(), "Untested".into()],
         ),
-        build_motivation(
+        build_objective(
             "Fast",
             "Prioritizes speed and shipping over polish.",
             vec!["Less documentation".into(), "Simpler solutions".into()],
             vec!["Broken code".into()],
         ),
-        build_motivation(
+        build_objective(
             "Thorough",
             "Prioritizes completeness and depth of analysis.",
             vec!["Expensive".into(), "Slow".into(), "Verbose".into()],
             vec!["Incomplete analysis".into()],
         ),
-        build_motivation(
+        build_objective(
             "Balanced",
             "Moderate on all dimensions; balances speed, quality, and completeness.",
             vec!["Moderate trade-offs on any single dimension".into()],
@@ -1194,16 +1204,16 @@ pub fn starter_motivations() -> Vec<Motivation> {
     ]
 }
 
-/// Seed the agency directory with starter roles and motivations.
+/// Seed the identity directory with starter roles and objectives.
 ///
 /// Only writes files that don't already exist, so existing customizations are preserved.
 /// Deduplication is automatic: same content produces the same hash ID and filename.
-/// Returns the number of roles and motivations that were created.
-pub fn seed_starters(agency_dir: &Path) -> Result<(usize, usize), AgencyError> {
-    init(agency_dir)?;
+/// Returns the number of roles and objectives that were created.
+pub fn seed_starters(identity_dir: &Path) -> Result<(usize, usize), IdentityError> {
+    init(identity_dir)?;
 
-    let roles_dir = agency_dir.join("roles");
-    let motivations_dir = agency_dir.join("motivations");
+    let roles_dir = identity_dir.join("roles");
+    let objectives_dir = identity_dir.join("objectives");
 
     let mut roles_created = 0;
     for role in starter_roles() {
@@ -1214,16 +1224,16 @@ pub fn seed_starters(agency_dir: &Path) -> Result<(usize, usize), AgencyError> {
         }
     }
 
-    let mut motivations_created = 0;
-    for motivation in starter_motivations() {
-        let path = motivations_dir.join(format!("{}.yaml", motivation.id));
+    let mut objectives_created = 0;
+    for objective in starter_objectives() {
+        let path = objectives_dir.join(format!("{}.yaml", objective.id));
         if !path.exists() {
-            save_motivation(&motivation, &motivations_dir)?;
-            motivations_created += 1;
+            save_objective(&objective, &objectives_dir)?;
+            objectives_created += 1;
         }
     }
 
-    Ok((roles_created, motivations_created))
+    Ok((roles_created, objectives_created))
 }
 
 // ---------------------------------------------------------------------------
@@ -1261,27 +1271,27 @@ pub(crate) fn mutate_role(
         description,
         skills,
         desired_outcome,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage::mutation(&parent.id, parent.lineage.generation, run_id),
     }
 }
 
-/// Crossover two motivations: union their accept/reject lists and set crossover lineage.
+/// Crossover two objectives: union their accept/reject lists and set crossover lineage.
 ///
-/// Produces a new motivation whose acceptable_tradeoffs and unacceptable_tradeoffs are
+/// Produces a new objective whose acceptable_tradeoffs and unacceptable_tradeoffs are
 /// the deduplicated union of both parents' lists.
 #[cfg(test)]
-pub(crate) fn crossover_motivations(
-    parent_a: &Motivation,
-    parent_b: &Motivation,
+pub(crate) fn crossover_objectives(
+    parent_a: &Objective,
+    parent_b: &Objective,
     run_id: &str,
     name: &str,
     description: &str,
-) -> Motivation {
+) -> Objective {
     let mut acceptable: Vec<String> = parent_a.acceptable_tradeoffs.clone();
     for t in &parent_b.acceptable_tradeoffs {
         if !acceptable.contains(t) {
@@ -1296,48 +1306,48 @@ pub(crate) fn crossover_motivations(
         }
     }
 
-    let id = content_hash_motivation(&acceptable, &unacceptable, description);
+    let id = content_hash_objective(&acceptable, &unacceptable, description);
     let max_gen = parent_a.lineage.generation.max(parent_b.lineage.generation);
 
-    Motivation {
+    Objective {
         id,
         name: name.to_string(),
         description: description.to_string(),
         acceptable_tradeoffs: acceptable,
         unacceptable_tradeoffs: unacceptable,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage::crossover(&[&parent_a.id, &parent_b.id], max_gen, run_id),
     }
 }
 
-/// Tournament selection: pick the role with the highest average score.
+/// Tournament selection: pick the role with the highest average value.
 ///
-/// Returns `None` if the slice is empty. Roles without a score (`avg_score == None`)
-/// are treated as having score 0.0.
+/// Returns `None` if the slice is empty. Roles without a value (`mean_reward == None`)
+/// are treated as having value 0.0.
 #[cfg(test)]
 pub(crate) fn tournament_select_role(candidates: &[Role]) -> Option<&Role> {
     candidates.iter().max_by(|a, b| {
-        let sa = a.performance.avg_score.unwrap_or(0.0);
-        let sb = b.performance.avg_score.unwrap_or(0.0);
+        let sa = a.performance.mean_reward.unwrap_or(0.0);
+        let sb = b.performance.mean_reward.unwrap_or(0.0);
         sa.partial_cmp(&sb).unwrap_or(std::cmp::Ordering::Equal)
     })
 }
 
-/// Identify roles whose average score falls below the given threshold.
+/// Identify roles whose average value falls below the given threshold.
 ///
-/// Only roles with at least `min_evals` evaluations are considered; roles with
-/// fewer evaluations are never flagged for retirement (they haven't been tested enough).
+/// Only roles with at least `min_evals` rewards are considered; roles with
+/// fewer rewards are never flagged for retirement (they haven't been tested enough).
 #[cfg(test)]
 pub(crate) fn roles_below_threshold(roles: &[Role], threshold: f64, min_evals: u32) -> Vec<&Role> {
     roles
         .iter()
         .filter(|r| {
             r.performance.task_count >= min_evals
-                && r.performance.avg_score.is_some_and(|s| s < threshold)
+                && r.performance.mean_reward.is_some_and(|s| s < threshold)
         })
         .collect()
 }
@@ -1385,14 +1395,14 @@ pub struct ArtifactEntry {
 ///   - `log.json` — full progress log entries
 ///
 /// This is a mechanical operation — no LLM is involved. The coordinator calls
-/// this after marking a task done but before creating any evaluation task.
+/// this after marking a task done but before creating any reward task.
 /// The evaluator reads from `{wg_dir}/output/{task_id}/` to assess work.
 ///
 /// Errors are non-fatal: individual capture steps log warnings and continue.
 pub fn capture_task_output(
     wg_dir: &Path,
     task: &crate::graph::Task,
-) -> Result<PathBuf, AgencyError> {
+) -> Result<PathBuf, IdentityError> {
     let output_dir = wg_dir.join("output").join(&task.id);
     fs::create_dir_all(&output_dir)?;
 
@@ -1702,11 +1712,11 @@ mod tests {
 
     // -- Storage tests -------------------------------------------------------
 
-    fn sample_performance() -> PerformanceRecord {
-        PerformanceRecord {
+    fn sample_performance() -> RewardHistory {
+        RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         }
     }
 
@@ -1722,8 +1732,8 @@ mod tests {
         )
     }
 
-    fn sample_motivation() -> Motivation {
-        build_motivation(
+    fn sample_objective() -> Objective {
+        build_objective(
             "Quality First",
             "Prioritise correctness and maintainability.",
             vec!["Slower delivery for higher quality".into()],
@@ -1731,41 +1741,41 @@ mod tests {
         )
     }
 
-    fn sample_evaluation() -> Evaluation {
+    fn sample_reward() -> Reward {
         let role = sample_role();
-        let motivation = sample_motivation();
+        let objective = sample_objective();
         let mut dims = HashMap::new();
         dims.insert("correctness".into(), 0.9);
         dims.insert("style".into(), 0.8);
-        Evaluation {
+        Reward {
             id: "eval-001".into(),
             task_id: "task-42".into(),
             agent_id: String::new(),
             role_id: role.id,
-            motivation_id: motivation.id,
-            score: 0.85,
+            objective_id: objective.id,
+            value: 0.85,
             dimensions: dims,
             notes: "Good implementation with minor style issues.".into(),
             evaluator: "reviewer-bot".into(),
             timestamp: "2025-05-01T12:00:00Z".into(),
-            model: None,
+            model: None, source: "llm".to_string(),
         }
     }
 
     #[test]
     fn test_init_creates_directories() {
         let tmp = TempDir::new().unwrap();
-        let base = tmp.path().join("agency");
+        let base = tmp.path().join("identity");
         init(&base).unwrap();
         assert!(base.join("roles").is_dir());
-        assert!(base.join("motivations").is_dir());
-        assert!(base.join("evaluations").is_dir());
+        assert!(base.join("objectives").is_dir());
+        assert!(base.join("rewards").is_dir());
     }
 
     #[test]
     fn test_init_idempotent() {
         let tmp = TempDir::new().unwrap();
-        let base = tmp.path().join("agency");
+        let base = tmp.path().join("identity");
         init(&base).unwrap();
         init(&base).unwrap(); // should not error
     }
@@ -1793,46 +1803,46 @@ mod tests {
     }
 
     #[test]
-    fn test_motivation_roundtrip() {
+    fn test_objective_roundtrip() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let motivation = sample_motivation();
-        let path = save_motivation(&motivation, dir).unwrap();
+        let objective = sample_objective();
+        let path = save_objective(&objective, dir).unwrap();
         assert!(path.exists());
         // Filename is content-hash ID + .yaml
         assert_eq!(
             path.file_name().unwrap().to_str().unwrap(),
-            format!("{}.yaml", motivation.id)
+            format!("{}.yaml", objective.id)
         );
         assert_eq!(
-            motivation.id.len(),
+            objective.id.len(),
             64,
-            "Motivation ID should be a SHA-256 hex hash"
+            "Objective ID should be a SHA-256 hex hash"
         );
 
-        let loaded = load_motivation(&path).unwrap();
-        assert_eq!(loaded.id, motivation.id);
-        assert_eq!(loaded.name, motivation.name);
-        assert_eq!(loaded.acceptable_tradeoffs, motivation.acceptable_tradeoffs);
+        let loaded = load_objective(&path).unwrap();
+        assert_eq!(loaded.id, objective.id);
+        assert_eq!(loaded.name, objective.name);
+        assert_eq!(loaded.acceptable_tradeoffs, objective.acceptable_tradeoffs);
         assert_eq!(
             loaded.unacceptable_tradeoffs,
-            motivation.unacceptable_tradeoffs
+            objective.unacceptable_tradeoffs
         );
     }
 
     #[test]
-    fn test_evaluation_roundtrip() {
+    fn test_reward_roundtrip() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let eval = sample_evaluation();
-        let path = save_evaluation(&eval, dir).unwrap();
+        let eval = sample_reward();
+        let path = save_reward(&eval, dir).unwrap();
         assert!(path.exists());
         assert_eq!(path.file_name().unwrap().to_str().unwrap(), "eval-001.json");
 
-        let loaded = load_evaluation(&path).unwrap();
+        let loaded = load_reward(&path).unwrap();
         assert_eq!(loaded.id, eval.id);
         assert_eq!(loaded.task_id, eval.task_id);
-        assert_eq!(loaded.score, eval.score);
+        assert_eq!(loaded.value, eval.value);
         assert_eq!(loaded.dimensions.len(), eval.dimensions.len());
         assert_eq!(loaded.dimensions["correctness"], 0.9);
     }
@@ -1840,7 +1850,7 @@ mod tests {
     #[test]
     fn test_load_all_roles() {
         let tmp = TempDir::new().unwrap();
-        let base = tmp.path().join("agency");
+        let base = tmp.path().join("identity");
         init(&base).unwrap();
 
         let roles_dir = base.join("roles");
@@ -1857,41 +1867,41 @@ mod tests {
     }
 
     #[test]
-    fn test_load_all_motivations() {
+    fn test_load_all_objectives() {
         let tmp = TempDir::new().unwrap();
-        let base = tmp.path().join("agency");
+        let base = tmp.path().join("identity");
         init(&base).unwrap();
 
-        let dir = base.join("motivations");
-        let m1 = build_motivation("Mot A", "First", vec!["a".into()], vec![]);
-        let m2 = build_motivation("Mot B", "Second", vec!["b".into()], vec![]);
-        save_motivation(&m1, &dir).unwrap();
-        save_motivation(&m2, &dir).unwrap();
+        let dir = base.join("objectives");
+        let m1 = build_objective("Mot A", "First", vec!["a".into()], vec![]);
+        let m2 = build_objective("Mot B", "Second", vec!["b".into()], vec![]);
+        save_objective(&m1, &dir).unwrap();
+        save_objective(&m2, &dir).unwrap();
 
-        let all = load_all_motivations(&dir).unwrap();
+        let all = load_all_objectives(&dir).unwrap();
         assert_eq!(all.len(), 2);
-        assert!(all[0].id < all[1].id, "Motivations should be sorted by ID");
+        assert!(all[0].id < all[1].id, "Objectives should be sorted by ID");
     }
 
     #[test]
-    fn test_load_all_evaluations() {
+    fn test_load_all_rewards() {
         let tmp = TempDir::new().unwrap();
-        let base = tmp.path().join("agency");
+        let base = tmp.path().join("identity");
         init(&base).unwrap();
 
-        let dir = base.join("evaluations");
-        let e1 = Evaluation {
+        let dir = base.join("rewards");
+        let e1 = Reward {
             id: "eval-a".into(),
-            ..sample_evaluation()
+            ..sample_reward()
         };
-        let e2 = Evaluation {
+        let e2 = Reward {
             id: "eval-b".into(),
-            ..sample_evaluation()
+            ..sample_reward()
         };
-        save_evaluation(&e1, &dir).unwrap();
-        save_evaluation(&e2, &dir).unwrap();
+        save_reward(&e1, &dir).unwrap();
+        save_reward(&e2, &dir).unwrap();
 
-        let all = load_all_evaluations(&dir).unwrap();
+        let all = load_all_rewards(&dir).unwrap();
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].id, "eval-a");
         assert_eq!(all[1].id, "eval-b");
@@ -1902,8 +1912,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let missing = tmp.path().join("nope");
         assert_eq!(load_all_roles(&missing).unwrap().len(), 0);
-        assert_eq!(load_all_motivations(&missing).unwrap().len(), 0);
-        assert_eq!(load_all_evaluations(&missing).unwrap().len(), 0);
+        assert_eq!(load_all_objectives(&missing).unwrap().len(), 0);
+        assert_eq!(load_all_rewards(&missing).unwrap().len(), 0);
     }
 
     #[test]
@@ -1970,12 +1980,12 @@ mod tests {
     }
 
     #[test]
-    fn test_motivation_lineage_roundtrip() {
+    fn test_objective_lineage_roundtrip() {
         let tmp = TempDir::new().unwrap();
-        let mut m = sample_motivation();
+        let mut m = sample_objective();
         m.lineage = Lineage::crossover(&["m-a", "m-b"], 3, "xover-1");
-        let path = save_motivation(&m, tmp.path()).unwrap();
-        let loaded = load_motivation(&path).unwrap();
+        let path = save_objective(&m, tmp.path()).unwrap();
+        let loaded = load_objective(&path).unwrap();
         assert_eq!(loaded.lineage.parent_ids, vec!["m-a", "m-b"]);
         assert_eq!(loaded.lineage.generation, 4);
         assert_eq!(loaded.lineage.created_by, "evolver-xover-1");
@@ -1992,7 +2002,7 @@ skills: []
 desired_outcome: Works
 performance:
   task_count: 0
-  avg_score: null
+  mean_reward: null
 "#;
         let role: Role = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(role.lineage.generation, 0);
@@ -2091,7 +2101,7 @@ performance:
             vec![],
             "Working, tested code merged to main.",
         );
-        let motivation = build_motivation(
+        let objective = build_objective(
             "Quality First",
             "Prioritise correctness and maintainability.",
             vec![
@@ -2111,7 +2121,7 @@ performance:
             },
         ];
 
-        let output = render_identity_prompt(&role, &motivation, &skills);
+        let output = render_identity_prompt(&role, &objective, &skills);
 
         // Verify structure
         assert!(output.starts_with("## Agent Identity\n"));
@@ -2140,14 +2150,14 @@ performance:
             vec![],
             "All code reviewed.",
         );
-        let motivation = build_motivation(
+        let objective = build_objective(
             "Fast",
             "Be fast.",
             vec!["Less thorough reviews".into()],
             vec!["Missing security issues".into()],
         );
 
-        let output = render_identity_prompt(&role, &motivation, &[]);
+        let output = render_identity_prompt(&role, &objective, &[]);
 
         // No Skills header when empty
         assert!(!output.contains("#### Skills\n"));
@@ -2163,9 +2173,9 @@ performance:
     #[test]
     fn test_render_identity_prompt_empty_tradeoffs() {
         let role = build_role("Minimal", "A minimal role.", vec![], "Done.");
-        let motivation = build_motivation("Minimal Motivation", "Minimal.", vec![], vec![]);
+        let objective = build_objective("Minimal Objective", "Minimal.", vec![], vec![]);
 
-        let output = render_identity_prompt(&role, &motivation, &[]);
+        let output = render_identity_prompt(&role, &objective, &[]);
 
         // Headers should still be present even with no items
         assert!(output.contains("#### Acceptable Trade-offs\n"));
@@ -2176,13 +2186,13 @@ performance:
     #[test]
     fn test_render_identity_prompt_section_order() {
         let role = sample_role();
-        let motivation = sample_motivation();
+        let objective = sample_objective();
         let skills = vec![ResolvedSkill {
             name: "Coding".into(),
             content: "Write code.".into(),
         }];
 
-        let output = render_identity_prompt(&role, &motivation, &skills);
+        let output = render_identity_prompt(&role, &objective, &skills);
 
         // Verify sections appear in the correct order
         let agent_identity_pos = output.find("## Agent Identity").unwrap();
@@ -2223,7 +2233,7 @@ performance:
     #[test]
     fn test_render_evaluator_prompt_full() {
         let role = sample_role();
-        let motivation = sample_motivation();
+        let objective = sample_objective();
         let artifacts = vec!["src/main.rs".to_string(), "tests/test_main.rs".to_string()];
         let log = sample_log_entries();
 
@@ -2234,7 +2244,7 @@ performance:
             verify: Some("All tests pass and code compiles without warnings."),
             agent: None,
             role: Some(&role),
-            motivation: Some(&motivation),
+            objective: Some(&objective),
             artifacts: &artifacts,
             log_entries: &log,
             started_at: Some("2025-05-01T10:00:00Z"),
@@ -2261,8 +2271,8 @@ performance:
         assert!(output.contains(&format!("**Role:** Implementer ({})", role.id)));
         assert!(output.contains("**Desired Outcome:** Working, tested code merged to main."));
         assert!(output.contains(&format!(
-            "**Motivation:** Quality First ({})",
-            motivation.id
+            "**Objective:** Quality First ({})",
+            objective.id
         )));
         assert!(output.contains("**Acceptable Trade-offs:**"));
         assert!(output.contains("- Slower delivery for higher quality"));
@@ -2284,8 +2294,8 @@ performance:
         assert!(output.contains("- Started: 2025-05-01T10:00:00Z"));
         assert!(output.contains("- Completed: 2025-05-01T11:00:00Z"));
 
-        // Evaluation criteria
-        assert!(output.contains("## Evaluation Criteria"));
+        // Reward criteria
+        assert!(output.contains("## Reward Criteria"));
         assert!(output.contains("**correctness**"));
         assert!(output.contains("**completeness**"));
         assert!(output.contains("**efficiency**"));
@@ -2298,7 +2308,7 @@ performance:
 
         // Output format
         assert!(output.contains("## Required Output"));
-        assert!(output.contains("\"score\""));
+        assert!(output.contains("\"value\""));
         assert!(output.contains("\"dimensions\""));
         assert!(output.contains("\"notes\""));
     }
@@ -2312,7 +2322,7 @@ performance:
             verify: None,
             agent: None,
             role: None,
-            motivation: None,
+            objective: None,
             artifacts: &[],
             log_entries: &[],
             started_at: None,
@@ -2326,19 +2336,19 @@ performance:
         assert!(!output.contains("**Required Skills:**"));
         assert!(!output.contains("**Verification Criteria:**"));
         assert!(output.contains("*No role was assigned.*"));
-        assert!(output.contains("*No motivation was assigned.*"));
+        assert!(output.contains("*No objective was assigned.*"));
         assert!(output.contains("*No artifacts were recorded.*"));
         assert!(output.contains("*No log entries.*"));
         assert!(!output.contains("## Timing"));
-        // Evaluation sections should always be present
-        assert!(output.contains("## Evaluation Criteria"));
+        // Reward sections should always be present
+        assert!(output.contains("## Reward Criteria"));
         assert!(output.contains("## Required Output"));
     }
 
     #[test]
     fn test_render_evaluator_prompt_section_order() {
         let role = sample_role();
-        let motivation = sample_motivation();
+        let objective = sample_objective();
         let log = sample_log_entries();
 
         let input = EvaluatorInput {
@@ -2348,7 +2358,7 @@ performance:
             verify: Some("verify"),
             agent: None,
             role: Some(&role),
-            motivation: Some(&motivation),
+            objective: Some(&objective),
             artifacts: &["file.rs".to_string()],
             log_entries: &log,
             started_at: Some("2025-01-01T00:00:00Z"),
@@ -2363,7 +2373,7 @@ performance:
         let artifacts_pos = output.find("## Task Artifacts").unwrap();
         let log_pos = output.find("## Task Log").unwrap();
         let timing_pos = output.find("## Timing").unwrap();
-        let criteria_pos = output.find("## Evaluation Criteria").unwrap();
+        let criteria_pos = output.find("## Reward Criteria").unwrap();
         let required_pos = output.find("## Required Output").unwrap();
 
         assert!(instructions_pos < task_def_pos);
@@ -2375,11 +2385,11 @@ performance:
         assert!(criteria_pos < required_pos);
     }
 
-    // -- Evaluation recording tests ------------------------------------------
+    // -- Reward recording tests ------------------------------------------
 
-    fn make_eval_ref(score: f64, task_id: &str, context_id: &str) -> EvaluationRef {
-        EvaluationRef {
-            score,
+    fn make_eval_ref(value: f64, task_id: &str, context_id: &str) -> RewardRef {
+        RewardRef {
+            value,
             task_id: task_id.into(),
             timestamp: "2025-05-01T12:00:00Z".into(),
             context_id: context_id.into(),
@@ -2387,68 +2397,68 @@ performance:
     }
 
     #[test]
-    fn test_recalculate_avg_score_empty() {
-        assert_eq!(recalculate_avg_score(&[]), None);
+    fn test_recalculate_mean_reward_empty() {
+        assert_eq!(recalculate_mean_reward(&[]), None);
     }
 
     #[test]
-    fn test_recalculate_avg_score_single() {
+    fn test_recalculate_mean_reward_single() {
         let refs = vec![make_eval_ref(0.8, "t1", "m1")];
-        let avg = recalculate_avg_score(&refs).unwrap();
+        let avg = recalculate_mean_reward(&refs).unwrap();
         assert!((avg - 0.8).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_recalculate_avg_score_multiple() {
+    fn test_recalculate_mean_reward_multiple() {
         let refs = vec![
             make_eval_ref(0.6, "t1", "m1"),
             make_eval_ref(0.8, "t2", "m1"),
             make_eval_ref(1.0, "t3", "m1"),
         ];
-        let avg = recalculate_avg_score(&refs).unwrap();
+        let avg = recalculate_mean_reward(&refs).unwrap();
         assert!((avg - 0.8).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_recalculate_avg_score_uneven() {
+    fn test_recalculate_mean_reward_uneven() {
         let refs = vec![
             make_eval_ref(0.0, "t1", "m1"),
             make_eval_ref(1.0, "t2", "m1"),
         ];
-        let avg = recalculate_avg_score(&refs).unwrap();
+        let avg = recalculate_mean_reward(&refs).unwrap();
         assert!((avg - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_update_performance_increments_and_recalculates() {
-        let mut record = PerformanceRecord {
+        let mut record = RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         };
 
         update_performance(&mut record, make_eval_ref(0.8, "t1", "m1"));
         assert_eq!(record.task_count, 1);
-        assert!((record.avg_score.unwrap() - 0.8).abs() < f64::EPSILON);
-        assert_eq!(record.evaluations.len(), 1);
+        assert!((record.mean_reward.unwrap() - 0.8).abs() < f64::EPSILON);
+        assert_eq!(record.rewards.len(), 1);
 
         update_performance(&mut record, make_eval_ref(0.6, "t2", "m1"));
         assert_eq!(record.task_count, 2);
-        assert!((record.avg_score.unwrap() - 0.7).abs() < f64::EPSILON);
-        assert_eq!(record.evaluations.len(), 2);
+        assert!((record.mean_reward.unwrap() - 0.7).abs() < f64::EPSILON);
+        assert_eq!(record.rewards.len(), 2);
 
         update_performance(&mut record, make_eval_ref(1.0, "t3", "m1"));
         assert_eq!(record.task_count, 3);
-        assert!((record.avg_score.unwrap() - 0.8).abs() < f64::EPSILON);
-        assert_eq!(record.evaluations.len(), 3);
+        assert!((record.mean_reward.unwrap() - 0.8).abs() < f64::EPSILON);
+        assert_eq!(record.rewards.len(), 3);
     }
 
     #[test]
     fn test_update_performance_from_existing() {
-        let mut record = PerformanceRecord {
+        let mut record = RewardHistory {
             task_count: 2,
-            avg_score: Some(0.7),
-            evaluations: vec![
+            mean_reward: Some(0.7),
+            rewards: vec![
                 make_eval_ref(0.6, "t1", "m1"),
                 make_eval_ref(0.8, "t2", "m1"),
             ],
@@ -2457,184 +2467,184 @@ performance:
         update_performance(&mut record, make_eval_ref(0.9, "t3", "m1"));
         assert_eq!(record.task_count, 3);
         let expected = (0.6 + 0.8 + 0.9) / 3.0;
-        assert!((record.avg_score.unwrap() - expected).abs() < 1e-10);
+        assert!((record.mean_reward.unwrap() - expected).abs() < 1e-10);
     }
 
     #[test]
-    fn test_record_evaluation_saves_all_artifacts() {
+    fn test_record_reward_saves_all_artifacts() {
         let tmp = TempDir::new().unwrap();
-        let agency_dir = tmp.path().join("agency");
-        init(&agency_dir).unwrap();
+        let identity_dir = tmp.path().join("identity");
+        init(&identity_dir).unwrap();
 
         let role = sample_role();
         let role_id = role.id.clone();
-        save_role(&role, &agency_dir.join("roles")).unwrap();
-        let motivation = sample_motivation();
-        let motivation_id = motivation.id.clone();
-        save_motivation(&motivation, &agency_dir.join("motivations")).unwrap();
+        save_role(&role, &identity_dir.join("roles")).unwrap();
+        let objective = sample_objective();
+        let objective_id = objective.id.clone();
+        save_objective(&objective, &identity_dir.join("objectives")).unwrap();
 
-        let eval = Evaluation {
+        let eval = Reward {
             id: "eval-test-1".into(),
             task_id: "task-42".into(),
             agent_id: String::new(),
             role_id: role_id.clone(),
-            motivation_id: motivation_id.clone(),
-            score: 0.85,
+            objective_id: objective_id.clone(),
+            value: 0.85,
             dimensions: HashMap::new(),
             notes: "Good work".into(),
             evaluator: "test".into(),
             timestamp: "2025-05-01T12:00:00Z".into(),
-            model: None,
+            model: None, source: "llm".to_string(),
         };
 
-        let eval_path = record_evaluation(&eval, &agency_dir).unwrap();
+        let eval_path = record_reward(&eval, &identity_dir).unwrap();
 
-        // 1. Evaluation JSON was saved
+        // 1. Reward JSON was saved
         assert!(eval_path.exists());
-        let saved_eval = load_evaluation(&eval_path).unwrap();
-        assert_eq!(saved_eval.score, 0.85);
+        let saved_eval = load_reward(&eval_path).unwrap();
+        assert_eq!(saved_eval.value, 0.85);
         assert_eq!(saved_eval.task_id, "task-42");
 
         // 2. Role performance was updated
-        let role_path = agency_dir.join("roles").join(format!("{}.yaml", role_id));
+        let role_path = identity_dir.join("roles").join(format!("{}.yaml", role_id));
         let updated_role = load_role(&role_path).unwrap();
         assert_eq!(updated_role.performance.task_count, 1);
-        assert!((updated_role.performance.avg_score.unwrap() - 0.85).abs() < f64::EPSILON);
-        assert_eq!(updated_role.performance.evaluations.len(), 1);
-        assert_eq!(updated_role.performance.evaluations[0].task_id, "task-42");
+        assert!((updated_role.performance.mean_reward.unwrap() - 0.85).abs() < f64::EPSILON);
+        assert_eq!(updated_role.performance.rewards.len(), 1);
+        assert_eq!(updated_role.performance.rewards[0].task_id, "task-42");
         assert_eq!(
-            updated_role.performance.evaluations[0].context_id,
-            motivation_id
+            updated_role.performance.rewards[0].context_id,
+            objective_id
         );
 
-        // 3. Motivation performance was updated
-        let motivation_path = agency_dir
-            .join("motivations")
-            .join(format!("{}.yaml", motivation_id));
-        let updated_motivation = load_motivation(&motivation_path).unwrap();
-        assert_eq!(updated_motivation.performance.task_count, 1);
-        assert!((updated_motivation.performance.avg_score.unwrap() - 0.85).abs() < f64::EPSILON);
-        assert_eq!(updated_motivation.performance.evaluations.len(), 1);
+        // 3. Objective performance was updated
+        let objective_path = identity_dir
+            .join("objectives")
+            .join(format!("{}.yaml", objective_id));
+        let updated_objective = load_objective(&objective_path).unwrap();
+        assert_eq!(updated_objective.performance.task_count, 1);
+        assert!((updated_objective.performance.mean_reward.unwrap() - 0.85).abs() < f64::EPSILON);
+        assert_eq!(updated_objective.performance.rewards.len(), 1);
         assert_eq!(
-            updated_motivation.performance.evaluations[0].context_id,
+            updated_objective.performance.rewards[0].context_id,
             role_id
         );
     }
 
     #[test]
-    fn test_record_evaluation_multiple_accumulates() {
+    fn test_record_reward_multiple_accumulates() {
         let tmp = TempDir::new().unwrap();
-        let agency_dir = tmp.path().join("agency");
-        init(&agency_dir).unwrap();
+        let identity_dir = tmp.path().join("identity");
+        init(&identity_dir).unwrap();
 
         let role = sample_role();
         let role_id = role.id.clone();
-        save_role(&role, &agency_dir.join("roles")).unwrap();
-        let motivation = sample_motivation();
-        let motivation_id = motivation.id.clone();
-        save_motivation(&motivation, &agency_dir.join("motivations")).unwrap();
+        save_role(&role, &identity_dir.join("roles")).unwrap();
+        let objective = sample_objective();
+        let objective_id = objective.id.clone();
+        save_objective(&objective, &identity_dir.join("objectives")).unwrap();
 
-        let eval1 = Evaluation {
+        let eval1 = Reward {
             id: "eval-1".into(),
             task_id: "task-1".into(),
             agent_id: String::new(),
             role_id: role_id.clone(),
-            motivation_id: motivation_id.clone(),
-            score: 0.6,
+            objective_id: objective_id.clone(),
+            value: 0.6,
             dimensions: HashMap::new(),
             notes: "".into(),
             evaluator: "test".into(),
             timestamp: "2025-05-01T10:00:00Z".into(),
-            model: None,
+            model: None, source: "llm".to_string(),
         };
 
-        let eval2 = Evaluation {
+        let eval2 = Reward {
             id: "eval-2".into(),
             task_id: "task-2".into(),
             agent_id: String::new(),
             role_id: role_id.clone(),
-            motivation_id: motivation_id.clone(),
-            score: 1.0,
+            objective_id: objective_id.clone(),
+            value: 1.0,
             dimensions: HashMap::new(),
             notes: "".into(),
             evaluator: "test".into(),
             timestamp: "2025-05-01T11:00:00Z".into(),
-            model: None,
+            model: None, source: "llm".to_string(),
         };
 
-        record_evaluation(&eval1, &agency_dir).unwrap();
-        record_evaluation(&eval2, &agency_dir).unwrap();
+        record_reward(&eval1, &identity_dir).unwrap();
+        record_reward(&eval2, &identity_dir).unwrap();
 
-        let role_path = agency_dir.join("roles").join(format!("{}.yaml", role_id));
+        let role_path = identity_dir.join("roles").join(format!("{}.yaml", role_id));
         let updated_role = load_role(&role_path).unwrap();
         assert_eq!(updated_role.performance.task_count, 2);
-        assert!((updated_role.performance.avg_score.unwrap() - 0.8).abs() < f64::EPSILON);
-        assert_eq!(updated_role.performance.evaluations.len(), 2);
+        assert!((updated_role.performance.mean_reward.unwrap() - 0.8).abs() < f64::EPSILON);
+        assert_eq!(updated_role.performance.rewards.len(), 2);
 
-        let motivation_path = agency_dir
-            .join("motivations")
-            .join(format!("{}.yaml", motivation_id));
-        let updated_motivation = load_motivation(&motivation_path).unwrap();
-        assert_eq!(updated_motivation.performance.task_count, 2);
-        assert!((updated_motivation.performance.avg_score.unwrap() - 0.8).abs() < f64::EPSILON);
+        let objective_path = identity_dir
+            .join("objectives")
+            .join(format!("{}.yaml", objective_id));
+        let updated_objective = load_objective(&objective_path).unwrap();
+        assert_eq!(updated_objective.performance.task_count, 2);
+        assert!((updated_objective.performance.mean_reward.unwrap() - 0.8).abs() < f64::EPSILON);
     }
 
     #[test]
-    fn test_record_evaluation_missing_role_does_not_error() {
+    fn test_record_reward_missing_role_does_not_error() {
         let tmp = TempDir::new().unwrap();
-        let agency_dir = tmp.path().join("agency");
-        init(&agency_dir).unwrap();
+        let identity_dir = tmp.path().join("identity");
+        init(&identity_dir).unwrap();
 
-        let motivation = sample_motivation();
-        let motivation_id = motivation.id.clone();
-        save_motivation(&motivation, &agency_dir.join("motivations")).unwrap();
+        let objective = sample_objective();
+        let objective_id = objective.id.clone();
+        save_objective(&objective, &identity_dir.join("objectives")).unwrap();
 
-        let eval = Evaluation {
+        let eval = Reward {
             id: "eval-orphan".into(),
             task_id: "task-99".into(),
             agent_id: String::new(),
             role_id: "nonexistent-role".into(),
-            motivation_id: motivation_id.clone(),
-            score: 0.5,
+            objective_id: objective_id.clone(),
+            value: 0.5,
             dimensions: HashMap::new(),
             notes: "".into(),
             evaluator: "test".into(),
             timestamp: "2025-05-01T12:00:00Z".into(),
-            model: None,
+            model: None, source: "llm".to_string(),
         };
 
-        let result = record_evaluation(&eval, &agency_dir);
+        let result = record_reward(&eval, &identity_dir);
         assert!(result.is_ok());
 
-        let motivation_path = agency_dir
-            .join("motivations")
-            .join(format!("{}.yaml", motivation_id));
-        let updated = load_motivation(&motivation_path).unwrap();
+        let objective_path = identity_dir
+            .join("objectives")
+            .join(format!("{}.yaml", objective_id));
+        let updated = load_objective(&objective_path).unwrap();
         assert_eq!(updated.performance.task_count, 1);
     }
 
     #[test]
-    fn test_evaluation_ref_roundtrip() {
+    fn test_reward_ref_roundtrip() {
         let tmp = TempDir::new().unwrap();
         let mut role = sample_role();
-        role.performance.evaluations.push(EvaluationRef {
-            score: 0.75,
+        role.performance.rewards.push(RewardRef {
+            value: 0.75,
             task_id: "task-abc".into(),
             timestamp: "2025-05-01T12:00:00Z".into(),
-            context_id: "motivation-xyz".into(),
+            context_id: "objective-xyz".into(),
         });
         role.performance.task_count = 1;
-        role.performance.avg_score = Some(0.75);
+        role.performance.mean_reward = Some(0.75);
 
         let path = save_role(&role, tmp.path()).unwrap();
         let loaded = load_role(&path).unwrap();
 
-        assert_eq!(loaded.performance.evaluations.len(), 1);
-        let ref0 = &loaded.performance.evaluations[0];
-        assert!((ref0.score - 0.75).abs() < f64::EPSILON);
+        assert_eq!(loaded.performance.rewards.len(), 1);
+        let ref0 = &loaded.performance.rewards[0];
+        assert!((ref0.value - 0.75).abs() < f64::EPSILON);
         assert_eq!(ref0.task_id, "task-abc");
         assert_eq!(ref0.timestamp, "2025-05-01T12:00:00Z");
-        assert_eq!(ref0.context_id, "motivation-xyz");
+        assert_eq!(ref0.context_id, "objective-xyz");
     }
 
     // -- Evolution utility tests ---------------------------------------------
@@ -2681,7 +2691,7 @@ performance:
         assert_eq!(child.lineage.created_by, "evolver-evo-run-1");
         // Performance starts fresh
         assert_eq!(child.performance.task_count, 0);
-        assert!(child.performance.avg_score.is_none());
+        assert!(child.performance.mean_reward.is_none());
     }
 
     #[test]
@@ -2716,21 +2726,21 @@ performance:
     }
 
     #[test]
-    fn test_crossover_motivations_merges_accept_reject_lists() {
-        let parent_a = build_motivation(
+    fn test_crossover_objectives_merges_accept_reject_lists() {
+        let parent_a = build_objective(
             "Careful",
             "Prioritizes reliability.",
             vec!["Slow".into(), "Verbose".into()],
             vec!["Unreliable".into(), "Untested".into()],
         );
-        let parent_b = build_motivation(
+        let parent_b = build_objective(
             "Fast",
             "Prioritizes speed.",
             vec!["Less documentation".into(), "Verbose".into()], // "Verbose" overlaps
             vec!["Broken code".into(), "Untested".into()],       // "Untested" overlaps
         );
 
-        let child = crossover_motivations(
+        let child = crossover_objectives(
             &parent_a,
             &parent_b,
             "xover-run",
@@ -2782,42 +2792,42 @@ performance:
     }
 
     #[test]
-    fn test_crossover_motivations_generation_uses_max() {
-        let mut parent_a = build_motivation("A", "A", vec!["a".into()], vec![]);
+    fn test_crossover_objectives_generation_uses_max() {
+        let mut parent_a = build_objective("A", "A", vec!["a".into()], vec![]);
         parent_a.lineage = Lineage::mutation("ancestor", 4, "r1");
         assert_eq!(parent_a.lineage.generation, 5);
 
-        let mut parent_b = build_motivation("B", "B", vec!["b".into()], vec![]);
+        let mut parent_b = build_objective("B", "B", vec!["b".into()], vec![]);
         parent_b.lineage = Lineage::mutation("ancestor2", 1, "r2");
         assert_eq!(parent_b.lineage.generation, 2);
 
-        let child = crossover_motivations(&parent_a, &parent_b, "xr", "Hybrid", "Hybrid desc");
+        let child = crossover_objectives(&parent_a, &parent_b, "xr", "Hybrid", "Hybrid desc");
         // max(5, 2) + 1 = 6
         assert_eq!(child.lineage.generation, 6);
     }
 
     #[test]
-    fn test_crossover_motivations_no_overlap() {
-        let parent_a = build_motivation("A", "A", vec!["x".into()], vec!["p".into()]);
-        let parent_b = build_motivation("B", "B", vec!["y".into()], vec!["q".into()]);
+    fn test_crossover_objectives_no_overlap() {
+        let parent_a = build_objective("A", "A", vec!["x".into()], vec!["p".into()]);
+        let parent_b = build_objective("B", "B", vec!["y".into()], vec!["q".into()]);
 
-        let child = crossover_motivations(&parent_a, &parent_b, "r", "C", "C");
+        let child = crossover_objectives(&parent_a, &parent_b, "r", "C", "C");
         assert_eq!(child.acceptable_tradeoffs, vec!["x", "y"]);
         assert_eq!(child.unacceptable_tradeoffs, vec!["p", "q"]);
     }
 
     #[test]
-    fn test_tournament_select_role_picks_highest_scored() {
-        let mut low = build_role("Low", "Low scorer", vec![], "Low outcome");
-        low.performance.avg_score = Some(0.3);
+    fn test_tournament_select_role_picks_highest_valued() {
+        let mut low = build_role("Low", "Low valuer", vec![], "Low outcome");
+        low.performance.mean_reward = Some(0.3);
         low.performance.task_count = 5;
 
-        let mut mid = build_role("Mid", "Mid scorer", vec![], "Mid outcome");
-        mid.performance.avg_score = Some(0.6);
+        let mut mid = build_role("Mid", "Mid valuer", vec![], "Mid outcome");
+        mid.performance.mean_reward = Some(0.6);
         mid.performance.task_count = 5;
 
-        let mut high = build_role("High", "High scorer", vec![], "High outcome");
-        high.performance.avg_score = Some(0.9);
+        let mut high = build_role("High", "High valuer", vec![], "High outcome");
+        high.performance.mean_reward = Some(0.9);
         high.performance.task_count = 5;
 
         let candidates = vec![low.clone(), mid.clone(), high.clone()];
@@ -2826,16 +2836,16 @@ performance:
     }
 
     #[test]
-    fn test_tournament_select_role_none_scores_treated_as_zero() {
-        let mut scored = build_role("Scored", "Has a score", vec![], "Outcome");
-        scored.performance.avg_score = Some(0.1);
+    fn test_tournament_select_role_none_values_treated_as_zero() {
+        let mut valued = build_role("Valued", "Has a value", vec![], "Outcome");
+        valued.performance.mean_reward = Some(0.1);
 
-        let unscored = build_role("Unscored", "No score yet", vec![], "Outcome2");
-        // unscored.performance.avg_score remains None (treated as 0.0)
+        let unvalued = build_role("Unvalued", "No value yet", vec![], "Outcome2");
+        // unvalued.performance.mean_reward remains None (treated as 0.0)
 
-        let candidates = vec![unscored.clone(), scored.clone()];
+        let candidates = vec![unvalued.clone(), valued.clone()];
         let winner = tournament_select_role(&candidates).unwrap();
-        assert_eq!(winner.id, scored.id);
+        assert_eq!(winner.id, valued.id);
     }
 
     #[test]
@@ -2853,17 +2863,17 @@ performance:
     }
 
     #[test]
-    fn test_roles_below_threshold_filters_low_scorers() {
+    fn test_roles_below_threshold_filters_low_valuers() {
         let mut good = build_role("Good", "Good role", vec![], "Good outcome");
-        good.performance.avg_score = Some(0.8);
+        good.performance.mean_reward = Some(0.8);
         good.performance.task_count = 10;
 
         let mut bad = build_role("Bad", "Bad role", vec![], "Bad outcome");
-        bad.performance.avg_score = Some(0.2);
+        bad.performance.mean_reward = Some(0.2);
         bad.performance.task_count = 10;
 
         let mut mediocre = build_role("Meh", "Mediocre role", vec![], "Meh outcome");
-        mediocre.performance.avg_score = Some(0.49);
+        mediocre.performance.mean_reward = Some(0.49);
         mediocre.performance.task_count = 10;
 
         let roles = vec![good.clone(), bad.clone(), mediocre.clone()];
@@ -2878,29 +2888,29 @@ performance:
     #[test]
     fn test_roles_below_threshold_respects_min_evals() {
         let mut low_but_new = build_role("New", "Barely tested", vec![], "New outcome");
-        low_but_new.performance.avg_score = Some(0.1);
+        low_but_new.performance.mean_reward = Some(0.1);
         low_but_new.performance.task_count = 2; // below min_evals
 
         let mut low_and_tested = build_role("Old", "Thoroughly tested", vec![], "Old outcome");
-        low_and_tested.performance.avg_score = Some(0.1);
+        low_and_tested.performance.mean_reward = Some(0.1);
         low_and_tested.performance.task_count = 10; // above min_evals
 
         let roles = vec![low_but_new.clone(), low_and_tested.clone()];
         let to_retire = roles_below_threshold(&roles, 0.5, 5);
 
-        // Only the well-tested low scorer should be flagged
+        // Only the well-tested low valuer should be flagged
         assert_eq!(to_retire.len(), 1);
         assert_eq!(to_retire[0].id, low_and_tested.id);
     }
 
     #[test]
-    fn test_roles_below_threshold_skips_unscored() {
-        let unscored = build_role("Unscored", "No evals", vec![], "Outcome");
-        // avg_score is None, task_count is 0
+    fn test_roles_below_threshold_skips_unvalued() {
+        let unvalued = build_role("Unvalued", "No evals", vec![], "Outcome");
+        // mean_reward is None, task_count is 0
 
-        let roles = vec![unscored];
+        let roles = vec![unvalued];
         let to_retire = roles_below_threshold(&roles, 0.5, 0);
-        // None score => map_or(false, ...) => not flagged
+        // None value => map_or(false, ...) => not flagged
         assert!(to_retire.is_empty());
     }
 
@@ -2979,12 +2989,12 @@ performance:
 
     fn sample_agent() -> Agent {
         let role = sample_role();
-        let motivation = sample_motivation();
-        let id = content_hash_agent(&role.id, &motivation.id);
+        let objective = sample_objective();
+        let id = content_hash_agent(&role.id, &objective.id);
         Agent {
             id,
             role_id: role.id,
-            motivation_id: motivation.id,
+            objective_id: objective.id,
             name: "Test Agent".into(),
             performance: sample_performance(),
             lineage: Lineage::default(),
@@ -3011,10 +3021,10 @@ performance:
         let loaded = load_agent(&path).unwrap();
         assert_eq!(loaded.id, agent.id);
         assert_eq!(loaded.role_id, agent.role_id);
-        assert_eq!(loaded.motivation_id, agent.motivation_id);
+        assert_eq!(loaded.objective_id, agent.objective_id);
         assert_eq!(loaded.name, agent.name);
         assert_eq!(loaded.performance.task_count, 0);
-        assert!(loaded.performance.avg_score.is_none());
+        assert!(loaded.performance.mean_reward.is_none());
         assert_eq!(loaded.capabilities, vec!["rust", "testing"]);
         assert_eq!(loaded.rate, Some(50.0));
         assert_eq!(loaded.capacity, Some(3.0));
@@ -3027,12 +3037,12 @@ performance:
     fn test_agent_roundtrip_defaults() {
         let tmp = TempDir::new().unwrap();
         let role = sample_role();
-        let motivation = sample_motivation();
-        let id = content_hash_agent(&role.id, &motivation.id);
+        let objective = sample_objective();
+        let id = content_hash_agent(&role.id, &objective.id);
         let agent = Agent {
             id,
             role_id: role.id,
-            motivation_id: motivation.id,
+            objective_id: objective.id,
             name: "Default Agent".into(),
             performance: sample_performance(),
             lineage: Lineage::default(),
@@ -3060,12 +3070,12 @@ performance:
 
         let r1 = build_role("R1", "Role 1", vec![], "O1");
         let r2 = build_role("R2", "Role 2", vec![], "O2");
-        let m = sample_motivation();
+        let m = sample_objective();
 
         let a1 = Agent {
             id: content_hash_agent(&r1.id, &m.id),
             role_id: r1.id.clone(),
-            motivation_id: m.id.clone(),
+            objective_id: m.id.clone(),
             name: "Agent 1".into(),
             performance: sample_performance(),
             lineage: Lineage::default(),
@@ -3079,7 +3089,7 @@ performance:
         let a2 = Agent {
             id: content_hash_agent(&r2.id, &m.id),
             role_id: r2.id.clone(),
-            motivation_id: m.id.clone(),
+            objective_id: m.id.clone(),
             name: "Agent 2".into(),
             performance: sample_performance(),
             lineage: Lineage::default(),
@@ -3178,8 +3188,8 @@ performance:
     fn test_build_role_fresh_performance() {
         let r = build_role("R", "D", vec![], "O");
         assert_eq!(r.performance.task_count, 0);
-        assert!(r.performance.avg_score.is_none());
-        assert!(r.performance.evaluations.is_empty());
+        assert!(r.performance.mean_reward.is_none());
+        assert!(r.performance.rewards.is_empty());
     }
 
     #[test]
@@ -3191,53 +3201,53 @@ performance:
     }
 
     #[test]
-    fn test_build_motivation_content_hash_deterministic() {
-        let m1 = build_motivation("Name A", "Desc", vec!["a".into()], vec!["b".into()]);
-        let m2 = build_motivation("Name B", "Desc", vec!["a".into()], vec!["b".into()]);
+    fn test_build_objective_content_hash_deterministic() {
+        let m1 = build_objective("Name A", "Desc", vec!["a".into()], vec!["b".into()]);
+        let m2 = build_objective("Name B", "Desc", vec!["a".into()], vec!["b".into()]);
         // Same immutable content => same ID
         assert_eq!(m1.id, m2.id);
         assert_eq!(m1.id.len(), 64);
     }
 
     #[test]
-    fn test_build_motivation_different_description_different_id() {
-        let m1 = build_motivation("M", "Desc A", vec![], vec![]);
-        let m2 = build_motivation("M", "Desc B", vec![], vec![]);
+    fn test_build_objective_different_description_different_id() {
+        let m1 = build_objective("M", "Desc A", vec![], vec![]);
+        let m2 = build_objective("M", "Desc B", vec![], vec![]);
         assert_ne!(m1.id, m2.id);
     }
 
     #[test]
-    fn test_build_motivation_different_acceptable_different_id() {
-        let m1 = build_motivation("M", "D", vec!["x".into()], vec![]);
-        let m2 = build_motivation("M", "D", vec!["y".into()], vec![]);
+    fn test_build_objective_different_acceptable_different_id() {
+        let m1 = build_objective("M", "D", vec!["x".into()], vec![]);
+        let m2 = build_objective("M", "D", vec!["y".into()], vec![]);
         assert_ne!(m1.id, m2.id);
     }
 
     #[test]
-    fn test_build_motivation_different_unacceptable_different_id() {
-        let m1 = build_motivation("M", "D", vec![], vec!["x".into()]);
-        let m2 = build_motivation("M", "D", vec![], vec!["y".into()]);
+    fn test_build_objective_different_unacceptable_different_id() {
+        let m1 = build_objective("M", "D", vec![], vec!["x".into()]);
+        let m2 = build_objective("M", "D", vec![], vec!["y".into()]);
         assert_ne!(m1.id, m2.id);
     }
 
     #[test]
-    fn test_build_motivation_name_does_not_affect_id() {
-        let m1 = build_motivation("Alpha", "Same", vec!["a".into()], vec!["b".into()]);
-        let m2 = build_motivation("Beta", "Same", vec!["a".into()], vec!["b".into()]);
+    fn test_build_objective_name_does_not_affect_id() {
+        let m1 = build_objective("Alpha", "Same", vec!["a".into()], vec!["b".into()]);
+        let m2 = build_objective("Beta", "Same", vec!["a".into()], vec!["b".into()]);
         assert_eq!(m1.id, m2.id);
     }
 
     #[test]
-    fn test_build_motivation_fresh_performance() {
-        let m = build_motivation("M", "D", vec![], vec![]);
+    fn test_build_objective_fresh_performance() {
+        let m = build_objective("M", "D", vec![], vec![]);
         assert_eq!(m.performance.task_count, 0);
-        assert!(m.performance.avg_score.is_none());
-        assert!(m.performance.evaluations.is_empty());
+        assert!(m.performance.mean_reward.is_none());
+        assert!(m.performance.rewards.is_empty());
     }
 
     #[test]
-    fn test_build_motivation_default_lineage() {
-        let m = build_motivation("M", "D", vec![], vec![]);
+    fn test_build_objective_default_lineage() {
+        let m = build_objective("M", "D", vec![], vec![]);
         assert!(m.lineage.parent_ids.is_empty());
         assert_eq!(m.lineage.generation, 0);
         assert_eq!(m.lineage.created_by, "human");
@@ -3334,54 +3344,54 @@ performance:
     }
 
     #[test]
-    fn test_find_motivation_by_prefix_exact_match() {
+    fn test_find_objective_by_prefix_exact_match() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let m = sample_motivation();
-        save_motivation(&m, dir).unwrap();
+        let m = sample_objective();
+        save_objective(&m, dir).unwrap();
 
-        let found = find_motivation_by_prefix(dir, &m.id).unwrap();
+        let found = find_objective_by_prefix(dir, &m.id).unwrap();
         assert_eq!(found.id, m.id);
         assert_eq!(found.name, m.name);
     }
 
     #[test]
-    fn test_find_motivation_by_prefix_short_prefix() {
+    fn test_find_objective_by_prefix_short_prefix() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let m = sample_motivation();
-        save_motivation(&m, dir).unwrap();
+        let m = sample_objective();
+        save_objective(&m, dir).unwrap();
 
         let prefix = &m.id[..8];
-        let found = find_motivation_by_prefix(dir, prefix).unwrap();
+        let found = find_objective_by_prefix(dir, prefix).unwrap();
         assert_eq!(found.id, m.id);
     }
 
     #[test]
-    fn test_find_motivation_by_prefix_no_match() {
+    fn test_find_objective_by_prefix_no_match() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let m = sample_motivation();
-        save_motivation(&m, dir).unwrap();
+        let m = sample_objective();
+        save_objective(&m, dir).unwrap();
 
-        let result = find_motivation_by_prefix(dir, "zzzznotfound");
+        let result = find_objective_by_prefix(dir, "zzzznotfound");
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("No motivation matching")
+                .contains("No objective matching")
         );
     }
 
     #[test]
-    fn test_find_motivation_by_prefix_ambiguous() {
+    fn test_find_objective_by_prefix_ambiguous() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let m1 = build_motivation("M1", "First", vec!["a".into()], vec![]);
-        let m2 = build_motivation("M2", "Second", vec!["b".into()], vec![]);
-        save_motivation(&m1, dir).unwrap();
-        save_motivation(&m2, dir).unwrap();
+        let m1 = build_objective("M1", "First", vec!["a".into()], vec![]);
+        let m2 = build_objective("M2", "Second", vec!["b".into()], vec![]);
+        save_objective(&m1, dir).unwrap();
+        save_objective(&m2, dir).unwrap();
 
         let common_len = m1
             .id
@@ -3392,7 +3402,7 @@ performance:
 
         if common_len > 0 {
             let prefix = &m1.id[..common_len];
-            let result = find_motivation_by_prefix(dir, prefix);
+            let result = find_objective_by_prefix(dir, prefix);
             assert!(result.is_err());
             assert!(result.unwrap_err().to_string().contains("matches"));
         }
@@ -3446,12 +3456,12 @@ performance:
         let dir = tmp.path();
         let r1 = build_role("R1", "D1", vec![], "O1");
         let r2 = build_role("R2", "D2", vec![], "O2");
-        let m = sample_motivation();
+        let m = sample_objective();
 
         let a1 = Agent {
             id: content_hash_agent(&r1.id, &m.id),
             role_id: r1.id,
-            motivation_id: m.id.clone(),
+            objective_id: m.id.clone(),
             name: "A1".into(),
             performance: sample_performance(),
             lineage: Lineage::default(),
@@ -3465,7 +3475,7 @@ performance:
         let a2 = Agent {
             id: content_hash_agent(&r2.id, &m.id),
             role_id: r2.id,
-            motivation_id: m.id.clone(),
+            objective_id: m.id.clone(),
             name: "A2".into(),
             performance: sample_performance(),
             lineage: Lineage::default(),
@@ -3509,19 +3519,19 @@ performance:
     }
 
     #[test]
-    fn test_find_motivation_by_prefix_special_characters() {
+    fn test_find_objective_by_prefix_special_characters() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
-        let m = sample_motivation();
-        save_motivation(&m, dir).unwrap();
+        let m = sample_objective();
+        save_objective(&m, dir).unwrap();
 
-        let result = find_motivation_by_prefix(dir, "^$\\{|}");
+        let result = find_objective_by_prefix(dir, "^$\\{|}");
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("No motivation matching")
+                .contains("No objective matching")
         );
     }
 
@@ -3605,12 +3615,12 @@ performance:
     #[test]
     fn test_agent_is_not_human_with_default_executor() {
         let role = sample_role();
-        let motivation = sample_motivation();
-        let id = content_hash_agent(&role.id, &motivation.id);
+        let objective = sample_objective();
+        let id = content_hash_agent(&role.id, &objective.id);
         let agent = Agent {
             id,
             role_id: role.id,
-            motivation_id: motivation.id,
+            objective_id: objective.id,
             name: "Default".into(),
             performance: sample_performance(),
             lineage: Lineage::default(),

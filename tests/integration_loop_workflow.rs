@@ -442,7 +442,7 @@ fn test_multiple_iterations_until_max() {
     wg_ok(&wg_dir, &["done", "repeater"]);
     let graph = load_graph(graph_path(&wg_dir)).unwrap();
     let task = graph.get_task("repeater").unwrap();
-    // After this done, evaluate_loop_edges checks if iteration < max_iterations
+    // After this done, reward_loop_edges checks if iteration < max_iterations
     // iteration was 2, 2 < 3 → fires, sets to 3
     assert_eq!(task.loop_iteration, 3, "Iter 3: loop_iteration should be 3");
     assert_eq!(

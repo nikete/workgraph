@@ -314,7 +314,7 @@ For comparison, `.workgraph/graph.jsonl` for 1000 tasks is already ~2-5 MB. The 
 - Content-addressed artifact store (store file contents by SHA-256)
 - Structured daemon log (replace text daemon.log with JSONL)
 - LLM cost tracking (parse stream-json output for token counts)
-- Evolve/evaluate prompt archival (save the prompts sent during agency evolution)
+- Evolve/reward prompt archival (save the prompts sent during identity evolution)
 
 ---
 

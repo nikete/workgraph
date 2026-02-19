@@ -13,7 +13,7 @@
 - `docs/LOGGING.md` — current logging documentation
 - `src/provenance.rs` — operation log implementation (327 lines)
 - `tests/integration_logging.rs` — 29 integration tests for logging
-- `docs/AGENCY.md` — agency system with evaluation/evolution
+- `docs/IDENTITY.md` — identity system with reward/evolution
 - `docs/research/amplifier-integration-proposal.md` — executor model analysis
 - `research-veracity-exchange` task logs — summary of the veracity exchange integration research
 - `compare-nikete-vs` task (abandoned) — decision to build on our architecture
@@ -29,7 +29,7 @@ Nikete's veracity exchange concept (from the research-veracity-exchange task) pr
 2. **Trust market**: Public (non-sensitive) prompt sections posted to a market where others suggest improvements. Good suggestions signal credibility.
 3. **Network learning**: Learn which peers to do veracity exchanges with — trust built on demonstrated competence.
 4. **Information flow control**: The DAG structure controls what data leaves your node. Task interfaces define public/private boundaries.
-5. **Latent payoff**: Some sub-units have outcomes that take time to evaluate (e.g., portfolio performance over weeks).
+5. **Latent payoff**: Some sub-units have outcomes that take time to reward (e.g., portfolio performance over weeks).
 
 ---
 
@@ -49,15 +49,15 @@ Nikete's veracity exchange concept (from the research-veracity-exchange task) pr
 - Each retry attempt gets its own timestamped subdirectory
 - Full history of all attempts preserved permanently
 
-### Agency Evaluation System (implemented)
+### Identity Reward System (implemented)
 - 4-dimension scoring: correctness (40%), completeness (30%), efficiency (15%), style_adherence (15%)
-- Evaluations stored in `.workgraph/agency/evaluations/` as YAML
-- Scores propagate to agent, role, and motivation performance records
+- Rewards stored in `.workgraph/identity/rewards/` as YAML
+- Scores propagate to agent, role, and objective performance records
 - Performance trends computed (up/down/flat)
-- Synergy matrix (role × motivation cross-performance)
+- Synergy matrix (role × objective cross-performance)
 
-### Agency Evolution (implemented)
-- Mutation, crossover, gap-analysis, retirement, motivation-tuning strategies
+### Identity Evolution (implemented)
+- Mutation, crossover, gap-analysis, retirement, objective-tuning strategies
 - LLM-powered evolver agent proposes structured operations
 - Content-hash IDs ensure identity immutability
 - Lineage tracking (parent_ids, generation, created_by)
@@ -75,18 +75,18 @@ Nikete's veracity exchange concept (from the research-veracity-exchange task) pr
 ### 1. Outcome Tracking — Score: 2/5
 
 **What supports veracity exchange:**
-- The evaluation system scores task outputs on a 0–1 scale across 4 dimensions
-- Evaluations are stored per-task with timestamps, agent context, and model metadata
-- Performance records aggregate scores at agent, role, and motivation levels
+- The reward system scores task outputs on a 0–1 scale across 4 dimensions
+- Rewards are stored per-task with timestamps, agent context, and model metadata
+- Performance records aggregate scores at agent, role, and objective levels
 - The `detail` field in `OperationEntry` accepts arbitrary JSON, so outcome data *could* be attached to log entries today with no schema change
 
 **What's missing:**
-- **No domain-specific outcome scores.** Evaluations are LLM-judged quality assessments, not real-world outcomes (P&L, MSE, prediction accuracy). The veracity exchange needs ground-truth metrics, not proxy quality scores.
-- **No latent outcome mechanism.** There's no way to attach an outcome to a task weeks after completion. Evaluations happen once, at completion time. Veracity exchange explicitly requires deferred scoring.
-- **No outcome taxonomy.** The system has one score type (evaluation). Veracity exchange needs multiple score types: quality (current), financial return, prediction accuracy, peer review, etc.
-- **No score update/revision.** Once an evaluation is written, it's immutable. Latent payoffs require updating scores over time.
+- **No domain-specific outcome scores.** Rewards are LLM-judged quality assessments, not real-world outcomes (P&L, MSE, prediction accuracy). The veracity exchange needs ground-truth metrics, not proxy quality scores.
+- **No latent outcome mechanism.** There's no way to attach an outcome to a task weeks after completion. Rewards happen once, at completion time. Veracity exchange explicitly requires deferred scoring.
+- **No outcome taxonomy.** The system has one score type (reward). Veracity exchange needs multiple score types: quality (current), financial return, prediction accuracy, peer review, etc.
+- **No score update/revision.** Once an reward is written, it's immutable. Latent payoffs require updating scores over time.
 
-**Gap to close:** Add an `outcome` field to tasks or a separate outcomes store that supports: (a) multiple score types with arbitrary keys, (b) deferred attachment (score added long after task completion), (c) score revision/update. The evaluation system provides the infrastructure pattern — the gap is semantic, not architectural. Estimated: ~200 lines for a basic `wg outcome add <task-id> --type pnl --value 0.12` command + storage.
+**Gap to close:** Add an `outcome` field to tasks or a separate outcomes store that supports: (a) multiple score types with arbitrary keys, (b) deferred attachment (score added long after task completion), (c) score revision/update. The reward system provides the infrastructure pattern — the gap is semantic, not architectural. Estimated: ~200 lines for a basic `wg outcome add <task-id> --type pnl --value 0.12` command + storage.
 
 ### 2. Audit Completeness — Score: 4/5
 
@@ -95,7 +95,7 @@ Nikete's veracity exchange concept (from the research-veracity-exchange task) pr
 - **Actor attribution.** Every operation tagged with `"cli"`, `"agent:<id>"`, or `"coordinator"`. Can answer "who did this work?"
 - **Agent conversation archives.** Full prompts and outputs preserved per attempt. Can prove what an agent was asked and what it produced.
 - **Deterministic reconstruction.** The operation log is complete enough to rebuild graph state at any timestamp (designed in provenance system, forward-replay algorithm specified).
-- **Content-hash agent IDs.** Agency entities are identified by SHA-256 of their identity-defining fields. Tamper-evident.
+- **Content-hash agent IDs.** Identity entities are identified by SHA-256 of their identity-defining fields. Tamper-evident.
 - **29 integration tests** verify logging completeness and coherency.
 
 **What's missing:**
@@ -157,7 +157,7 @@ This is the largest implementation gap after information boundary control. niket
 
 **What supports veracity exchange:**
 - **`wg log --operations --json`** provides machine-readable operation history. An external consumer could parse this.
-- **Evaluation scores exist in structured YAML.** A consumer could read `.workgraph/agency/evaluations/`.
+- **Reward scores exist in structured YAML.** A consumer could read `.workgraph/identity/rewards/`.
 - **Artifact paths are declared per task.** A consumer knows what files a task produced.
 - **Content-hash IDs provide stable references.** Agents and tasks can be referenced unambiguously.
 
@@ -170,7 +170,7 @@ This is the largest implementation gap after information boundary control. niket
 - **No suggestion/improvement interface.** The trust market concept requires accepting improvement suggestions from external peers.
 
 **Gap to close:** The veracity exchange research recommended a 3-phase approach:
-1. **Phase 1 (CLI bridge)**: `wg exchange export <task-id>` generates a portable JSON bundle (task definition, evaluation scores, public artifacts). `wg exchange import` consumes bundles from peers. ~300-400 lines.
+1. **Phase 1 (CLI bridge)**: `wg exchange export <task-id>` generates a portable JSON bundle (task definition, reward scores, public artifacts). `wg exchange import` consumes bundles from peers. ~300-400 lines.
 2. **Phase 2 (Event hooks)**: Hook system that notifies external systems on task completion. Allows passive consumers to subscribe. ~200 lines.
 3. **Phase 3 (Native integration)**: Full exchange client with peer discovery, credibility tracking, and bidirectional communication. This is a separate tool, not core workgraph changes.
 
@@ -182,7 +182,7 @@ This is correctly deferred as the most speculative dimension. Phase 1 alone prov
 
 | Dimension | Score | Assessment |
 |-----------|-------|------------|
-| **Outcome Tracking** | 2/5 | Evaluation infrastructure exists but tracks LLM quality, not real-world outcomes. No latent payoff mechanism. |
+| **Outcome Tracking** | 2/5 | Reward infrastructure exists but tracks LLM quality, not real-world outcomes. No latent payoff mechanism. |
 | **Audit Completeness** | 4/5 | Strongest dimension. Full mutation history, actor attribution, agent archives, 29 tests. Missing: structured traces, artifact hashing. |
 | **Information Boundary Control** | 1/5 | Largest gap. No visibility classification at any level. DAG provides implicit boundaries but nothing is enforceable. |
 | **Replay/Reproducibility** | 2/5 | Data exists for replay but no mechanism. nikete's fork has reference implementation. |
@@ -201,22 +201,22 @@ This is correctly deferred as the most speculative dimension. Phase 1 alone prov
 
 ### Tier 2: Core Veracity Capabilities
 
-3. **Outcome scoring** — Add `wg outcome` command for domain-specific, deferrable scores. Extends evaluation infrastructure with real-world metrics. Required for veracity exchange's fundamental premise.
+3. **Outcome scoring** — Add `wg outcome` command for domain-specific, deferrable scores. Extends reward infrastructure with real-world metrics. Required for veracity exchange's fundamental premise.
 4. **Visibility classification** — Add `visibility` field to tasks and artifacts. Required for information boundary control. Small schema change with large implications.
 5. **Replay mechanism** — Adopt nikete's snapshot/reset/re-execute with provenance integration. Enables model comparison and iterative improvement.
 
 ### Tier 3: Exchange Infrastructure (build when needed)
 
 6. **Export format** — Define portable JSON bundle for sharing task results. First step toward exchange protocol.
-7. **Credibility tracking** — Track peer reliability scores. Extends the agency evaluation pattern to external participants.
+7. **Credibility tracking** — Track peer reliability scores. Extends the identity reward pattern to external participants.
 8. **Exchange protocol** — Full peer-to-peer communication. Deferred until the use case crystallizes.
 
 ---
 
 ## Key Architectural Observation
 
-The current logging/provenance system is built as an **internal audit trail**. Veracity exchange requires it to also serve as an **external credibility signal**. The gap is not primarily technical — the infrastructure (append-only log, evaluation scores, agent archives) is solid. The gap is **semantic**: the system records *what happened* but not *what it's worth* (outcome scoring), *who can see it* (visibility), or *how to share it* (exchange protocol).
+The current logging/provenance system is built as an **internal audit trail**. Veracity exchange requires it to also serve as an **external credibility signal**. The gap is not primarily technical — the infrastructure (append-only log, reward scores, agent archives) is solid. The gap is **semantic**: the system records *what happened* but not *what it's worth* (outcome scoring), *who can see it* (visibility), or *how to share it* (exchange protocol).
 
-The agency system's evaluate/evolve loop is the closest existing analog to veracity exchange. Evaluations score outputs, evolution improves agents based on scores — this is a closed-loop version of what veracity exchange does across organizational boundaries. Extending evaluations with real-world outcome metrics and adding visibility controls would bridge the internal agency loop to the external veracity exchange with minimal architectural change.
+The identity system's reward/evolve loop is the closest existing analog to veracity exchange. Rewards score outputs, evolution improves agents based on scores — this is a closed-loop version of what veracity exchange does across organizational boundaries. Extending rewards with real-world outcome metrics and adding visibility controls would bridge the internal identity loop to the external veracity exchange with minimal architectural change.
 
 The operation log's `detail: serde_json::Value` field is intentionally open-ended and already handles arbitrary payloads. Outcome scores, visibility metadata, and exchange identifiers can all be attached via the detail field without schema changes to `OperationEntry`. This is a deliberate design choice that pays off here — the log format is already exchange-ready even if the tooling isn't.

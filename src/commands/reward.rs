@@ -2,8 +2,8 @@ use anyhow::{Context, Result, bail};
 use std::path::Path;
 use std::process::Command;
 
-use workgraph::agency::{
-    self, Evaluation, EvaluatorInput, load_motivation, load_role, record_evaluation,
+use workgraph::identity::{
+    self, Reward, EvaluatorInput, load_objective, load_role, record_reward,
     render_evaluator_prompt,
 };
 use workgraph::config::Config;
@@ -30,7 +30,7 @@ fn extract_spawn_model(log: &[LogEntry]) -> Option<String> {
     None
 }
 
-/// Run `wg evaluate <task-id>` — trigger evaluation of a completed task.
+/// Run `wg reward <task-id>` — trigger reward of a completed task.
 pub fn run(
     dir: &Path,
     task_id: &str,
@@ -47,33 +47,33 @@ pub fn run(
     let task = graph.get_task_or_err(task_id)?;
 
     // Step 1: Verify task is done or failed
-    // Failed tasks are also evaluated — there is useful signal in what kinds
-    // of tasks cause which agents to fail (see §4.3 of agency design).
+    // Failed tasks are also rewardd — there is useful signal in what kinds
+    // of tasks cause which agents to fail (see §4.3 of identity design).
     match task.status {
         Status::Done | Status::Failed => {}
         ref other => {
             bail!(
-                "Task '{}' has status {:?} — must be done or failed to evaluate",
+                "Task '{}' has status {:?} — must be done or failed to reward",
                 task_id,
                 other
             );
         }
     }
 
-    // Step 2: Load the task's agent and resolve its role + motivation
-    let agency_dir = dir.join("agency");
-    let roles_dir = agency_dir.join("roles");
-    let motivations_dir = agency_dir.join("motivations");
-    let agents_dir = agency_dir.join("agents");
+    // Step 2: Load the task's agent and resolve its role + objective
+    let identity_dir = dir.join("identity");
+    let roles_dir = identity_dir.join("roles");
+    let objectives_dir = identity_dir.join("objectives");
+    let agents_dir = identity_dir.join("agents");
 
-    let (resolved_agent, role, motivation, agent_role_id, agent_motivation_id) = if let Some(
+    let (resolved_agent, role, objective, agent_role_id, agent_objective_id) = if let Some(
         ref agent_hash,
     ) = task.agent
     {
-        match agency::find_agent_by_prefix(&agents_dir, agent_hash) {
+        match identity::find_agent_by_prefix(&agents_dir, agent_hash) {
             Ok(agent) => {
                 let role_path = roles_dir.join(format!("{}.yaml", agent.role_id));
-                let motivation_path = motivations_dir.join(format!("{}.yaml", agent.motivation_id));
+                let objective_path = objectives_dir.join(format!("{}.yaml", agent.objective_id));
 
                 let role = if role_path.exists() {
                     Some(load_role(&role_path).context("Failed to load role")?)
@@ -85,19 +85,19 @@ pub fn run(
                     None
                 };
 
-                let motivation = if motivation_path.exists() {
-                    Some(load_motivation(&motivation_path).context("Failed to load motivation")?)
+                let objective = if objective_path.exists() {
+                    Some(load_objective(&objective_path).context("Failed to load objective")?)
                 } else {
                     eprintln!(
-                        "Warning: motivation '{}' not found, evaluating without motivation context",
-                        agent.motivation_id
+                        "Warning: objective '{}' not found, evaluating without objective context",
+                        agent.objective_id
                     );
                     None
                 };
 
                 let role_id = agent.role_id.clone();
-                let motivation_id = agent.motivation_id.clone();
-                (Some(agent), role, motivation, role_id, motivation_id)
+                let objective_id = agent.objective_id.clone();
+                (Some(agent), role, objective, role_id, objective_id)
             }
             Err(e) => {
                 eprintln!(
@@ -114,7 +114,7 @@ pub fn run(
             }
         }
     } else {
-        eprintln!("Note: task has no assigned agent — evaluating without role/motivation context");
+        eprintln!("Note: task has no assigned agent — evaluating without role/objective context");
         (
             None,
             None,
@@ -136,7 +136,7 @@ pub fn run(
         verify: task.verify.as_deref(),
         agent: resolved_agent.as_ref(),
         role: role.as_ref(),
-        motivation: motivation.as_ref(),
+        objective: objective.as_ref(),
         artifacts,
         log_entries,
         started_at: task.started_at.as_deref(),
@@ -149,22 +149,22 @@ pub fn run(
     let config = Config::load_or_default(dir);
     let model = evaluator_model
         .map(std::string::ToString::to_string)
-        .or(config.agency.evaluator_model.clone())
+        .or(config.identity.evaluator_model.clone())
         .or(task.model.clone())
         .unwrap_or_else(|| config.agent.model.clone());
 
     // Resolve the task execution model early so dry-run can show it
     let task_model_preview = extract_spawn_model(&task.log).or_else(|| task.model.clone());
 
-    // Step 5: --dry-run shows what would be evaluated
+    // Step 5: --dry-run shows what would be rewardd
     if dry_run {
-        println!("=== Dry Run: wg evaluate {} ===\n", task_id);
+        println!("=== Dry Run: wg reward {} ===\n", task_id);
         println!("Task: {} ({})", task.title, task_id);
         println!("Status: {:?}", task.status);
         if let Some(ref agent_hash) = task.agent {
             println!("Agent: {}", agent_hash);
             println!("Role: {}", agent_role_id);
-            println!("Motivation: {}", agent_motivation_id);
+            println!("Objective: {}", agent_objective_id);
         } else {
             println!("Agent: (none)");
         }
@@ -212,13 +212,13 @@ pub fn run(
     let parsed: EvalOutput = serde_json::from_str(&eval_json)
         .with_context(|| format!("Failed to parse evaluator JSON:\n{}", eval_json))?;
 
-    // Build the Evaluation record using the agent/role/motivation resolved above
+    // Build the Reward record using the agent/role/objective resolved above
     let agent_id = resolved_agent
         .as_ref()
         .map(|a| a.id.clone())
         .unwrap_or_default();
     let role_id = agent_role_id;
-    let motivation_id = agent_motivation_id;
+    let objective_id = agent_objective_id;
 
     // Resolve the model that was used to execute this task.
     // Best source: the spawn log entry which records the effective model.
@@ -228,91 +228,92 @@ pub fn run(
     let timestamp = chrono::Utc::now().to_rfc3339();
     let eval_id = format!("eval-{}-{}", task_id, timestamp.replace(':', "-"));
 
-    let evaluation = Evaluation {
+    let reward = Reward {
         id: eval_id,
         task_id: task_id.to_string(),
         agent_id,
         role_id: role_id.clone(),
-        motivation_id: motivation_id.clone(),
-        score: parsed.score,
+        objective_id: objective_id.clone(),
+        value: parsed.value,
         dimensions: parsed.dimensions,
         notes: parsed.notes,
         evaluator: format!("claude:{}", model),
         timestamp,
         model: task_model.clone(),
+        source: "llm".to_string(),
     };
 
-    // Step 8: Save evaluation and update performance records
-    if role_id != "unknown" && motivation_id != "unknown" {
+    // Step 8: Save reward and update performance records
+    if role_id != "unknown" && objective_id != "unknown" {
         let eval_path =
-            record_evaluation(&evaluation, &agency_dir).context("Failed to record evaluation")?;
+            record_reward(&reward, &identity_dir).context("Failed to record reward")?;
 
         if json {
             let out = serde_json::json!({
                 "task_id": task_id,
-                "evaluation_id": evaluation.id,
-                "score": evaluation.score,
-                "dimensions": evaluation.dimensions,
-                "notes": evaluation.notes,
-                "evaluator": evaluation.evaluator,
-                "model": evaluation.model,
+                "reward_id": reward.id,
+                "value": reward.value,
+                "dimensions": reward.dimensions,
+                "notes": reward.notes,
+                "evaluator": reward.evaluator,
+                "model": reward.model,
                 "path": eval_path.display().to_string(),
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
         } else {
-            println!("\n=== Evaluation Complete ===");
+            println!("\n=== Reward Complete ===");
             println!("Task:       {} ({})", task.title, task_id);
-            if let Some(ref m) = evaluation.model {
+            if let Some(ref m) = reward.model {
                 println!("Model:      {}", m);
             }
-            println!("Score:      {:.2}", evaluation.score);
-            if let Some(c) = evaluation.dimensions.get("correctness") {
+            println!("Reward:     {:.2}", reward.value);
+            if let Some(c) = reward.dimensions.get("correctness") {
                 println!("  correctness:      {:.2}", c);
             }
-            if let Some(c) = evaluation.dimensions.get("completeness") {
+            if let Some(c) = reward.dimensions.get("completeness") {
                 println!("  completeness:     {:.2}", c);
             }
-            if let Some(e) = evaluation.dimensions.get("efficiency") {
+            if let Some(e) = reward.dimensions.get("efficiency") {
                 println!("  efficiency:       {:.2}", e);
             }
-            if let Some(s) = evaluation.dimensions.get("style_adherence") {
+            if let Some(s) = reward.dimensions.get("style_adherence") {
                 println!("  style_adherence:  {:.2}", s);
             }
-            println!("Notes:      {}", evaluation.notes);
-            println!("Evaluator:  {}", evaluation.evaluator);
+            println!("Notes:      {}", reward.notes);
+            println!("Evaluator:  {}", reward.evaluator);
             println!("Saved to:   {}", eval_path.display());
         }
     } else {
-        // No identity — save evaluation directly without updating performance records
-        agency::init(&agency_dir)?;
-        let eval_path = agency::save_evaluation(&evaluation, &agency_dir.join("evaluations"))
-            .context("Failed to save evaluation")?;
+        // No identity — save reward directly without updating performance records
+        identity::init(&identity_dir)?;
+        let eval_path = identity::save_reward(&reward, &identity_dir.join("rewards"))
+            .context("Failed to save reward")?;
 
         if json {
             let out = serde_json::json!({
                 "task_id": task_id,
-                "evaluation_id": evaluation.id,
-                "score": evaluation.score,
-                "dimensions": evaluation.dimensions,
-                "notes": evaluation.notes,
-                "evaluator": evaluation.evaluator,
-                "model": evaluation.model,
+                "reward_id": reward.id,
+                "value": reward.value,
+                "dimensions": reward.dimensions,
+                "notes": reward.notes,
+                "evaluator": reward.evaluator,
+                "model": reward.model,
                 "path": eval_path.display().to_string(),
                 "warning": "No identity assigned — performance records not updated",
             });
             println!("{}", serde_json::to_string_pretty(&out)?);
         } else {
-            println!("\n=== Evaluation Complete ===");
+            println!("\n=== Reward Complete ===");
             println!("Task:       {} ({})", task.title, task_id);
-            if let Some(ref m) = evaluation.model {
+            if let Some(ref m) = reward.model {
                 println!("Model:      {}", m);
             }
-            println!("Score:      {:.2}", evaluation.score);
-            println!("Notes:      {}", evaluation.notes);
-            println!("Evaluator:  {}", evaluation.evaluator);
+            println!("Reward:     {:.2}", reward.value);
+            println!("Notes:      {}", reward.notes);
+            println!("Evaluator:  {}", reward.evaluator);
             println!("Saved to:   {}", eval_path.display());
             println!(
-                "Warning: no identity assigned — role/motivation performance records not updated"
+                "Warning: no identity assigned — role/objective performance records not updated"
             );
         }
     }
@@ -323,7 +324,7 @@ pub fn run(
 /// Output shape we expect from the evaluator LLM.
 #[derive(serde::Deserialize)]
 struct EvalOutput {
-    score: f64,
+    value: f64,
     #[serde(default)]
     dimensions: std::collections::HashMap<String, f64>,
     #[serde(default)]
@@ -376,21 +377,21 @@ mod tests {
 
     #[test]
     fn extract_json_plain() {
-        let input = r#"{"score": 0.85, "dimensions": {}, "notes": "Good work"}"#;
+        let input = r#"{"value": 0.85, "dimensions": {}, "notes": "Good work"}"#;
         let result = extract_json(input).unwrap();
         assert!(result.contains("0.85"));
     }
 
     #[test]
     fn extract_json_with_fences() {
-        let input = "```json\n{\"score\": 0.7, \"dimensions\": {}, \"notes\": \"ok\"}\n```";
+        let input = "```json\n{\"value\": 0.7, \"dimensions\": {}, \"notes\": \"ok\"}\n```";
         let result = extract_json(input).unwrap();
         assert!(result.contains("0.7"));
     }
 
     #[test]
     fn extract_json_with_surrounding_text() {
-        let input = "Here is my evaluation:\n{\"score\": 0.9, \"notes\": \"great\"}\nEnd.";
+        let input = "Here is my reward:\n{\"value\": 0.9, \"notes\": \"great\"}\nEnd.";
         let result = extract_json(input).unwrap();
         assert!(result.contains("0.9"));
     }
@@ -402,9 +403,9 @@ mod tests {
 
     #[test]
     fn parse_eval_output_minimal() {
-        let json = r#"{"score": 0.75}"#;
+        let json = r#"{"value": 0.75}"#;
         let parsed: EvalOutput = serde_json::from_str(json).unwrap();
-        assert!((parsed.score - 0.75).abs() < f64::EPSILON);
+        assert!((parsed.value - 0.75).abs() < f64::EPSILON);
         assert!(parsed.dimensions.is_empty());
         assert!(parsed.notes.is_empty());
     }
@@ -412,7 +413,7 @@ mod tests {
     #[test]
     fn parse_eval_output_full() {
         let json = r#"{
-            "score": 0.82,
+            "value": 0.82,
             "dimensions": {
                 "correctness": 0.9,
                 "completeness": 0.8,
@@ -422,7 +423,7 @@ mod tests {
             "notes": "Well implemented but could be more efficient"
         }"#;
         let parsed: EvalOutput = serde_json::from_str(json).unwrap();
-        assert!((parsed.score - 0.82).abs() < f64::EPSILON);
+        assert!((parsed.value - 0.82).abs() < f64::EPSILON);
         assert_eq!(parsed.dimensions.len(), 4);
         assert_eq!(parsed.notes, "Well implemented but could be more efficient");
     }

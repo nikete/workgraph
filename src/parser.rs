@@ -776,7 +776,7 @@ mod tests {
     #[test]
     fn test_load_legacy_identity_migration() {
         let mut file = NamedTempFile::new().unwrap();
-        writeln!(file, r#"{{"id":"t1","kind":"task","title":"Legacy","status":"open","identity":{{"role_id":"r1","motivation_id":"m1"}}}}"#).unwrap();
+        writeln!(file, r#"{{"id":"t1","kind":"task","title":"Legacy","status":"open","identity":{{"role_id":"r1","objective_id":"m1"}}}}"#).unwrap();
 
         let graph = load_graph(file.path()).unwrap();
         let task = graph.get_task("t1").unwrap();

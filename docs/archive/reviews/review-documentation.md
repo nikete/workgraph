@@ -29,12 +29,12 @@ The README is the best documentation in the project. It covers installation, set
 | Missing commands in "Analysis commands" section | Medium | Lists 8 commands (`ready`, `list`, `show`, `why-blocked`, `impact`, `bottlenecks`, `critical-path`, `forecast`, `analyze`) but omits `status`, `dag`, `velocity`, `aging`, `structure`, `workload`, `loops`. The `status` and `dag` commands are among the most-used. |
 | Missing `edit` command | Medium | The `wg edit` command (added in 8279a35) is not mentioned anywhere in the README. This is a significant workflow command. |
 | Missing `approve`/`reject`/`submit` commands | Medium | The verified task workflow (`submit` → `approve`/`reject`) is undocumented in the README. |
-| Missing `evaluate`/`evolve` in workflow | Low | The agency system's evaluate/evolve workflow isn't mentioned in the README (though AGENCY.md covers it). |
+| Missing `reward`/`evolve` in workflow | Low | The identity system's reward/evolve workflow isn't mentioned in the README (though IDENTITY.md covers it). |
 | `wg actor add` example has `-c` flag | OK | This is accurate — `-c` is the short form of `--capability`. |
 | Missing `--model` flag on `wg add` | Low | The README shows `--skill`, `--hours`, etc. but doesn't mention `--model` for per-task model selection. |
 | Missing `--verify` flag on `wg add` | Low | Flag exists but undocumented in README. |
 | Missing `--desc` alias for `--description` | Low | The recently added alias isn't shown. |
-| "More docs" section is incomplete | Medium | Only links to COMMANDS.md and AGENT-GUIDE.md. Should also link to AGENCY.md and the SKILL.md. |
+| "More docs" section is incomplete | Medium | Only links to COMMANDS.md and AGENT-GUIDE.md. Should also link to IDENTITY.md and the SKILL.md. |
 
 **What's good:**
 - Service section is thorough and accurate (start/stop/status/reload/install all correct)
@@ -54,10 +54,10 @@ Good conceptual overview of core concepts (tasks, actors, resources, dependencie
 | Issue | Severity | Details |
 |-------|----------|---------|
 | Missing `pending-review` status | Medium | The status flow diagram shows open→in-progress→done/failed/abandoned but omits the `pending-review` state used by verified tasks (submit→approve/reject). |
-| Missing `agent` field on tasks | Low | Task fields list shows `assigned` (actor) but not the `agent` field from the agency system. |
+| Missing `agent` field on tasks | Low | Task fields list shows `assigned` (actor) but not the `agent` field from the identity system. |
 | Config example shows `model = "opus-4-5"` | Low | Same model name issue as README. |
-| No mention of agency system | Medium | The core concepts section doesn't mention roles, motivations, or agents — a major feature of the system. |
-| No link to AGENCY.md | Low | See Also section only links to COMMANDS.md and AGENT-GUIDE.md. |
+| No mention of identity system | Medium | The core concepts section doesn't mention roles, objectives, or agents — a major feature of the system. |
+| No link to IDENTITY.md | Low | See Also section only links to COMMANDS.md and AGENT-GUIDE.md. |
 
 ### 1.3 docs/COMMANDS.md (988 lines) — STALE, needs significant update
 
@@ -77,13 +77,13 @@ This was a good reference when written but has fallen significantly behind the a
 | `wg quickstart` | Agent onboarding cheat sheet | High |
 | `wg dag` | ASCII DAG visualization | High |
 | `wg reclaim` | Reclaim task from dead agent | Medium |
-| `wg evaluate` | Trigger evaluation of completed task | Medium |
+| `wg reward` | Trigger reward of completed task | Medium |
 | `wg evolve` | Trigger evolution cycle | Medium |
-| `wg role` | Manage agency roles | Medium |
-| `wg motivation` | Manage agency motivations | Medium |
+| `wg role` | Manage identity roles | Medium |
+| `wg objective` | Manage identity objectives | Medium |
 | `wg agent create/list/show/rm/...` | Manage agents | Medium |
 | `wg assign` | Assign agent to task | Medium |
-| `wg agency` | Agency management (init, stats) | Medium |
+| `wg identity` | Identity management (init, stats) | Medium |
 | `wg notify` | Send Matrix notification | Low |
 | `wg matrix` | Matrix integration commands | Low |
 | `wg dead-agents` | Dead agent detection/cleanup | Medium |
@@ -93,23 +93,23 @@ This was a good reference when written but has fallen significantly behind the a
 
 | Issue | Details |
 |-------|---------|
-| `wg config` flags incomplete | Missing `--max-agents`, `--coordinator-interval`, `--poll-interval`, `--coordinator-executor`, `--auto-evaluate`, `--auto-assign`, `--assigner-model`, `--evaluator-model`, `--evolver-model`, `--retention-heuristics`, and Matrix config flags. |
+| `wg config` flags incomplete | Missing `--max-agents`, `--coordinator-interval`, `--poll-interval`, `--coordinator-executor`, `--auto-reward`, `--auto-assign`, `--assigner-model`, `--evaluator-model`, `--evolver-model`, `--retention-heuristics`, and Matrix config flags. |
 | `wg add` flags incomplete | Missing `--model`, `--verify`, `--desc` alias. |
 | `wg service` subcommands incomplete | Missing `pause`, `resume`. `tick` and `daemon` are internal but exist. |
-| `wg agent` conflated | COMMANDS.md documents `wg agent` as the autonomous agent loop. In reality, `wg agent` is now a subcommand group for agency agent management (`create`, `list`, `show`, `rm`, `lineage`, `performance`), with `run` as the agent loop subcommand. |
+| `wg agent` conflated | COMMANDS.md documents `wg agent` as the autonomous agent loop. In reality, `wg agent` is now a subcommand group for identity agent management (`create`, `list`, `show`, `rm`, `lineage`, `performance`), with `run` as the agent loop subcommand. |
 
 ### 1.4 docs/AGENT-GUIDE.md (695 lines) — PARTIALLY STALE
 
 **Accuracy: 6/10**
 
-Good conceptual guide for agent operation, but predates the service layer refactoring and agency system.
+Good conceptual guide for agent operation, but predates the service layer refactoring and identity system.
 
 **Issues found:**
 
 | Issue | Severity | Details |
 |-------|----------|---------|
 | `wg agent --actor` is outdated | High | The autonomous agent loop is now `wg agent run`, not `wg agent --actor`. The `wg agent` command is now a subcommand group. |
-| No mention of agency system | Medium | The guide describes agents as actors with capabilities but doesn't mention roles, motivations, or the identity system. |
+| No mention of identity system | Medium | The guide describes agents as actors with capabilities but doesn't mention roles, objectives, or the identity system. |
 | Config example shows old model names | Low | `opus-4-5` references. |
 | Missing service mode integration | Medium | The guide doesn't describe how agents work with the service daemon — it still describes the old standalone `wg agent` loop pattern. |
 | Score calculation may be stale | Medium | The task selection scoring algorithm (lines 237-244) may not match current implementation. |
@@ -132,18 +132,18 @@ This reads as the **original design document** for the service layer, not as doc
 
 **Verdict:** This document should either be rewritten as accurate documentation or clearly labeled as a historical design document.
 
-### 1.6 docs/AGENCY.md (499 lines) — GOOD, accurate
+### 1.6 docs/IDENTITY.md (499 lines) — GOOD, accurate
 
 **Accuracy: 9/10**
 
-This is the most recently written reference doc and is well-aligned with the actual implementation. The agency system (roles, motivations, agents, evaluation, evolution, lineage) is accurately described.
+This is the most recently written reference doc and is well-aligned with the actual implementation. The identity system (roles, objectives, agents, reward, evolution, lineage) is accurately described.
 
 **Minor issues:**
 
 | Issue | Severity | Details |
 |-------|---------|---------|
-| Missing `wg agency init` details | Low | Mentions `wg agency init` creates starter roles/motivations but doesn't list what the starters are. |
-| Evaluation dimension percentages | Low | States correctness=40%, completeness=30%, efficiency=15%, style_adherence=15%. Should verify these match current implementation. |
+| Missing `wg identity init` details | Low | Mentions `wg identity init` creates starter roles/objectives but doesn't list what the starters are. |
+| Reward dimension percentages | Low | States correctness=40%, completeness=30%, efficiency=15%, style_adherence=15%. Should verify these match current implementation. |
 
 ### 1.7 docs/tui-design.md (730 lines) — DESIGN DOC, useful for context
 
@@ -170,8 +170,8 @@ The dynamic help ordering has been implemented — `wg --help` now shows tiered 
 
 Lists 7 architectural issues from early in the project. **All have been resolved:**
 
-1. Agent identity model → Implemented via agency system
-2. Task-agent matching → Implemented via skill matching + agency assignment
+1. Agent identity model → Implemented via identity system
+2. Task-agent matching → Implemented via skill matching + identity assignment
 3. Context inheritance → Implemented via artifacts/deliverables + `wg context`
 4. Execution model → Hybrid approach implemented via service + executors
 5. Failure handling → `failed` status, retry, max_retries all exist
@@ -180,16 +180,16 @@ Lists 7 architectural issues from early in the project. **All have been resolved
 
 **Verdict:** Should be archived or removed. All issues are resolved.
 
-### 1.10 docs/ROLES-IDEA.md (208 lines) — HISTORICAL, superseded by agency system
+### 1.10 docs/ROLES-IDEA.md (208 lines) — HISTORICAL, superseded by identity system
 
 **Accuracy: N/A (historical)**
 
-This was the original proposal for declarative role definitions. The agency system (AGENCY.md) is the evolved version of this proposal. Key differences:
-- ROLES-IDEA proposed markdown files in `.workgraph/roles/` → Agency uses YAML in `.workgraph/agency/roles/`
-- ROLES-IDEA proposed `--role` on `wg add` → Agency uses `wg assign <task> <agent-hash>`
+This was the original proposal for declarative role definitions. The identity system (IDENTITY.md) is the evolved version of this proposal. Key differences:
+- ROLES-IDEA proposed markdown files in `.workgraph/roles/` → Identity uses YAML in `.workgraph/identity/roles/`
+- ROLES-IDEA proposed `--role` on `wg add` → Identity uses `wg assign <task> <agent-hash>`
 - ROLES-IDEA proposed role weight via token counting → Not implemented as described
 
-**Verdict:** Should be archived or removed. Superseded by the agency system.
+**Verdict:** Should be archived or removed. Superseded by the identity system.
 
 ### 1.11 CLAUDE.md (21 lines) — GOOD, accurate
 
@@ -236,7 +236,7 @@ Well-focused skill definition that correctly teaches agents the coordinator patt
 | `survey-context-management.md` | ~300 | Yes | Recent audit of context management; findings likely still actionable |
 | `tui-design.md` | ~730 | Partially | TUI implemented but may have diverged; useful for future TUI work |
 | `architectural-issues.md` | ~262 | No | All issues resolved |
-| `ROLES-IDEA.md` | ~208 | No | Superseded by agency system |
+| `ROLES-IDEA.md` | ~208 | No | Superseded by identity system |
 
 ### Recent Review Documents
 
@@ -268,7 +268,7 @@ Commands and features that exist in code but have **no documentation**:
 | `wg dead-agents` command | CLI | Low — documented in README but not COMMANDS.md |
 | `flock`-based graph locking | graph.rs | Low — internal mechanism, but good to note |
 | `--model` flag on `wg add` | CLI | Medium — per-task model selection |
-| Agency config flags (`--auto-evaluate`, `--auto-assign`, etc.) | CLI config | Medium — agency automation not documented |
+| Identity config flags (`--auto-reward`, `--auto-assign`, etc.) | CLI config | Medium — identity automation not documented |
 | Matrix notification integration | CLI + config | Low — feature-gated, specialized |
 | `wg edit` command with flock locking | CLI | Medium |
 
@@ -278,7 +278,7 @@ Commands and features that exist in code but have **no documentation**:
 
 ### Immediate Actions (High Priority)
 
-1. **Update docs/COMMANDS.md** — This is the most impactful change. Add all missing commands (edit, submit, approve, reject, status, quickstart, dag, reclaim, dead-agents, evaluate, evolve, role, motivation, agent, assign, agency, service pause/resume). Update existing entries with missing flags.
+1. **Update docs/COMMANDS.md** — This is the most impactful change. Add all missing commands (edit, submit, approve, reject, status, quickstart, dag, reclaim, dead-agents, reward, evolve, role, objective, agent, assign, identity, service pause/resume). Update existing entries with missing flags.
 
 2. **Update README.md "Analysis commands" section** — Add `status`, `dag`, `velocity`, `aging`, `structure`, `workload`, `loops`. These are real commands users need to discover.
 
@@ -286,15 +286,15 @@ Commands and features that exist in code but have **no documentation**:
 
 4. **Add `wg edit` to README.md** — It's a core workflow command.
 
-5. **Link AGENCY.md from README** — The "More docs" section should include it.
+5. **Link IDENTITY.md from README** — The "More docs" section should include it.
 
 ### Medium Priority
 
 6. **Rewrite or retire AGENT-SERVICE.md** — Either update it to match the actual implementation (using review-service-layer.md findings as a source) or move it to a `docs/archive/` directory with a note that it was the original design doc.
 
-7. **Rewrite AGENT-GUIDE.md** — Update the `wg agent` command references (now `wg agent run`), add agency system integration, update service mode description.
+7. **Rewrite AGENT-GUIDE.md** — Update the `wg agent` command references (now `wg agent run`), add identity system integration, update service mode description.
 
-8. **Update docs/README.md** — Add `pending-review` status to flow diagram, mention agency system in core concepts, link to AGENCY.md.
+8. **Update docs/README.md** — Add `pending-review` status to flow diagram, mention identity system in core concepts, link to IDENTITY.md.
 
 9. **Add `wg edit` documentation** — Probably deserves mention in both README and COMMANDS.md since it was just added.
 
@@ -321,9 +321,9 @@ Commands and features that exist in code but have **no documentation**:
 
 | Gap | Priority | Notes |
 |-----|----------|-------|
-| Architecture overview doc | Medium | High-level doc showing how main.rs, graph.rs, service/, agency.rs, and commands/ fit together |
-| Configuration reference | Medium | Complete reference for config.toml with all sections ([agent], [coordinator], [agency], [matrix]) |
-| Agency quick-start guide | Low | AGENCY.md is thorough but dense; a quick-start would help adoption |
+| Architecture overview doc | Medium | High-level doc showing how main.rs, graph.rs, service/, identity.rs, and commands/ fit together |
+| Configuration reference | Medium | Complete reference for config.toml with all sections ([agent], [coordinator], [identity], [matrix]) |
+| Identity quick-start guide | Low | IDENTITY.md is thorough but dense; a quick-start would help adoption |
 | Contributing guide | Low | For external contributors: how to build, test, add commands |
 
 ---
@@ -332,12 +332,12 @@ Commands and features that exist in code but have **no documentation**:
 
 | Document | Accuracy | Completeness | Action Needed |
 |----------|----------|--------------|---------------|
-| README.md | 8/10 | 7/10 | Update analysis commands, add edit/submit/approve/reject, link AGENCY.md |
-| docs/README.md | 7/10 | 6/10 | Add pending-review status, mention agency system |
+| README.md | 8/10 | 7/10 | Update analysis commands, add edit/submit/approve/reject, link IDENTITY.md |
+| docs/README.md | 7/10 | 6/10 | Add pending-review status, mention identity system |
 | docs/COMMANDS.md | 5/10 | 4/10 | **Major update needed** — 30+ missing commands |
 | docs/AGENT-GUIDE.md | 6/10 | 5/10 | Update wg agent → wg agent run, add service integration |
 | docs/AGENT-SERVICE.md | 4/10 | 3/10 | Rewrite or archive (design doc, not accurate documentation) |
-| docs/AGENCY.md | 9/10 | 9/10 | Minor updates only |
+| docs/IDENTITY.md | 9/10 | 9/10 | Minor updates only |
 | CLAUDE.md | 10/10 | 10/10 | No changes needed |
 | .claude/skills/wg/SKILL.md | 9/10 | 9/10 | No changes needed |
 | docs/tui-design.md | N/A | N/A | Label as design doc |
@@ -345,4 +345,4 @@ Commands and features that exist in code but have **no documentation**:
 | docs/architectural-issues.md | N/A | N/A | Archive (all resolved) |
 | docs/ROLES-IDEA.md | N/A | N/A | Archive (superseded) |
 
-**Overall documentation health: 6/10** — Strong in some areas (README, AGENCY.md, SKILL.md) but the command reference is seriously behind and several docs are stale.
+**Overall documentation health: 6/10** — Strong in some areas (README, IDENTITY.md, SKILL.md) but the command reference is seriously behind and several docs are stale.

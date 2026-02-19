@@ -1,7 +1,7 @@
 pub mod abandon;
 pub mod add;
-pub mod agency_init;
-pub mod agency_stats;
+pub mod identity_init;
+pub mod identity_stats;
 pub mod agent;
 pub mod agent_crud;
 pub mod agents;
@@ -22,7 +22,7 @@ pub mod critical_path;
 pub mod dead_agents;
 pub mod done;
 pub mod edit;
-pub mod evaluate;
+pub mod reward;
 pub mod evolve;
 pub mod exec;
 pub mod fail;
@@ -39,7 +39,7 @@ pub mod loops;
 pub mod match_cmd;
 #[cfg(any(feature = "matrix", feature = "matrix-lite"))]
 pub mod matrix;
-pub mod motivation;
+pub mod objective;
 pub mod next;
 #[cfg(any(feature = "matrix", feature = "matrix-lite"))]
 pub mod notify;

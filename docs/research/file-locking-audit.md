@@ -104,7 +104,7 @@ Every command using the `load_workgraph_mut()` → `save_graph()` pattern:
 | `wg artifact` | `artifact.rs:11–27` | task.artifacts |
 | `wg add` | `add.rs` | adds new node, updates blocked_by/blocks |
 | `wg spawn` | `spawn.rs:131–382` | status, assigned, started_at, log |
-| Coordinator tick | `service.rs:826–848` | auto-assign, auto-evaluate |
+| Coordinator tick | `service.rs:826–848` | auto-assign, auto-reward |
 | Dead agent cleanup | `service.rs:935–1002` | status, assigned, log |
 
 ### 2.3 Spawn-specific Double Race
@@ -302,7 +302,7 @@ Adding mutation commands (Done, Fail, Log, Artifact, Claim) is architecturally f
 | File | Reason |
 |------|--------|
 | `archive.jsonl` | No such file exists — archives are per-task directories under `.workgraph/agents/` and `.workgraph/archive/`. Written once per task completion, no concurrent access risk. |
-| `.workgraph/agency/*.yaml` | Role/motivation/agent configs. Written during `wg role`/`wg motivation` commands, not during agent execution. No concurrency risk. |
+| `.workgraph/identity/*.yaml` | Role/objective/agent configs. Written during `wg role`/`wg objective` commands, not during agent execution. No concurrency risk. |
 | `.workgraph/config.toml` | Read-only during agent operation. |
 | Agent output files (`output.log`) | Each agent writes to its own file. No shared access. |
 

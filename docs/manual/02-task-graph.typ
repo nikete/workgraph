@@ -2,7 +2,7 @@
 
 Work is structure. A project without structure is a list—and lists lie. They hide the fact that you cannot deploy before you test, cannot test before you build, cannot build before you design. A list says "here are things to do." A graph says "here is the order in which reality permits you to do them."
 
-Workgraph models work as a directed graph. Tasks are nodes. Dependencies are edges. The graph is the single source of truth for what exists, what depends on what, and what is available for execution right now. Everything else—the coordinator, the agency, the evolution system—reads from this graph and writes back to it. The graph is not a view of the project. It _is_ the project.
+Workgraph models work as a directed graph. Tasks are nodes. Dependencies are edges. The graph is the single source of truth for what exists, what depends on what, and what is available for execution right now. Everything else—the coordinator, the identity, the evolution system—reads from this graph and writes back to it. The graph is not a view of the project. It _is_ the project.
 
 == Tasks as Nodes
 
@@ -27,7 +27,7 @@ A task is the atom of work. It has an identity, a lifecycle, and a body of metad
     [`exec`], [A shell command for automated execution via the shell executor.],
     [`model`], [Preferred AI model (haiku, sonnet, opus). Overrides coordinator and agent defaults.],
     [`verify`], [Verification criteria—if set, the task requires review before it can be marked done.],
-    [`agent`], [Content-hash ID binding an agency agent identity to this task.],
+    [`agent`], [Content-hash ID binding an identity agent identity to this task.],
     [`log`], [Append-only progress entries with timestamps and optional actor attribution.],
   ),
   caption: [Task fields. Every field except `id`, `title`, and `status` is optional.],
@@ -121,7 +121,7 @@ A task is _ready_ when four conditions hold simultaneously:
 + *Past time constraints.* If the task has a `not_before` timestamp, the current time must be past it. If the task has a `ready_after` timestamp (set by loop edge delays), the current time must be past that too. Invalid or missing timestamps are treated as satisfied—they do not block.
 + *All blockers terminal.* Every task ID in the `blocked_by` list must correspond to a task in a terminal status (done, failed, or abandoned). Non-existent blockers are treated as resolved.
 
-These four conditions are evaluated by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
+These four conditions are rewardd by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
 
 The `not_before` field enables future scheduling: "do not start this task before next Monday." The `ready_after` field serves a different purpose—it is set automatically by loop edges with delays, creating pacing between loop iterations. Both are checked against the current wall-clock time.
 
@@ -135,7 +135,7 @@ These patterns are cycles, and they are not bugs. They are the structure of iter
 
 === The `loops_to` Mechanism
 
-A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, evaluate a condition—if true and iterations remain, re-open the target task upstream."
+A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, reward a condition—if true and iterations remain, re-open the target task upstream."
 
 #figure(
   table(
@@ -151,7 +151,7 @@ A loop edge is a conditional back-edge declared via the `loops_to` field on a ta
   caption: [Loop edge fields. Every loop edge requires a target and a max_iterations cap.],
 ) <loop-edge-fields>
 
-The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—evaluated when the source task transitions to done, and ignored at all other times.
+The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—rewardd when the source task transitions to done, and ignored at all other times.
 
 This separation is the key insight of the design. The forward dependency chain (via `blocked_by`) remains acyclic and schedulable. The backward loop edge (via `loops_to`) layers iteration on top without disturbing the scheduler.
 
@@ -324,6 +324,6 @@ The graph file lives at `.workgraph/graph.jsonl` and is the canonical state of t
 
 ---
 
-The task graph is the foundation. Dependencies encode the ordering constraints of reality. Loop edges encode the iterative patterns of practice. Readiness is a derived property—the scheduler's answer to "what can happen next?" The coordinator uses this answer to dispatch work, as described in the section on coordination and execution. The agency system uses the graph to record evaluations at each task boundary, as described in the section on evolution.
+The task graph is the foundation. Dependencies encode the ordering constraints of reality. Loop edges encode the iterative patterns of practice. Readiness is a derived property—the scheduler's answer to "what can happen next?" The coordinator uses this answer to dispatch work, as described in the section on coordination and execution. The identity system uses the graph to record rewards at each task boundary, as described in the section on evolution.
 
 A well-designed task graph does not just organize work. It makes the structure of the project legible—to humans reviewing progress, to agents receiving dispatch, and to the system itself as it learns from its own history.

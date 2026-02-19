@@ -1,6 +1,6 @@
 # Workgraph Agent Guide
 
-How to operate AI agents with workgraph: the service daemon, spawning, identity injection, evaluation, and manual operation.
+How to operate AI agents with workgraph: the service daemon, spawning, identity injection, reward, and manual operation.
 
 ## Table of Contents
 
@@ -26,7 +26,7 @@ Workgraph supports three ways to run agents:
 2. **Autonomous loop**: `wg agent run` runs a continuous wake/check/work/sleep cycle for a single agent.
 3. **Manual mode**: Agents use `wg ready`, `wg claim`, `wg done` for step-by-step control.
 
-In all modes, the agency system can inject an identity (role + motivation) into the agent's prompt when it starts working on a task.
+In all modes, the identity system can inject an identity (role + objective) into the agent's prompt when it starts working on a task.
 
 ---
 
@@ -51,7 +51,7 @@ Each tick, the coordinator:
 3. **Counts alive agents** — if `>= max_agents`, skips spawning
 4. **Gets ready tasks** — open tasks with all dependencies done
 5. **[If auto_assign enabled]** Creates `assign-{task}` blocker tasks for unassigned ready tasks, dispatched with the assigner model/agent
-6. **[If auto_evaluate enabled]** Creates `evaluate-{task}` tasks blocked by completed tasks, dispatched with the evaluator model/agent
+6. **[If auto_reward enabled]** Creates `reward-{task}` tasks blocked by completed tasks, dispatched with the evaluator model/agent
 7. **Spawns agents** on remaining ready tasks, respecting per-task model overrides
 
 The coordinator runs on two triggers:
@@ -83,8 +83,8 @@ executor = "claude"
 model = "opus"         # default model
 heartbeat_timeout = 5  # minutes before agent is considered dead
 
-[agency]
-auto_evaluate = false  # auto-create evaluation tasks
+[identity]
+auto_reward = false  # auto-create reward tasks
 auto_assign = false    # auto-create identity assignment tasks
 assigner_model = "haiku"
 evaluator_model = "opus"
@@ -95,7 +95,7 @@ evolver_model = "opus"
 
 1. The coordinator claims the task (sets status to `in-progress`)
 2. It resolves the effective model: task's `model` field > coordinator `model` > agent `model`
-3. If the task has an `agent` field (identity assignment), the agent's role and motivation are loaded and injected into the prompt
+3. If the task has an `agent` field (identity assignment), the agent's role and objective are loaded and injected into the prompt
 4. A wrapper script is generated in `.workgraph/agents/agent-N/run.sh` that:
    - Runs the executor (claude, shell, etc.)
    - Captures output to `output.log`
@@ -107,20 +107,20 @@ evolver_model = "opus"
 
 ## Agent Identity
 
-The agency system lets you assign composable identities to agents. When a task has an agent assignment, the spawned agent receives an identity section in its prompt covering:
+The identity system lets you assign composable identities to agents. When a task has an agent assignment, the spawned agent receives an identity section in its prompt covering:
 
 - **Role**: skills, desired outcome, description
-- **Motivation**: acceptable trade-offs, hard constraints, description
+- **Objective**: acceptable trade-offs, hard constraints, description
 
 ### Manual assignment
 
 ```bash
-# Create roles and motivations
+# Create roles and objectives
 wg role add "Programmer" --outcome "Working, tested code" --skill rust --skill testing
-wg motivation add "Careful" --accept "Slow" --reject "Untested"
+wg objective add "Careful" --accept "Slow" --reject "Untested"
 
 # Pair them into an agent
-wg agent create "Careful Coder" --role <role-hash> --motivation <motivation-hash>
+wg agent create "Careful Coder" --role <role-hash> --objective <objective-hash>
 
 # Assign to a task
 wg assign my-task <agent-hash>
@@ -135,16 +135,16 @@ wg config --auto-assign true
 wg config --assigner-model haiku   # cheap model is fine for assignment
 ```
 
-### Automatic evaluation
+### Automatic reward
 
-Enable auto-evaluate and the coordinator creates `evaluate-{task}` meta-tasks for completed tasks. The evaluator scores the work across four dimensions and updates performance records.
+Enable auto-reward and the coordinator creates `reward-{task}` meta-tasks for completed tasks. The evaluator scores the work across four dimensions and updates performance records.
 
 ```bash
-wg config --auto-evaluate true
-wg config --evaluator-model opus   # strong model for quality evaluation
+wg config --auto-reward true
+wg config --evaluator-model opus   # strong model for quality reward
 ```
 
-See [AGENCY.md](AGENCY.md) for the full agency system documentation.
+See [IDENTITY.md](IDENTITY.md) for the full identity system documentation.
 
 ---
 
@@ -248,17 +248,17 @@ wg agent run --actor claude-main --interval 30 --max-tasks 10
 Each autonomous agent session needs an agent identity:
 
 ```bash
-# AI agent with role + motivation
+# AI agent with role + objective
 wg agent create "Claude Coder" \
   --role <role-hash> \
-  --motivation <motivation-hash> \
+  --objective <objective-hash> \
   --capabilities coding,documentation,testing \
   --trust-level provisional
 
 # Or a minimal agent for simple autonomous loops
 wg agent create "General Worker" \
   --role <role-hash> \
-  --motivation <motivation-hash> \
+  --objective <objective-hash> \
   --capabilities coding,testing
 ```
 
@@ -358,10 +358,10 @@ Models are selected in priority order:
 3. `coordinator.model` in config.toml
 4. `agent.model` in config.toml (lowest priority)
 
-For agency meta-tasks, separate model settings apply:
-- `agency.assigner_model` for assignment tasks
-- `agency.evaluator_model` for evaluation tasks
-- `agency.evolver_model` for evolution
+For identity meta-tasks, separate model settings apply:
+- `identity.assigner_model` for assignment tasks
+- `identity.evaluator_model` for reward tasks
+- `identity.evolver_model` for evolution
 
 ```bash
 # Per-task model at creation
@@ -427,9 +427,9 @@ wg analyze    # comprehensive health report
 - **Monitor with `wg tui`**: see what's happening in real time
 - **Check `wg service status`**: after any issues to see coordinator state
 
-### Agency
+### Identity
 
-- **Start without auto-assign/auto-evaluate**: manually assign and evaluate first to understand the system
+- **Start without auto-assign/auto-reward**: manually assign and reward first to understand the system
 - **Use cheap models for assignment**: haiku is fine for picking which agent works on what
-- **Use strong models for evaluation**: opus gives more accurate quality scores
+- **Use strong models for reward**: opus gives more accurate quality scores
 - **Run `wg evolve --dry-run` first**: preview evolution proposals before applying them

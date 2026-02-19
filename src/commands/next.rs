@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::Path;
-use workgraph::agency;
+use workgraph::identity;
 use workgraph::graph::TrustLevel;
 use workgraph::query::ready_tasks;
 
@@ -32,9 +32,9 @@ struct NextTaskResult {
 pub fn run(dir: &Path, agent_id: &str, json: bool) -> Result<()> {
     let (graph, _path) = super::load_workgraph(dir)?;
 
-    // Load agent from .workgraph/agency/agents/
-    let agents_dir = dir.join("agency").join("agents");
-    let agent = agency::find_agent_by_prefix(&agents_dir, agent_id)
+    // Load agent from .workgraph/identity/agents/
+    let agents_dir = dir.join("identity").join("agents");
+    let agent = identity::find_agent_by_prefix(&agents_dir, agent_id)
         .map_err(|e| anyhow::anyhow!("Agent '{}' not found: {}", agent_id, e))?;
 
     let agent_skills: HashSet<&String> = agent.capabilities.iter().collect();
@@ -132,7 +132,7 @@ pub fn run(dir: &Path, agent_id: &str, json: bool) -> Result<()> {
         println!(
             "Next task for: {} ({})",
             agent.name,
-            agency::short_hash(&agent.id)
+            identity::short_hash(&agent.id)
         );
         if !result.agent_capabilities.is_empty() {
             println!("Capabilities: {}", result.agent_capabilities.join(", "));
@@ -183,7 +183,7 @@ fn print_candidate(task: &TaskCandidate) {
 mod tests {
     use super::*;
     use tempfile::TempDir;
-    use workgraph::agency::{Agent, Lineage, PerformanceRecord};
+    use workgraph::identity::{Agent, Lineage, RewardHistory};
     use workgraph::graph::{Node, Task, TrustLevel, WorkGraph};
     use workgraph::parser::save_graph;
 
@@ -198,16 +198,16 @@ mod tests {
     fn make_agent(name: &str, capabilities: Vec<&str>) -> Agent {
         let role_id = format!("{}-role", name);
         let mot_id = format!("{}-mot", name);
-        let id = agency::content_hash_agent(&role_id, &mot_id);
+        let id = identity::content_hash_agent(&role_id, &mot_id);
         Agent {
             id,
             role_id,
-            motivation_id: mot_id,
+            objective_id: mot_id,
             name: name.to_string(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
             capabilities: capabilities.into_iter().map(String::from).collect(),
@@ -220,11 +220,11 @@ mod tests {
     }
 
     fn setup_agents(dir: &Path, agents: &[Agent]) {
-        let agency_dir = dir.join("agency");
-        agency::init(&agency_dir).unwrap();
-        let agents_dir = agency_dir.join("agents");
+        let identity_dir = dir.join("identity");
+        identity::init(&identity_dir).unwrap();
+        let agents_dir = identity_dir.join("agents");
         for agent in agents {
-            agency::save_agent(agent, &agents_dir).unwrap();
+            identity::save_agent(agent, &agents_dir).unwrap();
         }
     }
 

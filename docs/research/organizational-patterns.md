@@ -8,7 +8,7 @@
 
 ## Executive Summary
 
-Workgraph's primitives — tasks, dependency edges, roles, motivations, agents, a coordinator, evaluations, and an evolve loop — are not arbitrary design choices. They map precisely onto well-established concepts from organizational theory, cybernetics, workflow science, and distributed systems. This document develops a vocabulary and framework — a "mathematics of organizations" — that helps users think rigorously about how to structure work in workgraph.
+Workgraph's primitives — tasks, dependency edges, roles, objectives, agents, a coordinator, rewards, and an evolve loop — are not arbitrary design choices. They map precisely onto well-established concepts from organizational theory, cybernetics, workflow science, and distributed systems. This document develops a vocabulary and framework — a "mathematics of organizations" — that helps users think rigorously about how to structure work in workgraph.
 
 **Key findings:**
 
@@ -16,13 +16,13 @@ Workgraph's primitives — tasks, dependency edges, roles, motivations, agents, 
 
 2. **`blocked_by` edges natively express the five basic workflow patterns** (Sequence, Parallel Split, Synchronization, Exclusive Choice, Simple Merge). `loops_to` back-edges add structured loops and arbitrary cycles. Advanced patterns (discriminators, cancellation, milestones) require coordinator logic.
 
-3. **The execute→evaluate→evolve loop is autopoietic.** The system literally produces the components (agent definitions) that produce the system (task completions that trigger evaluations that trigger evolution). This is Maturana & Varela's self-producing network, Luhmann's operationally closed social system, and Argyris & Schön's double-loop learning — all at once.
+3. **The execute→reward→evolve loop is autopoietic.** The system literally produces the components (agent definitions) that produce the system (task completions that trigger rewards that trigger evolution). This is Maturana & Varela's self-producing network, Luhmann's operationally closed social system, and Argyris & Schön's double-loop learning — all at once.
 
 4. **Fork-Join is the natural topology of `blocked_by` graphs.** The planner→N workers→synthesizer pattern is workgraph's most fundamental parallel decomposition. It maps to MapReduce, scatter-gather, and WCP2+WCP3.
 
 5. **The coordinator is a cybernetic regulator** operating an OODA loop, subject to Ashby's Law of Requisite Variety: the number of distinct roles must match or exceed the variety of task types, or the system becomes under-regulated.
 
-6. **Evaluations solve the principal-agent problem.** The human principal delegates to autonomous agents under information asymmetry. Evaluations are the monitoring mechanism; motivations are the bonding mechanism; evolution is the incentive-alignment mechanism.
+6. **Rewards solve the principal-agent problem.** The human principal delegates to autonomous agents under information asymmetry. Rewards are the monitoring mechanism; objectives are the bonding mechanism; evolution is the incentive-alignment mechanism.
 
 7. **Role design is an Inverse Conway Maneuver.** Conway's Law predicts that system architecture mirrors org structure. In workgraph, deliberately designing roles shapes the task decomposition and therefore the output architecture.
 
@@ -34,7 +34,7 @@ Workgraph's primitives — tasks, dependency edges, roles, motivations, agents, 
 2. [Workflow Patterns: What blocked_by and loops_to Can Express](#2-workflow-patterns-what-blocked_by-and-loops_to-can-express)
 3. [Fork-Join, MapReduce, and Scatter-Gather](#3-fork-join-mapreduce-and-scatter-gather)
 4. [Pipeline and Assembly Line Patterns](#4-pipeline-and-assembly-line-patterns)
-5. [Autopoiesis: The Self-Producing Agency](#5-autopoiesis-the-self-producing-agency)
+5. [Autopoiesis: The Self-Producing Identity](#5-autopoiesis-the-self-producing-identity)
 6. [Cybernetics and Control Theory](#6-cybernetics-and-control-theory)
 7. [The Viable System Model](#7-the-viable-system-model)
 8. [The Principal-Agent Problem](#8-the-principal-agent-problem)
@@ -71,10 +71,10 @@ A workgraph task graph is a stigmergic medium. Agents do not communicate with ea
 |--------------------|----------------------|
 | **Shared environment** | The task graph (`.workgraph/graph.jsonl`) |
 | **Sematectonic trace** | A completed task's artifacts — the code, docs, or other work product left behind *is* the stimulus for downstream tasks |
-| **Marker-based trace** | Task status changes (`Open`→`Done`, `Failed`), dependency edges, evaluation scores |
+| **Marker-based trace** | Task status changes (`Open`→`Done`, `Failed`), dependency edges, reward scores |
 | **Pheromone decay** | Stale assignment detection (dead agent checks), task expiration |
 | **Stigmergic coordination** | The coordinator polls the graph for "ready" tasks (all `blocked_by` satisfied) — it reads the markers |
-| **Self-reinforcing trails** | Tasks with good evaluation scores reinforce the role/motivation patterns that produced them (via evolve) |
+| **Self-reinforcing trails** | Tasks with good reward scores reinforce the role/objective patterns that produced them (via evolve) |
 
 This is not a metaphor. It is a precise structural correspondence. The defining characteristic of stigmergy — that agents coordinate through a shared medium rather than through direct communication — is exactly how workgraph agents operate. Agent A completes task X, modifying the graph (setting status to `Done`, recording artifacts). Agent B, working on task Y with `blocked_by = [X]`, is now unblocked. B never spoke to A. The graph mediated the coordination.
 
@@ -88,7 +88,7 @@ The theoretical literature connects stigmergy to self-organization, emergence, a
 
 - **The task graph is your communication channel.** Write descriptive task titles, clear descriptions, and meaningful log entries — these are the "pheromone trails" that guide downstream agents.
 - **Task decomposition is environment design.** How you break work into tasks determines the stigmergic landscape agents navigate. Fine-grained tasks create more frequent, smaller traces. Coarse-grained tasks create fewer, larger traces.
-- **Evaluation records are marker traces.** They don't change the work product but signal information about its quality, guiding the evolve loop toward better agent configurations.
+- **Reward records are marker traces.** They don't change the work product but signal information about its quality, guiding the evolve loop toward better agent configurations.
 
 ---
 
@@ -125,7 +125,7 @@ These patterns cannot be expressed with static edges alone but can be achieved t
 
 | Pattern | ID | Idiom |
 |---------|----|-------|
-| **Exclusive Choice** | WCP4 | A coordinator task evaluates a condition and creates only the appropriate successor task |
+| **Exclusive Choice** | WCP4 | A coordinator task rewards a condition and creates only the appropriate successor task |
 | **Multi-Choice** | WCP6 | A coordinator task selectively creates subsets of successor tasks |
 | **Discriminator** | WCP9 | A join task is manually marked ready after the first of N predecessors completes |
 | **Multiple Instance (runtime)** | WCP14-15 | The coordinator dynamically creates N task copies at runtime based on data |
@@ -133,7 +133,7 @@ These patterns cannot be expressed with static edges alone but can be achieved t
 | **Cancel Task/Region** | WCP19/25 | `wg abandon <task-id>` — terminal status that unblocks dependents |
 | **Milestone** | WCP18 | A task checks the status of a non-predecessor ("is task X done?") before proceeding |
 
-### 2.5 Resource Patterns and the Agency
+### 2.5 Resource Patterns and the Identity
 
 Beyond control-flow, Van der Aalst's Resource Patterns describe how work is distributed to agents. Several map directly:
 
@@ -142,8 +142,8 @@ Beyond control-flow, Van der Aalst's Resource Patterns describe how work is dist
 | **Role-Based Distribution** (WRP2) | Tasks matched to agents by role |
 | **Capability-Based Distribution** (WRP8) | Task `skills` matched against role capabilities |
 | **Automatic Execution** (WRP11) | `wg service start` — the coordinator auto-assigns and spawns agents |
-| **History-Based Distribution** (WRP6) | Evaluation-informed agent selection in auto-assign tasks |
-| **Organizational Distribution** (WRP9) | The agency structure (roles, motivations) determines the distribution |
+| **History-Based Distribution** (WRP6) | Reward-informed agent selection in auto-assign tasks |
+| **Organizational Distribution** (WRP9) | The identity structure (roles, objectives) determines the distribution |
 
 ### 2.6 Summary: Expressiveness Hierarchy
 
@@ -281,7 +281,7 @@ In workgraph terms: if the `reviewer` role is the bottleneck, either assign more
 
 ---
 
-## 5. Autopoiesis: The Self-Producing Agency
+## 5. Autopoiesis: The Self-Producing Identity
 
 ### 5.1 The Concept
 
@@ -302,18 +302,18 @@ Key properties:
 
 Niklas Luhmann (1984) adapted autopoiesis for sociology with a radical move: **social systems are made of communications, not people.** People are in the *environment* of social systems, not their components. A social system is autopoietic because each communication connects to previous communications and stimulates subsequent ones — communications producing communications.
 
-This reframing is strikingly applicable to workgraph: the *system* is the network of task state transitions and evaluations, not the agents themselves. Agents are in the environment of the workgraph system. What matters is the network of communications: "task X is done" triggers "task Y is ready" triggers "agent A starts work" triggers "task Y is in-progress" — communications producing communications.
+This reframing is strikingly applicable to workgraph: the *system* is the network of task state transitions and rewards, not the agents themselves. Agents are in the environment of the workgraph system. What matters is the network of communications: "task X is done" triggers "task Y is ready" triggers "agent A starts work" triggers "task Y is in-progress" — communications producing communications.
 
 ### 5.3 The Evolve Loop is Autopoietic
 
-The execute→evaluate→evolve→execute cycle maps precisely onto autopoietic self-production:
+The execute→reward→evolve→execute cycle maps precisely onto autopoietic self-production:
 
 ```
 execute (agents produce artifacts)
    ↓
-evaluate (artifacts produce evaluation scores)
+reward (artifacts produce reward scores)
    ↓
-evolve (scores produce new role/motivation definitions)
+evolve (scores produce new role/objective definitions)
    ↓
 agents formed from new definitions → assigned to future tasks
    ↓
@@ -322,19 +322,19 @@ execute (cycle repeats)
 
 | Autopoietic Property | Workgraph Manifestation |
 |----------------------|-------------------------|
-| **Self-production** | The evolve step produces new agent definitions (modified roles, motivations) that are themselves the components that execute the next cycle. The system literally produces the components that produce the system. |
-| **Operational closure** | Agents interact only through the task graph. All "communication" is mediated by task state changes. The internal logic (role definitions, motivation constraints, evaluation rubrics) is self-referential. |
+| **Self-production** | The evolve step produces new agent definitions (modified roles, objectives) that are themselves the components that execute the next cycle. The system literally produces the components that produce the system. |
+| **Operational closure** | Agents interact only through the task graph. All "communication" is mediated by task state changes. The internal logic (role definitions, objective constraints, reward rubrics) is self-referential. |
 | **Structural coupling** | The task graph is coupled to the external codebase/project. Changes in the environment (new bugs, new requirements) perturb the system by adding new tasks, but the system's internal structure determines how it responds. |
-| **Cognition** | Maturana and Varela argued that *living is cognition* — the capacity to maintain autopoiesis in a changing environment is a form of knowing. The evaluation system is the agency's cognition — its capacity to sense whether autopoiesis is being maintained (are tasks being completed successfully?) and adapt accordingly. |
+| **Cognition** | Maturana and Varela argued that *living is cognition* — the capacity to maintain autopoiesis in a changing environment is a form of knowing. The reward system is the identity's cognition — its capacity to sense whether autopoiesis is being maintained (are tasks being completed successfully?) and adapt accordingly. |
 | **Temporalization** | Tasks are momentary events. Once completed, they are consumed. The system must continuously produce new tasks (or loop back via `loops_to`) to maintain itself. A workgraph with no open tasks has ceased its autopoiesis. |
 
 ### 5.4 Practical Implications
 
 The autopoietic framing suggests several design principles:
 
-1. **The agency is alive only while tasks flow.** An idle agency with no open tasks is a dead system. The `loops_to` mechanism keeps the agency alive by re-activating tasks.
-2. **Evolution is not optional — it is survival.** An agency that does not evolve in response to evaluation feedback will become structurally coupled to an environment that has moved on. The evolve step is the autopoietic system's metabolism.
-3. **Perturbations enter through tasks, not through agents.** New requirements, bug reports, and changing priorities are perturbations that enter the system as new tasks. The system's response is determined by its current structure (which agents exist, what roles they have, what motivations constrain them).
+1. **The identity is alive only while tasks flow.** An idle identity with no open tasks is a dead system. The `loops_to` mechanism keeps the identity alive by re-activating tasks.
+2. **Evolution is not optional — it is survival.** An identity that does not evolve in response to reward feedback will become structurally coupled to an environment that has moved on. The evolve step is the autopoietic system's metabolism.
+3. **Perturbations enter through tasks, not through agents.** New requirements, bug reports, and changing priorities are perturbations that enter the system as new tasks. The system's response is determined by its current structure (which agents exist, what roles they have, what objectives constrain them).
 4. **Self-reference is a feature, not a bug.** The evolve step modifying the very agents that will execute the next cycle is self-referential. This is what makes the system autopoietic. The self-mutation safety guard (evolver cannot modify its own role without human approval) is the autopoietic system's immune response — preventing pathological self-modification.
 
 ---
@@ -364,7 +364,7 @@ The workgraph coordinator operates a control loop:
        │                                      │
        ▼                                      │
    [Observe]                             [Feedback]
-   Poll graph for ready tasks            Evaluation scores
+   Poll graph for ready tasks            Reward scores
    Check agent status (alive/dead)       Task completion/failure
        │                                      │
        ▼                                      │
@@ -395,29 +395,29 @@ Ashby's Law states: **"Only variety can absorb variety."** A regulator must have
 Applied to workgraph quantitatively:
 
 - Let **V** = the number of distinct task types in the graph (identified by required skills, complexity, domain)
-- Let **R** = the number of distinct roles in the agency
+- Let **R** = the number of distinct roles in the identity
 
 **Ashby's Law requires R ≥ V** for adequate regulation. If V grows (new kinds of work emerge) and R does not, the system becomes under-regulated — agents will be assigned to tasks they lack the capability for, producing poor results.
 
-The `evolve` mechanism is precisely how the system increases its requisite variety: when evaluations reveal that existing roles cannot handle certain task types, the evolver creates new roles (increasing R) to match the growing variety of disturbances (V).
+The `evolve` mechanism is precisely how the system increases its requisite variety: when rewards reveal that existing roles cannot handle certain task types, the evolver creates new roles (increasing R) to match the growing variety of disturbances (V).
 
 | Requisite Variety Violation | Symptom in Workgraph | Fix |
 |-----------------------------|---------------------|-----|
-| Too few roles for task variety | Low evaluation scores on certain task types | `wg evolve --strategy gap-analysis` |
-| Too many roles (over-regulation) | Roles with zero task assignments, wasted agency complexity | `wg evolve --strategy retirement` |
-| Motivation too restrictive | Tasks that require speed are assigned agents with "never rush" constraints | Tune acceptable/unacceptable tradeoffs |
+| Too few roles for task variety | Low reward scores on certain task types | `wg evolve --strategy gap-analysis` |
+| Too many roles (over-regulation) | Roles with zero task assignments, wasted identity complexity | `wg evolve --strategy retirement` |
+| Objective too restrictive | Tasks that require speed are assigned agents with "never rush" constraints | Tune acceptable/unacceptable tradeoffs |
 
 ### 6.4 Single-Loop vs. Double-Loop Learning
 
 | Learning Type | Mechanism | Workgraph Equivalent |
 |---------------|-----------|---------------------|
-| **Single-loop** | Adjust actions within existing framework to reduce error | Evaluations adjust which agent is assigned to which task type. Same roles, same motivations, different assignment. |
-| **Double-loop** | Question and modify the framework itself | The `evolve` step modifies roles and motivations themselves. The governing variables change. |
+| **Single-loop** | Adjust actions within existing framework to reduce error | Rewards adjust which agent is assigned to which task type. Same roles, same objectives, different assignment. |
+| **Double-loop** | Question and modify the framework itself | The `evolve` step modifies roles and objectives themselves. The governing variables change. |
 
 Single-loop: "This agent performed poorly on this task. Assign a different agent next time."
 Double-loop: "The role definition itself is wrong. Modify the role's skills and desired outcome."
 
-Argyris and Schön argued that organizations that cannot double-loop learn become rigid and eventually fail. In workgraph, an agency that only re-assigns tasks without evolving its roles and motivations will plateau in performance.
+Argyris and Schön argued that organizations that cannot double-loop learn become rigid and eventually fail. In workgraph, an identity that only re-assigns tasks without evolving its roles and objectives will plateau in performance.
 
 ---
 
@@ -442,20 +442,20 @@ The critical homeostatic balance is the **S3-S4 homeostat**: S3 wants stability 
 
 | VSM System | Workgraph Equivalent |
 |------------|----------------------|
-| **S1 (Operations)** | **Agents** executing tasks. Each agent (role + motivation) is a semi-autonomous operational unit. |
+| **S1 (Operations)** | **Agents** executing tasks. Each agent (role + objective) is a semi-autonomous operational unit. |
 | **S2 (Coordination)** | **`blocked_by` dependency edges** and **task status transitions**. These protocols prevent agents from clashing — an agent cannot start a task until dependencies are satisfied. The coordinator's scheduling logic is S2. |
 | **S3 (Control)** | **The coordinator** (`wg service start`). It allocates agents to tasks, monitors throughput, detects dead agents, and optimizes resource utilization across all S1 units. |
-| **S3\* (Audit)** | **Evaluations**. Sporadic, independent assessment of agent performance that bypasses normal task-completion reporting. The evaluation system provides a check that cannot be gamed by the agent reporting its own success. |
-| **S4 (Intelligence)** | **The `evolve` mechanism**. It scans performance data (the "environment" of evaluation scores) for patterns and generates adaptations (new roles, modified motivations). Also: any human operator reviewing the graph and adding tasks based on environmental scanning. |
-| **S5 (Policy)** | **Motivations** and **project-level configuration** (CLAUDE.md, the root of the task tree). These define the ground rules under which all agents operate — what is acceptable, what is not, what the system's identity and purpose are. |
+| **S3\* (Audit)** | **Rewards**. Sporadic, independent assessment of agent performance that bypasses normal task-completion reporting. The reward system provides a check that cannot be gamed by the agent reporting its own success. |
+| **S4 (Intelligence)** | **The `evolve` mechanism**. It scans performance data (the "environment" of reward scores) for patterns and generates adaptations (new roles, modified objectives). Also: any human operator reviewing the graph and adding tasks based on environmental scanning. |
+| **S5 (Policy)** | **Objectives** and **project-level configuration** (CLAUDE.md, the root of the task tree). These define the ground rules under which all agents operate — what is acceptable, what is not, what the system's identity and purpose are. |
 | **Recursion** | Workgraph's task nesting. A high-level task can contain subtasks, each potentially a mini-viable-system with its own agents and coordination. |
 
 ### 7.3 The S3-S4 Balance in Practice
 
 In workgraph, the S3-S4 tension manifests as:
 
-- **S3 pull (stability)**: "Keep using the existing roles and motivations — they're working fine. Optimize assignment. Don't change what isn't broken."
-- **S4 pull (adaptation)**: "The task landscape is changing. New types of work need new roles. Evolve the agency."
+- **S3 pull (stability)**: "Keep using the existing roles and objectives — they're working fine. Optimize assignment. Don't change what isn't broken."
+- **S4 pull (adaptation)**: "The task landscape is changing. New types of work need new roles. Evolve the identity."
 
 The human operator is S5, mediating this tension. The evolve mechanism's self-mutation safety guard (requiring human approval for changes to the evolver's own role) is the S5 function enforcing identity preservation.
 
@@ -474,33 +474,33 @@ Two core information asymmetries:
 | **Adverse selection** | Before delegation | The agent has private information about their capabilities that the principal cannot observe. The principal may select the wrong agent. |
 | **Moral hazard** | After delegation | The agent's actions are not fully observable. The agent may cut corners or pursue private objectives. |
 
-Agency costs (Jensen & Meckling 1976) = Monitoring costs + Bonding costs + Residual loss.
+Identity costs (Jensen & Meckling 1976) = Monitoring costs + Bonding costs + Residual loss.
 
-### 8.2 Workgraph as an Agency Relationship
+### 8.2 Workgraph as an Identity Relationship
 
-This mapping is unusually precise because workgraph literally has primitives called "agents," "evaluations," and "motivations" — the vocabulary of agency theory.
+This mapping is unusually precise because workgraph literally has primitives called "agents," "rewards," and "objectives" — the vocabulary of identity theory.
 
-| Agency Theory Concept | Workgraph Equivalent |
+| Identity Theory Concept | Workgraph Equivalent |
 |-----------------------|----------------------|
-| **Principal** | The human operator who defines the task graph and configures the agency |
-| **Agent** | The workgraph agent (role + motivation) — literally named |
+| **Principal** | The human operator who defines the task graph and configures the identity |
+| **Agent** | The workgraph agent (role + objective) — literally named |
 | **Delegation** | `wg service start --max-agents N` — the principal delegates work to autonomous agents |
 | **Moral hazard** | The agent might produce low-quality output, hallucinate, or take shortcuts not visible from task completion status alone |
-| **Adverse selection** | Assigning the wrong role+motivation pairing to a task — the agent lacks the capability, but this is not apparent until after execution |
-| **Monitoring costs** | **Evaluations** — the computational cost of assessing agent output quality after every task |
-| **Bonding costs** | **Motivations** — the agent is constrained by its motivation document to act in the principal's interest. Acceptable/unacceptable tradeoffs are the bonding contract. |
+| **Adverse selection** | Assigning the wrong role+objective pairing to a task — the agent lacks the capability, but this is not apparent until after execution |
+| **Monitoring costs** | **Rewards** — the computational cost of assessing agent output quality after every task |
+| **Bonding costs** | **Objectives** — the agent is constrained by its objective document to act in the principal's interest. Acceptable/unacceptable tradeoffs are the bonding contract. |
 | **Incentive alignment** | **The evolve mechanism** — agents that perform well have their patterns reinforced; agents that perform poorly are evolved or retired. This is performance-based selection. |
-| **Residual loss** | The gap between what the principal would produce and what the agent actually produces. Minimized by iterating evaluate→evolve. |
-| **Repeated games** | The evaluation history builds "reputation" that informs future assignment and evolution. Long-term relationships (many tasks by the same agent) build trust (`TrustLevel::Verified`). |
+| **Residual loss** | The gap between what the principal would produce and what the agent actually produces. Minimized by iterating reward→evolve. |
+| **Repeated games** | The reward history builds "reputation" that informs future assignment and evolution. Long-term relationships (many tasks by the same agent) build trust (`TrustLevel::Verified`). |
 | **Screening** | The coordinator's auto-assign capability-matching: skills on the task matched against skills on the role. |
 
 ### 8.3 Mechanism Design Implications
 
-Agency theory suggests specific design principles for workgraph:
+Identity theory suggests specific design principles for workgraph:
 
-1. **Invest in monitoring (evaluations) proportional to risk.** High-stakes tasks deserve more thorough evaluation. Low-stakes tasks can be spot-checked.
-2. **Make bonding explicit.** The motivation's `unacceptable_tradeoffs` should list the specific failure modes the principal fears most. "Never skip tests" is a bonding clause.
-3. **Align incentives through evolution.** The evolve mechanism should explicitly reward the behaviors the principal values. If correctness matters more than speed, the evaluation rubric should weight correctness heavily (it does — 40% by default).
+1. **Invest in monitoring (rewards) proportional to risk.** High-stakes tasks deserve more thorough reward. Low-stakes tasks can be spot-checked.
+2. **Make bonding explicit.** The objective's `unacceptable_tradeoffs` should list the specific failure modes the principal fears most. "Never skip tests" is a bonding clause.
+3. **Align incentives through evolution.** The evolve mechanism should explicitly reward the behaviors the principal values. If correctness matters more than speed, the reward rubric should weight correctness heavily (it does — 40% by default).
 4. **Screen before delegating.** Auto-assign should match task skills against agent capabilities, not assign randomly. This reduces adverse selection.
 5. **Build trust incrementally.** New agents should start with low-stakes tasks. The `TrustLevel` field (Unknown → Provisional → Verified) formalizes this progression.
 
@@ -527,7 +527,7 @@ Coined by Jonny LeRoy and Matt Simons (2010): if org structure shapes system arc
 | **Communication channels** | `blocked_by` edges between tasks assigned to different roles |
 | **System architecture** | The task graph structure — how work is decomposed and connected |
 | **Conway's constraint** | The task decomposition will mirror the role decomposition. If you have "frontend" and "backend" roles, you get tasks that split along that boundary, producing a system with that split. |
-| **Inverse Conway Maneuver** | Deliberately designing roles and motivations to produce the desired task decomposition (and therefore system architecture) |
+| **Inverse Conway Maneuver** | Deliberately designing roles and objectives to produce the desired task decomposition (and therefore system architecture) |
 
 ### 9.4 The Inverse Conway Maneuver in Practice
 
@@ -593,7 +593,7 @@ Team Topologies (Skelton & Pais, 2019) provides a practical framework for organi
 
 1. **Most roles should be stream-aligned.** If you have a "build the feature" type of work, that's stream-aligned. Don't over-specialize.
 2. **Create platform roles for shared infrastructure.** If multiple stream-aligned agents need the same tooling/setup, create a platform role whose tasks they all depend on.
-3. **Use enabling roles sparingly.** An "evolver" that reviews the agency and proposes improvements is an enabling role. It shouldn't exist permanently — it should work itself out of a job.
+3. **Use enabling roles sparingly.** An "evolver" that reviews the identity and proposes improvements is an enabling role. It shouldn't exist permanently — it should work itself out of a job.
 4. **Complicated-subsystem roles protect cognitive load.** If a task requires deep ML expertise, create a specialized role rather than expecting a general-purpose role to handle it.
 5. **Interaction modes evolve.** Two agents might collaborate on initial exploration, then shift to X-as-a-Service once interfaces stabilize. The task graph structure should reflect this evolution.
 
@@ -609,13 +609,13 @@ Adam Smith's pin factory (1776): splitting work into specialized steps increases
 - **Role specialization**: Defining roles with narrow skill sets (analyst, implementer, reviewer) rather than one generalist role
 - **The pipeline pattern**: Sequential stages of specialized work (Section 4)
 
-The tradeoff: over-specialization increases coordination costs (more `blocked_by` edges, more handoffs, more potential for misalignment). This is the fundamental tension in organizational design, and it applies directly to workgraph agency design.
+The tradeoff: over-specialization increases coordination costs (more `blocked_by` edges, more handoffs, more potential for misalignment). This is the fundamental tension in organizational design, and it applies directly to workgraph identity design.
 
 ### 11.2 Span of Control
 
 The number of subordinates a manager can effectively supervise. In workgraph: the number of agents a single coordinator tick can effectively manage. The `max_agents` parameter is the span of control.
 
-Research suggests 5-9 direct reports as optimal for human managers (Urwick, 1956). For workgraph, the constraint is computational: how many agents can the coordinator monitor, evaluate, and evolve without losing oversight quality.
+Research suggests 5-9 direct reports as optimal for human managers (Urwick, 1956). For workgraph, the constraint is computational: how many agents can the coordinator monitor, reward, and evolve without losing oversight quality.
 
 ### 11.3 Coordination Costs
 
@@ -634,7 +634,7 @@ Oliver Williamson's Transaction Cost Economics (1975, 1985) asks: when should wo
 | **Frequency** | High (recurring work) | Low (one-off) |
 
 In workgraph, this maps to the choice between:
-- **Internal agents** (agency-defined roles with specialized capabilities) for recurring, high-specificity work
+- **Internal agents** (identity-defined roles with specialized capabilities) for recurring, high-specificity work
 - **External agents** (human operators, one-off shell executors) for infrequent, well-defined tasks
 
 The `executor` field on agents (`claude`, `matrix`, `email`, `shell`) represents this make-vs-buy boundary.
@@ -663,7 +663,7 @@ Division of Labor ─ Task decomposition ──── Pipeline & Fork-Join
                        │                            │
 Stigmergy ──────── Shared medium ──────────── Self-organizing traces
                        │                            │
-Agency Theory ──── Principal delegates ────── Monitor + Evolve = Alignment
+Identity Theory ──── Principal delegates ────── Monitor + Evolve = Alignment
                        │                            │
 Cybernetics ────── Feedback loops ─────────── Requisite Variety
                        │                            │
@@ -682,19 +682,19 @@ Several deep identities connect these frameworks:
 
 3. **Conway's Law + Team Topologies + Resource Patterns**: Conway's Law is the theoretical prediction; Team Topologies is the practical prescription; Workflow Resource Patterns are the formal specification. All three say: *how you assign people to work determines the structure of what gets built.*
 
-4. **Principal-Agent + Evaluations + Cybernetics**: Agency theory identifies the *problem* (misaligned incentives under information asymmetry); cybernetics provides the *solution architecture* (feedback loops); evaluations are the *implementation* of both monitoring (agency theory) and negative feedback (cybernetics).
+4. **Principal-Agent + Rewards + Cybernetics**: Identity theory identifies the *problem* (misaligned incentives under information asymmetry); cybernetics provides the *solution architecture* (feedback loops); rewards are the *implementation* of both monitoring (identity theory) and negative feedback (cybernetics).
 
 5. **Fork-Join + Workflow Patterns + `blocked_by`**: Fork-Join is the computational realization of WCP2+WCP3, which are the two most fundamental `blocked_by` graph topologies.
 
-6. **Autopoiesis + Evolve + Double-Loop Learning**: The execute→evaluate→evolve→execute cycle is simultaneously autopoietic (self-producing), double-loop (questioning governing variables), and cybernetic (feedback-driven regulation). This is the single most theoretically dense primitive in workgraph.
+6. **Autopoiesis + Evolve + Double-Loop Learning**: The execute→reward→evolve→execute cycle is simultaneously autopoietic (self-producing), double-loop (questioning governing variables), and cybernetic (feedback-driven regulation). This is the single most theoretically dense primitive in workgraph.
 
 ---
 
 ## 13. Practical Recommendations
 
-### 13.1 Agency Design Checklist
+### 13.1 Identity Design Checklist
 
-Based on the theoretical frameworks above, here is a checklist for designing a workgraph agency:
+Based on the theoretical frameworks above, here is a checklist for designing a workgraph identity:
 
 | Step | Framework | Question | Action |
 |------|-----------|----------|--------|
@@ -702,8 +702,8 @@ Based on the theoretical frameworks above, here is a checklist for designing a w
 | 2 | Requisite Variety | Do I have enough roles for the variety of tasks? | Count task types, ensure ≥1 role per type |
 | 3 | Team Topologies | Which role is stream-aligned? Platform? Enabling? | Label roles by type; most should be stream-aligned |
 | 4 | Division of Labor | How fine-grained should specialization be? | Balance specialization against coordination cost |
-| 5 | Principal-Agent | What failure modes do I fear most? | Encode them in motivations as `unacceptable_tradeoffs` |
-| 6 | Cybernetics | Is the feedback loop working? | Enable auto-evaluate; run evolve periodically |
+| 5 | Principal-Agent | What failure modes do I fear most? | Encode them in objectives as `unacceptable_tradeoffs` |
+| 6 | Cybernetics | Is the feedback loop working? | Enable auto-reward; run evolve periodically |
 | 7 | VSM S3-S4 | Am I balancing stability and adaptation? | Don't evolve too often (S3) or too rarely (S4) |
 
 ### 13.2 Pattern Selection Guide
@@ -723,7 +723,7 @@ Based on the theoretical frameworks above, here is a checklist for designing a w
 |--------------|----------------|---------|-----|
 | One role for all tasks | Requisite Variety | Low scores on specialized tasks | Add specialized roles |
 | Too many roles | Parsimony / coordination cost | Roles with zero tasks; confusion in assignment | Retire unused roles |
-| No evaluations | Agency Theory (no monitoring) | Quality drift; no evolution signal | Enable auto-evaluate |
+| No rewards | Identity Theory (no monitoring) | Quality drift; no evolution signal | Enable auto-reward |
 | Evolving every cycle | VSM S3-S4 imbalance | Instability; roles changing faster than agents can adapt | Evolve periodically, not continuously |
 | Serial pipeline where fork-join fits | Division of Labor mismatch | Slow throughput on parallelizable work | Decompose into parallel tasks |
 | Monolithic tasks | No division of labor | Single agent bottleneck; no parallelism | Break into subtasks with dependencies |
@@ -735,7 +735,7 @@ Based on the theoretical frameworks above, here is a checklist for designing a w
 
 ### Framework-to-Primitive Mapping
 
-| Framework | Tasks | `blocked_by` | `loops_to` | Roles | Motivations | Agents | Coordinator | Evaluations | Evolve |
+| Framework | Tasks | `blocked_by` | `loops_to` | Roles | Objectives | Agents | Coordinator | Rewards | Evolve |
 |-----------|-------|-------------|-----------|-------|-------------|--------|-------------|-------------|--------|
 | Stigmergy | Traces in environment | Sematectonic coordination | Feedback trail | — | — | Stimulated actors | — | Marker traces | Self-reinforcing trails |
 | Workflow Patterns | Activities | Control-flow edges | Back-edges (WCP10/21) | Resource roles (WRP2) | — | Resources | Engine | — | — |
@@ -743,7 +743,7 @@ Based on the theoretical frameworks above, here is a checklist for designing a w
 | Autopoiesis | Momentary events | Process network | Self-production cycle | System components | System boundary | Environment | — | Cognition | Self-production |
 | Cybernetics | System states | Causal chains | Feedback loops | Regulator variety | Constraints | Regulated units | Regulator (OODA) | Feedback signal | Variety amplification |
 | VSM | S1 operations | S2 coordination | S3 audit cycle | S1 capabilities | S5 policy | S1 units | S3 control | S3* audit | S4 intelligence |
-| Agency Theory | Delegated work | Contract terms | Repeated games | Agent type | Bonding contract | Agent | Principal | Monitoring | Incentive alignment |
+| Identity Theory | Delegated work | Contract terms | Repeated games | Agent type | Bonding contract | Agent | Principal | Monitoring | Incentive alignment |
 | Conway's Law | System components | Interfaces | — | Team capabilities | — | Teams | — | — | Inverse Conway |
 | Team Topologies | Work streams | Team interactions | — | Team types | — | Teams | — | — | Topology evolution |
 | Org Theory | Labor units | Coordination channels | — | Specializations | Values | Workers | Manager | Performance review | Restructuring |
@@ -754,13 +754,13 @@ Based on the theoretical frameworks above, here is a checklist for designing a w
 |-----------|--------------------------|-------------------|
 | **Tasks** | All 10 frameworks | The universal unit of work |
 | **`blocked_by`** | Workflow Patterns, Fork-Join, Stigmergy, Conway's Law, Coordination Costs | The structural backbone |
-| **`loops_to`** | Workflow Patterns (WCP10/21), Cybernetics (feedback), Autopoiesis (self-production), Agency Theory (repeated games) | Enables dynamics |
+| **`loops_to`** | Workflow Patterns (WCP10/21), Cybernetics (feedback), Autopoiesis (self-production), Identity Theory (repeated games) | Enables dynamics |
 | **Roles** | Team Topologies, Conway's Law, Resource Patterns, VSM (S1), Requisite Variety, Division of Labor | The competency model |
-| **Motivations** | Agency Theory (bonding), VSM (S5 policy), Cybernetics (constraints) | The value system |
-| **Agents** | Agency Theory (literally), Stigmergy (stimulated actors), VSM (S1 units), Team Topologies (teams) | The executing entity |
-| **Coordinator** | Cybernetics (regulator), VSM (S3), OODA Loop, Agency Theory (principal's delegate) | The control system |
-| **Evaluations** | Agency Theory (monitoring), Cybernetics (feedback signal), VSM (S3* audit), Autopoiesis (cognition) | The sensing mechanism |
-| **Evolve** | Autopoiesis (self-production), Cybernetics (double-loop learning, variety amplification), VSM (S4 intelligence), Agency Theory (incentive alignment) | The adaptation mechanism |
+| **Objectives** | Identity Theory (bonding), VSM (S5 policy), Cybernetics (constraints) | The value system |
+| **Agents** | Identity Theory (literally), Stigmergy (stimulated actors), VSM (S1 units), Team Topologies (teams) | The executing entity |
+| **Coordinator** | Cybernetics (regulator), VSM (S3), OODA Loop, Identity Theory (principal's delegate) | The control system |
+| **Rewards** | Identity Theory (monitoring), Cybernetics (feedback signal), VSM (S3* audit), Autopoiesis (cognition) | The sensing mechanism |
+| **Evolve** | Autopoiesis (self-production), Cybernetics (double-loop learning, variety amplification), VSM (S4 intelligence), Identity Theory (incentive alignment) | The adaptation mechanism |
 
 ---
 
@@ -826,10 +826,10 @@ Based on the theoretical frameworks above, here is a checklist for designing a w
 
 ### Principal-Agent Theory
 
-- Ross, S.A. (1973). "The Economic Theory of Agency: The Principal's Problem." *AER*, 63(2), 134-139.
-- Jensen, M.C. & Meckling, W.H. (1976). "Theory of the Firm: Managerial Behavior, Agency Costs and Ownership Structure." *JFE*, 3(4), 305-360.
+- Ross, S.A. (1973). "The Economic Theory of Identity: The Principal's Problem." *AER*, 63(2), 134-139.
+- Jensen, M.C. & Meckling, W.H. (1976). "Theory of the Firm: Managerial Behavior, Identity Costs and Ownership Structure." *JFE*, 3(4), 305-360.
 - Holmström, B. (1979). "Moral Hazard and Observability." *Bell Journal of Economics*, 10(1), 74-91.
-- Eisenhardt, K.M. (1989). "Agency Theory: An Assessment and Review." *AMR*, 14(1), 57-74.
+- Eisenhardt, K.M. (1989). "Identity Theory: An Assessment and Review." *AMR*, 14(1), 57-74.
 - Laffont, J.-J. & Martimort, D. (2002). *The Theory of Incentives: The Principal-Agent Model*. Princeton University Press.
 
 ### Conway's Law

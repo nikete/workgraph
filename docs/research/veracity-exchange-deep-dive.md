@@ -2,9 +2,9 @@
 
 ## Executive Summary
 
-Veracity Exchange is a marketplace for private participant repositories (datasets, signals, research) that uses internal markets to objectively measure each participant's marginal value contribution. Workgraph is a task coordination system with composable agent identities, provenance logging, and performance evaluation. This report analyzes how these systems could integrate, answering seven specific research questions about protocol mappings, information boundaries, agent definitions as market goods, and minimizing the need for forking.
+Veracity Exchange is a marketplace for private participant repositories (datasets, signals, research) that uses internal markets to objectively measure each participant's marginal value contribution. Workgraph is a task coordination system with composable agent identities, provenance logging, and performance reward. This report analyzes how these systems could integrate, answering seven specific research questions about protocol mappings, information boundaries, agent definitions as market goods, and minimizing the need for forking.
 
-**Key finding:** The integration is architecturally natural. Workgraph already has the primitives—task provenance, artifact tracking, agent evaluation, and directed dependency graphs—that map onto Veracity's concepts of portfolio positions, scoring, and information flow control. The gap is primarily in metadata richness (tasks need public/private classification, portfolio position mappings) and in post-completion hooks (no plugin system exists to call `run-day` automatically). Both can be addressed with extensions rather than core forks.
+**Key finding:** The integration is architecturally natural. Workgraph already has the primitives—task provenance, artifact tracking, agent reward, and directed dependency graphs—that map onto Veracity's concepts of portfolio positions, scoring, and information flow control. The gap is primarily in metadata richness (tasks need public/private classification, portfolio position mappings) and in post-completion hooks (no plugin system exists to call `run-day` automatically). Both can be addressed with extensions rather than core forks.
 
 ---
 
@@ -47,7 +47,7 @@ Veracity is explicitly designed for AI agent participation. It ships with:
 - `agent-guide.md` — deployed worker version of the guide
 - `interview-template.json` — structured scaffold for the onboarding interview
 
-The deliverables are text-first and deterministic: every claim must link to an observable signal with measurable criteria. This is a good fit for workgraph's evaluation system, which also demands concrete, measurable outcomes.
+The deliverables are text-first and deterministic: every claim must link to an observable signal with measurable criteria. This is a good fit for workgraph's reward system, which also demands concrete, measurable outcomes.
 
 ---
 
@@ -71,7 +71,7 @@ pub struct OperationEntry {
 }
 ```
 
-**Current coverage gap:** Only `add_task`, `done`, and `fail` are logged to the provenance system. Task claims, spawns, retries, evaluations, and artifact recordings only update the task's in-graph `log` field (a per-task append-only list). This means replay from provenance alone is incomplete.
+**Current coverage gap:** Only `add_task`, `done`, and `fail` are logged to the provenance system. Task claims, spawns, retries, rewards, and artifact recordings only update the task's in-graph `log` field (a per-task append-only list). This means replay from provenance alone is incomplete.
 
 #### The Mapping: Task → Portfolio Position
 
@@ -83,7 +83,7 @@ The conceptual mapping is:
 | Task output/artifacts | Position entry (what was bet on) |
 | Task completion timestamp | Position date |
 | Upstream dependency outputs | Input signals used to form the position |
-| `wg evaluate` score | Internal quality metric (complementary to veracity score) |
+| `wg reward` score | Internal quality metric (complementary to veracity score) |
 | Veracity `run-day` score | Objective external metric (P&L, MSE) |
 
 A workflow that produces a daily forecast would decompose as:
@@ -98,7 +98,7 @@ Each intermediate task produces artifacts that are the "positions" of that sub-u
 
 To enable full replay and per-sub-unit scoring:
 
-1. **Expand provenance coverage.** Every lifecycle event needs to be logged to the op-log, not just add/done/fail. At minimum: `claim`, `spawn`, `artifact`, `evaluate`, `retry`, `unclaim`. This is a straightforward code change—each command already records to the task-level log; it just needs a parallel `provenance::record()` call.
+1. **Expand provenance coverage.** Every lifecycle event needs to be logged to the op-log, not just add/done/fail. At minimum: `claim`, `spawn`, `artifact`, `reward`, `retry`, `unclaim`. This is a straightforward code change—each command already records to the task-level log; it just needs a parallel `provenance::record()` call.
 
 2. **Add input/output hashing to artifacts.** Currently artifacts are bare path strings with no content hash. For replay, each artifact needs a content hash so we can verify that replayed inputs match original inputs. Proposed extension to the `Task` struct:
 
@@ -111,7 +111,7 @@ To enable full replay and per-sub-unit scoring:
    }
    ```
 
-3. **Record veracity scores as a new evaluation dimension.** The existing evaluation system scores on correctness/completeness/efficiency/style. A `veracity_score` dimension (or a separate `ExternalScore` record) would capture the objective market score alongside the LLM-judged quality score. This creates a dual-scoring system: internal quality (did the agent do good work?) and external veracity (did the work produce accurate predictions?).
+3. **Record veracity scores as a new reward dimension.** The existing reward system scores on correctness/completeness/efficiency/style. A `veracity_score` dimension (or a separate `ExternalScore` record) would capture the objective market score alongside the LLM-judged quality score. This creates a dual-scoring system: internal quality (did the agent do good work?) and external veracity (did the work produce accurate predictions?).
 
 4. **Replay command.** A `wg replay <workflow-root>` command that reads the provenance log, reconstructs the DAG execution order, and re-runs each task's outputs through the veracity scoring API. This would require:
    - Reading all `OperationEntry` records for tasks in the subgraph
@@ -233,7 +233,7 @@ For Nikete's vision of posting "non-sensitive prompt sections" to a public marke
 
 1. **Task definitions** (title, description, required skills) — shareable if `visibility >= PublicDefinition`
 2. **Role definitions** (skills, desired outcomes) — shareable (these are methodological, not data-specific)
-3. **Evaluation scores** — shareable as credibility signals
+3. **Reward scores** — shareable as credibility signals
 4. **Artifacts** — only if `visibility == PublicFull`
 5. **Dependency structure** — the DAG topology itself could be shared as a template, showing how work is organized without revealing content
 
@@ -241,15 +241,15 @@ For Nikete's vision of posting "non-sensitive prompt sections" to a public marke
 
 ### 2.3 Agent Definitions as Market Goods
 
-**Question:** Could wg agency definitions (roles, motivations, skills) be the things traded on Veracity Exchange?
+**Question:** Could wg identity definitions (roles, objectives, skills) be the things traded on Veracity Exchange?
 
 #### The Natural Fit
 
 This is perhaps the most compelling integration point. Consider:
 
-1. An agent (role + motivation) is assigned to forecasting tasks
+1. An agent (role + objective) is assigned to forecasting tasks
 2. Those tasks produce veracity-scorable portfolios
-3. The agent accumulates a `PerformanceRecord` with objective veracity scores
+3. The agent accumulates a `RewardHistory` with objective veracity scores
 4. The agent's role definition (its skills, desired outcome, description) becomes a *proven methodology*
 
 The content-hash ID system makes this especially powerful:
@@ -263,21 +263,21 @@ The content-hash ID system makes this especially powerful:
 | Market good | Veracity Exchange concept | wg representation |
 |-------------|--------------------------|-------------------|
 | Forecasting methodology | Participant's information product | Role definition (YAML) |
-| Behavioral constraints | Quality assurance | Motivation definition (YAML) |
-| Proven agent configuration | Participant with track record | Agent = Role + Motivation (YAML) + PerformanceRecord |
+| Behavioral constraints | Quality assurance | Objective definition (YAML) |
+| Proven agent configuration | Participant with track record | Agent = Role + Objective (YAML) + RewardHistory |
 | Skill documents | Implementation guides | Skill references (file/URL/inline content) |
-| Evolution recipes | Improvement methodology | Evolver skills (`.workgraph/agency/evolver-skills/`) |
+| Evolution recipes | Improvement methodology | Evolver skills (`.workgraph/identity/evolver-skills/`) |
 
 #### Scoring Agent Definitions via Veracity
 
-The existing `wg evaluate` scoring (correctness/completeness/efficiency/style) is *internal* quality—LLM-judged. Veracity scores (P&L, MSE) would be *external* quality—market-judged. An agent's full quality profile would combine both:
+The existing `wg reward` scoring (correctness/completeness/efficiency/style) is *internal* quality—LLM-judged. Veracity scores (P&L, MSE) would be *external* quality—market-judged. An agent's full quality profile would combine both:
 
 ```yaml
 performance:
   task_count: 50
-  avg_internal_score: 0.85    # wg evaluate (LLM-judged)
+  avg_internal_score: 0.85    # wg reward (LLM-judged)
   avg_veracity_score: 0.72    # run-day scoring (market-judged)
-  evaluations:
+  rewards:
     - task_id: "forecast-2026-02-15"
       internal_score: 0.88
       veracity_score: 0.75
@@ -291,7 +291,7 @@ This dual scoring creates a powerful quality signal: an agent might get high int
 
 1. **Price discovery:** A role definition's market value is determined by its veracity track record. Role `a3f7c21d` with 0.85 avg veracity score over 100 tasks is worth more than role `b4e8f32a` with 0.60 over 10 tasks.
 
-2. **Composition:** Buyers could combine purchased roles with their own motivations, creating new agents. The lineage system tracks this, and the new agent's performance feeds back to verify whether the purchased role transfers well.
+2. **Composition:** Buyers could combine purchased roles with their own objectives, creating new agents. The lineage system tracks this, and the new agent's performance feeds back to verify whether the purchased role transfers well.
 
 3. **Skill markets:** Skills attached to roles (especially `File` and `Url` types) are the actual intellectual property. A role's skills might reference private documents with domain expertise. The role definition (public) points to the skill content (private until purchased).
 
@@ -321,7 +321,7 @@ artifact_format = "portfolio.json"   # expected artifact name
 position_field = "positions"         # JSON path in artifact
 
 [executor.scoring]
-record_as_evaluation = true          # create wg evaluation from vx score
+record_as_reward = true          # create wg reward from vx score
 pnl_weight = 0.6
 mse_weight = 0.4
 ```
@@ -330,7 +330,7 @@ The executor would:
 1. Read the task's `portfolio.json` artifact
 2. Format it as a `run-day` request body
 3. POST to Veracity's API
-4. Record the response score as a wg evaluation
+4. Record the response score as a wg reward
 5. Store the raw Veracity response as an artifact
 
 This fits cleanly into the existing executor pattern. The `spawn.rs` wrapper script already handles post-execution status checking; the veracity executor just adds a scoring step.
@@ -482,7 +482,7 @@ These are additive features that could be contributed upstream:
 | Structured artifact records | Change `Vec<String>` → `Vec<ArtifactRecord>` in Task struct | Medium (migration needed) |
 | Visibility field on tasks | Add `visibility: Visibility` to Task struct | Small |
 | Expanded provenance logging | Add `provenance::record()` calls to existing commands | Small |
-| External score in evaluations | Add `external_scores: HashMap<String, f64>` to Evaluation | Small |
+| External score in rewards | Add `external_scores: HashMap<String, f64>` to Reward | Small |
 | Arbitrary task metadata | Add `metadata: HashMap<String, Value>` to Task struct | Small |
 
 #### What Might Require Forking
@@ -506,7 +506,7 @@ The key principle: **extend, don't modify.** Specifically:
 
 2. **New executors, not modified executors.** The veracity executor is a new type alongside `claude`, `shell`, and `default`. No changes to existing executor logic.
 
-3. **New commands, not modified commands.** `wg veracity submit`, `wg veracity score`, `wg export` are new subcommands. Existing commands (`wg done`, `wg evaluate`) continue to work unchanged.
+3. **New commands, not modified commands.** `wg veracity submit`, `wg veracity score`, `wg export` are new subcommands. Existing commands (`wg done`, `wg reward`) continue to work unchanged.
 
 4. **Hook system as middleware.** Hooks wrap existing behavior rather than replacing it. `post_completion` hooks run *after* the existing wrapper script logic, not instead of it.
 
@@ -514,7 +514,7 @@ The key principle: **extend, don't modify.** Specifically:
 
 ### 2.7 Comparison with Veracity's Existing Agent Setup
 
-**Question:** How do Veracity's CLAUDE.md, AGENTS.md, and agent-guide.md relate to wg's agency system?
+**Question:** How do Veracity's CLAUDE.md, AGENTS.md, and agent-guide.md relate to wg's identity system?
 
 #### Veracity's Agent System
 
@@ -533,16 +533,16 @@ The agent is expected to:
 3. Follow quality standards (text-first, deterministic, measurable)
 4. Use the API (`healthz`, `run-day`) for validation
 
-#### wg's Agency System
+#### wg's Identity System
 
-Workgraph's agency system is **identity-centric**: agents have composable identities (role + motivation) that shape behavior, with performance tracking and evolution. Key structural differences:
+Workgraph's identity system is **identity-centric**: agents have composable identities (role + objective) that shape behavior, with performance tracking and evolution. Key structural differences:
 
 | Dimension | Veracity agents | wg agents |
 |-----------|----------------|-----------|
-| Identity | Single static role per repo | Composable role + motivation |
-| Configuration | Markdown files in repo root | YAML files in `.workgraph/agency/` |
-| Behavior shaping | Full prompt in CLAUDE.md | Role/motivation injected into executor prompt |
-| Evaluation | Portfolio P&L, MSE (external) | 4-dimension LLM evaluation (internal) |
+| Identity | Single static role per repo | Composable role + objective |
+| Configuration | Markdown files in repo root | YAML files in `.workgraph/identity/` |
+| Behavior shaping | Full prompt in CLAUDE.md | Role/objective injected into executor prompt |
+| Reward | Portfolio P&L, MSE (external) | 4-dimension LLM reward (internal) |
 | Evolution | Manual guide updates | Automated evolution via `wg evolve` |
 | Task awareness | Single ongoing task (daily run) | Multi-task DAG with dependencies |
 | Skill system | None (all in one guide) | Typed references (name, file, URL, inline) |
@@ -551,7 +551,7 @@ Workgraph's agency system is **identity-centric**: agents have composable identi
 
 **Overlap:**
 - Both define "what the agent should do" (Veracity's guide ≈ wg role's desired outcome + skills)
-- Both have quality standards (Veracity's "measurable criteria" ≈ wg's `verify` field and evaluation dimensions)
+- Both have quality standards (Veracity's "measurable criteria" ≈ wg's `verify` field and reward dimensions)
 - Both produce structured deliverables (Veracity's 4 files ≈ wg's `deliverables` and `artifacts`)
 
 **Complementarity (where each system adds what the other lacks):**
@@ -559,7 +559,7 @@ Workgraph's agency system is **identity-centric**: agents have composable identi
 | Veracity adds to wg | wg adds to Veracity |
 |---------------------|---------------------|
 | Objective external scoring (P&L, MSE) | Multi-task DAG decomposition |
-| Market-based value attribution | Agent identity composition (role × motivation) |
+| Market-based value attribution | Agent identity composition (role × objective) |
 | Participant onboarding protocol | Automated performance evolution |
 | Information marketplace | Information flow control via dependency graph |
 | | Content-hash identity for reproducibility |
@@ -589,7 +589,7 @@ wg role add "Veracity Interviewer" \
 
 This gives us the best of both worlds:
 - Veracity's domain expertise (the interview protocol, scoring) flows in as skill content
-- wg's operational machinery (DAG coordination, agent evaluation, evolution) manages execution
+- wg's operational machinery (DAG coordination, agent reward, evolution) manages execution
 - Performance data from both systems feeds into a unified agent quality profile
 
 ---
@@ -603,7 +603,7 @@ This gives us the best of both worlds:
 │                     Workgraph Core                            │
 │                                                               │
 │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
-│  │ Task DAG │  │ Agency   │  │Provenance│  │ Executor │    │
+│  │ Task DAG │  │ Identity   │  │Provenance│  │ Executor │    │
 │  │          │  │ System   │  │   Log    │  │ System   │    │
 │  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘    │
 │       │              │              │              │          │
@@ -628,7 +628,7 @@ This gives us the best of both worlds:
 
 1. **Veracity Executor** — handles portfolio submission and scoring
 2. **Visibility Module** — enforces public/private boundaries
-3. **Score Bridge** — maps Veracity scores to wg evaluations
+3. **Score Bridge** — maps Veracity scores to wg rewards
 4. **Export Module** — prepares task/agent data for marketplace posting
 5. **Replay Engine** — reconstructs and re-scores historical workflows
 
@@ -653,10 +653,10 @@ This gives us the best of both worlds:
    → Reads portfolio.json
    → POST /veracity/v1/run-day with portfolio data
    → Receives score: {pnl: 1234.56, mse: 0.0042}
-   → Records as wg evaluation with external_scores
+   → Records as wg reward with external_scores
    → Provenance: op="veracity_score", detail={pnl: 1234.56, mse: 0.0042}
 
-5. wg evaluate runs on each completed task:
+5. wg reward runs on each completed task:
    → Internal quality score: 0.88
    → Combined with veracity score for agent performance record
 ```
@@ -669,7 +669,7 @@ This gives us the best of both worlds:
 
 - Use two-phase task patterns with `--exec` for veracity API calls
 - Use tags for visibility classification (`--tag visibility:public`)
-- Manually run `wg evaluate` and record veracity scores in task logs
+- Manually run `wg reward` and record veracity scores in task logs
 - Create a "Veracity Interviewer" role with the agent-guide.md as a URL skill
 - **Validates:** concept feasibility, scoring integration, agent-as-market-good idea
 
@@ -679,7 +679,7 @@ This gives us the best of both worlds:
 - Expand provenance logging to all lifecycle events
 - Add post-completion hook system
 - Add content hashing to artifact records
-- Add external score fields to Evaluation struct
+- Add external score fields to Reward struct
 - **Validates:** production readiness, information flow control
 
 ### Phase 3: Native Integration
@@ -702,7 +702,7 @@ This gives us the best of both worlds:
 
 ## 5. Open Questions
 
-1. **Latent payoffs.** Nikete mentions "sub-units may have latent payoffs." How should wg handle evaluations that arrive days or weeks after task completion? The current evaluation system is point-in-time. A deferred evaluation mechanism would need: (a) a `pending_evaluation` state, (b) a polling or webhook system to check for delayed scores, (c) re-computation of agent performance when late scores arrive.
+1. **Latent payoffs.** Nikete mentions "sub-units may have latent payoffs." How should wg handle rewards that arrive days or weeks after task completion? The current reward system is point-in-time. A deferred reward mechanism would need: (a) a `pending_reward` state, (b) a polling or webhook system to check for delayed scores, (c) re-computation of agent performance when late scores arrive.
 
 2. **Peer network topology.** "Learn what network of peers to do veracity exchanges with." This implies a social/reputation layer on top of wg. How does peer discovery work? Is it centralized (Veracity Exchange as matchmaker) or decentralized (participants find each other)?
 
@@ -716,7 +716,7 @@ This gives us the best of both worlds:
 
 ## 6. Conclusion
 
-Veracity Exchange and workgraph are complementary systems with a natural integration surface. Veracity provides **objective external scoring** (market P&L, prediction MSE) and a **marketplace for information products**. Workgraph provides **task decomposition** (DAGs), **composable agent identities** (role × motivation), **performance evolution**, and **information flow control** (dependency graph + artifact system).
+Veracity Exchange and workgraph are complementary systems with a natural integration surface. Veracity provides **objective external scoring** (market P&L, prediction MSE) and a **marketplace for information products**. Workgraph provides **task decomposition** (DAGs), **composable agent identities** (role × objective), **performance evolution**, and **information flow control** (dependency graph + artifact system).
 
 The integration can be built incrementally: starting with zero-code-change task patterns, progressing through targeted core extensions, and culminating in a native veracity executor with full marketplace features. The critical design principle is **extend, don't fork**: all necessary changes can be expressed as new optional fields, new executor types, and new subcommands without modifying existing behavior.
 

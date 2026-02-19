@@ -74,7 +74,7 @@ that name (e.g., placing `claude.toml` replaces the built-in claude config).
 1. **Template variables** are built from the task (`executor.rs:34-57`):
    - `{{task_id}}`, `{{task_title}}`, `{{task_description}}`
    - `{{task_context}}` — aggregated logs/artifacts from `blocked_by` dependencies
-   - `{{task_identity}}` — resolved from the task's assigned Agent entity (role + motivation)
+   - `{{task_identity}}` — resolved from the task's assigned Agent entity (role + objective)
    - `{{working_dir}}` — project root (parent of `.workgraph/`)
    - `{{skills_preamble}}` — content from `.claude/skills/using-superpowers/SKILL.md`
 
@@ -260,7 +260,7 @@ Things Amplifier supports that wg's executor model can't express:
 
 | File | Lines | What | Why |
 |------|-------|------|-----|
-| `src/commands/service.rs` | 777-784 | `effective_executor` resolution | Support per-agent executor from Agency system (already partially done) |
+| `src/commands/service.rs` | 777-784 | `effective_executor` resolution | Support per-agent executor from Identity system (already partially done) |
 | `src/config.rs` | 117-144 | `AgentConfig` | Deprecate `command_template` (superseded by executor TOML system) |
 | `src/service/executor.rs` | 315-418 | `default_config()` | Better error message for unknown executors, suggest creating TOML file |
 

@@ -1,17 +1,17 @@
 #set heading(numbering: "1.")
 
-= The Agency Model
+= The Identity Model
 
 A generic AI assistant is a blank slate. It has no declared priorities, no persistent
-personality, no way to accumulate craft. Every session starts from zero. The agency
+personality, no way to accumulate craft. Every session starts from zero. The identity
 system exists to change this. It gives agents _composable identities_---a role that
-defines what the agent does, paired with a motivation that defines why it acts the way
-it does. The same role combined with a different motivation produces a different agent.
+defines what the agent does, paired with a objective that defines why it acts the way
+it does. The same role combined with a different objective produces a different agent.
 This is the key insight: identity is not a name tag, it is a _function_---the
 Cartesian product of competence and intent.
 
 The result is an identity space that grows combinatorially. Four roles and four
-motivations yield sixteen distinct agents, each with its own behavioral signature.
+objectives yield sixteen distinct agents, each with its own behavioral signature.
 These identities are not administrative labels. They are content-hashed, immutable,
 evaluable, and evolvable. An agent's identity is a mathematical fact, verifiable by
 anyone who knows the hash.
@@ -30,62 +30,62 @@ It carries three identity-defining fields:
   instructions (see @skills below).
 
 - *Desired outcome.* What good output looks like. This is the standard against which
-  the agent's work will be evaluated---not a vague aspiration, but a crisp definition
+  the agent's work will be rewardd---not a vague aspiration, but a crisp definition
   of success.
 
 A role also carries a _name_ (a human-readable label like "Programmer" or
-"Architect"), a _performance_ record (aggregated evaluation scores), and _lineage_
+"Architect"), a _performance_ record (aggregated reward scores), and _lineage_
 metadata (evolutionary history). These are mutable---they can change without altering
 the role's identity. The name is for humans. The identity is for the system.
 
 Consider two roles: one describes a code reviewer who checks for correctness, testing
-gaps, and style violations; the other describes an architect who evaluates structural
+gaps, and style violations; the other describes an architect who rewards structural
 decisions and dependency management. They may share some skills, but their descriptions
 and desired outcomes differ, so they produce different content-hash IDs---different
-identities, different agents, different behaviors when paired with the same motivation.
+identities, different agents, different behaviors when paired with the same objective.
 
-== Motivations <motivations>
+== Objectives <objectives>
 
-A motivation answers the complementary question: _why does this agent act the way it does?_
+A objective answers the complementary question: _why does this agent act the way it does?_
 
-Where a role defines competence, a motivation defines character. It carries three
+Where a role defines competence, a objective defines character. It carries three
 identity-defining fields:
 
-- *Description.* What this motivation prioritizes---the values and principles that
+- *Description.* What this objective prioritizes---the values and principles that
   guide the agent's approach to work.
 
-- *Acceptable trade-offs.* Compromises the agent may make. A "Fast" motivation might
-  accept less thorough documentation. A "Careful" motivation might accept slower
+- *Acceptable trade-offs.* Compromises the agent may make. A "Fast" objective might
+  accept less thorough documentation. A "Careful" objective might accept slower
   delivery. These are the negotiable costs of the agent's operating philosophy.
 
 - *Unacceptable trade-offs.* Hard constraints the agent must never violate. A "Careful"
-  motivation might refuse to ship untested code under any circumstances. A "Thorough"
-  motivation might refuse to skip edge cases. These are non-negotiable.
+  objective might refuse to ship untested code under any circumstances. A "Thorough"
+  objective might refuse to skip edge cases. These are non-negotiable.
 
-Like roles, motivations carry a mutable name, performance record, and lineage. And like
+Like roles, objectives carry a mutable name, performance record, and lineage. And like
 roles, only the identity-defining fields contribute to the content-hash.
 
 The distinction between acceptable and unacceptable trade-offs is not decorative. When
 an agent's identity is rendered into a prompt, the acceptable trade-offs appear as
 _operational parameters_---flexibility the agent may exercise---and the unacceptable
 trade-offs appear as _non-negotiable constraints_---lines it must not cross. The
-motivation shapes behavior through the prompt: same role, different motivation, different
+objective shapes behavior through the prompt: same role, different objective, different
 output.
 
 == Agents: The Pairing <agents>
 
-An agent is the unified identity in the agency system. For AI agents, it is the named
-pairing of exactly one role and exactly one motivation:
+An agent is the unified identity in the identity system. For AI agents, it is the named
+pairing of exactly one role and exactly one objective:
 
 #align(center)[
   #box(stroke: 0.5pt, inset: 12pt, radius: 4pt)[
-    *agent* #h(4pt) $=$ #h(4pt) *role* #h(4pt) $times$ #h(4pt) *motivation*
+    *agent* #h(4pt) $=$ #h(4pt) *role* #h(4pt) $times$ #h(4pt) *objective*
   ]
 ]
 
-The agent's content-hash ID is computed from `(role_id, motivation_id)`. Nothing else
+The agent's content-hash ID is computed from `(role_id, objective_id)`. Nothing else
 enters the hash. This means the agent is entirely determined by its constituents: if you
-know the role and the motivation, you know the agent.
+know the role and the objective, you know the agent.
 
 An agent also carries operational fields that do not affect its identity:
 
@@ -106,21 +106,21 @@ An agent also carries operational fields that do not affect its identity:
 / Executor: The backend that runs the agent's work (see @human-vs-ai below).
 
 The compositional nature of agents is what makes the identity space powerful. A
-"Programmer" role paired with a "Careful" motivation produces an agent that writes
+"Programmer" role paired with a "Careful" objective produces an agent that writes
 methodical, well-tested code and refuses to ship without tests. The same "Programmer"
-role paired with a "Fast" motivation produces an agent that prioritizes rapid delivery
+role paired with a "Fast" objective produces an agent that prioritizes rapid delivery
 and accepts less thorough documentation. Both are programmers. They differ in _why_ they
 program the way they do.
 
 This is not a theoretical nicety. When the coordinator dispatches a task, the agent's
 full identity---role description, skills, desired outcome, acceptable trade-offs,
 non-negotiable constraints---is rendered into the prompt. The AI receives a complete
-behavioral specification before it sees the task. The motivation is not a hint; it is a
+behavioral specification before it sees the task. The objective is not a hint; it is a
 contract.
 
 == Content-Hash IDs <content-hash>
 
-Every role, motivation, and agent is identified by a SHA-256 hash of its
+Every role, objective, and agent is identified by a SHA-256 hash of its
 identity-defining fields. The hash is computed from canonical YAML serialization of
 those fields, ensuring determinism across platforms and implementations.
 
@@ -132,8 +132,8 @@ those fields, ensuring determinism across platforms and implementations.
     inset: 8pt,
     [*Entity*], [*Hashed fields*],
     [Role], [description + skills + desired outcome],
-    [Motivation], [description + acceptable trade-offs + unacceptable trade-offs],
-    [Agent], [role ID + motivation ID],
+    [Objective], [description + acceptable trade-offs + unacceptable trade-offs],
+    [Agent], [role ID + objective ID],
   ),
   caption: [Identity-defining fields for content-hash computation.],
 ) <hash-fields>
@@ -228,15 +228,15 @@ property.
 
 == Human and AI Agents <human-vs-ai>
 
-The agency system does not distinguish between human and AI agents at the identity
-level. Both are entries in the same agent registry. Both can have roles, motivations,
-capabilities, and trust levels. Both are tracked, evaluated, and appear in the synergy
+The identity system does not distinguish between human and AI agents at the identity
+level. Both are entries in the same agent registry. Both can have roles, objectives,
+capabilities, and trust levels. Both are tracked, rewardd, and appear in the synergy
 matrix. The identity model is uniform.
 
 The difference is the *executor*---the backend that delivers work to the agent.
 
 / `claude`: The default. Pipes a rendered prompt into the Claude CLI. The agent is an
-  AI. Its role and motivation are injected into the prompt, shaping behavior through
+  AI. Its role and objective are injected into the prompt, shaping behavior through
   language.
 
 / `matrix`: Sends a notification via the Matrix protocol. The agent is a human who
@@ -247,21 +247,21 @@ The difference is the *executor*---the backend that delivers work to the agent.
 / `shell`: Runs a shell command from the task's `exec` field. The agent is a human (or
   a script) that responds to a trigger.
 
-For AI agents, role and motivation are _required_---an AI without identity is a blank
-slate, which is precisely what the agency system exists to prevent. For human agents,
-role and motivation are _optional_. Humans bring their own judgment, priorities, and
+For AI agents, role and objective are _required_---an AI without identity is a blank
+slate, which is precisely what the identity system exists to prevent. For human agents,
+role and objective are _optional_. Humans bring their own judgment, priorities, and
 character. A human agent might have a role (to signal what kind of work to route to
 them) or might operate without one (receiving any work that matches their capabilities).
 
-Both types are evaluated using the same rubric. But human agent evaluations are excluded
+Both types are rewardd using the same rubric. But human agent rewards are excluded
 from the evolution signal---the system does not attempt to "improve" humans through
 the evolutionary process. Evolution operates only on AI identities, where changing the
-role or motivation has a direct, mechanistic effect on behavior through prompt injection.
+role or objective has a direct, mechanistic effect on behavior through prompt injection.
 
 == Composition in Practice
 
-To make the compositional nature of agents concrete, consider a small agency seeded with
-`wg agency init`. This creates four starter roles and four starter motivations:
+To make the compositional nature of agents concrete, consider a small identity seeded with
+`wg identity init`. This creates four starter roles and four starter objectives:
 
 #figure(
   table(
@@ -269,14 +269,14 @@ To make the compositional nature of agents concrete, consider a small agency see
     align: (left, left),
     stroke: 0.5pt,
     inset: 8pt,
-    [*Starter Roles*], [*Starter Motivations*],
+    [*Starter Roles*], [*Starter Objectives*],
     [Programmer], [Careful],
     [Reviewer], [Fast],
     [Documenter], [Thorough],
     [Architect], [Balanced],
   ),
-  caption: [The sixteen possible pairings from four roles and four motivations.],
-) <starter-agency>
+  caption: [The sixteen possible pairings from four roles and four objectives.],
+) <starter-identity>
 
 A "Programmer" paired with "Careful" produces an agent that writes methodical, tested
 code and treats untested output as a hard constraint violation. The same "Programmer"
@@ -286,7 +286,7 @@ refuses to approve incomplete coverage. A "Reviewer" with "Balanced" weighs
 thoroughness against schedule pressure and accepts pragmatic compromises.
 
 Each of these sixteen pairings has a unique content-hash ID. Each accumulates its own
-performance history. Over time, the evaluation data reveals which combinations excel at
+performance history. Over time, the reward data reveals which combinations excel at
 which kinds of work---the synergy matrix (detailed in #emph[Section 5]) makes this visible.
 High-performing pairs are dispatched more often. Low-performing pairs are candidates for
 evolution or retirement.
@@ -294,7 +294,7 @@ evolution or retirement.
 The same compositionality applies to evolved entities. When the evolver mutates a role---say, refining the "Programmer" description to emphasize error handling---a _new_
 role is created with a new hash. Every agent that referenced the old role continues to
 exist unchanged. New agents can be created pairing the refined role with existing
-motivations. The old and new coexist, each with their own performance records, until
+objectives. The old and new coexist, each with their own performance records, until
 the evidence shows which is superior.
 
 == Lineage and Deduplication <lineage>
@@ -302,7 +302,7 @@ the evidence shows which is superior.
 Content-hash IDs enable two properties that matter at scale: lineage tracking and
 deduplication.
 
-*Lineage.* Every role, motivation, and agent records its evolutionary ancestry. A
+*Lineage.* Every role, objective, and agent records its evolutionary ancestry. A
 manually created entity has no parents and generation zero. A mutated entity records one
 parent and increments the generation. A crossover entity records two parents and
 increments from the highest. The `created_by` field distinguishes human creation
@@ -313,18 +313,18 @@ be silently altered---any change would produce a different hash, breaking the li
 link. You can walk the ancestry chain from any entity back to its manually created
 roots, confident that each link refers to the exact content that existed at creation
 time. This is not a version history in the traditional sense. It is an immutable record
-of how the agency's identity space has evolved.
+of how the identity's identity space has evolved.
 
 *Deduplication.* If the evolver proposes a role that is identical to an existing one---same description, same skills, same desired outcome---the content-hash collision is
-detected and the duplicate is rejected. This prevents the agency from accumulating
+detected and the duplicate is rejected. This prevents the identity from accumulating
 redundant entities. It also means that convergent evolution is recognized: if two
 independent mutation paths arrive at the same role definition, the system knows they are
 the same role.
 
 == Cross-References
 
-The agency model described here is the _identity layer_ of the system. How these
+The identity model described here is the _identity layer_ of the system. How these
 identities are dispatched to tasks---the claim-before-spawn protocol, the wrapper
 script, the coordinator's tick loop---is detailed in #emph[Section 4]. How agents are
-evaluated after completing work, and how evaluation data feeds back into evolution, is
+rewardd after completing work, and how reward data feeds back into evolution, is
 detailed in #emph[Section 5].

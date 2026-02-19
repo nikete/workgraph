@@ -13,7 +13,7 @@ Amplifier's workgraph bundle uses a **prompt template** embedded in `executor/am
 | `{{task_title}}` | Human-readable title |
 | `{{task_description}}` | Full description (body, acceptance criteria) |
 | `{{task_context}}` | Aggregated context from completed `blocked_by` dependencies |
-| `{{task_identity}}` | Agent identity block (role, motivation, skills) from the agency system |
+| `{{task_identity}}` | Agent identity block (role, objective, skills) from the identity system |
 | `{{working_dir}}` | Project root directory |
 
 The `{{task_context}}` variable is the primary inter-task data channel. It is populated by `build_task_context()` in `spawn.rs:89-119`, which iterates over `task.blocked_by` dependencies and collects:
@@ -34,7 +34,7 @@ The prompt is built in `spawn_agent_inner()` (`spawn.rs:123-457`). The sequence:
 1. **Load graph** and validate task status (must be Open or Blocked)
 2. **Build context** via `build_task_context()` — iterates `blocked_by`, collects artifacts and last 5 log entries from done dependencies
 3. **Create TemplateVars** from the task, context string, and workgraph directory (`executor.rs:34-57`)
-4. **Resolve agent identity** — if the task has an `agent` field, look up the Agent/Role/Motivation in `.workgraph/agency/` and render an identity prompt
+4. **Resolve agent identity** — if the task has an `agent` field, look up the Agent/Role/Objective in `.workgraph/identity/` and render an identity prompt
 5. **Resolve skills preamble** — if `.claude/skills/using-superpowers/SKILL.md` exists, include it
 6. **Load executor config** — either from `.workgraph/executors/<name>.toml` or the built-in default
 7. **Apply templates** — replace all `{{variables}}` in the config (command, args, env, prompt template, working dir)
@@ -46,7 +46,7 @@ The prompt is built in `spawn_agent_inner()` (`spawn.rs:123-457`). The sequence:
 
 The default prompt template (`executor.rs:331-382`) includes:
 - Skills preamble (if available)
-- Agent identity block (role, motivation, acceptable/non-negotiable constraints, resolved skills)
+- Agent identity block (role, objective, acceptable/non-negotiable constraints, resolved skills)
 - Task ID, title, description
 - Dependency context (artifacts + logs)
 - Workflow instructions (log, artifact, done, fail commands)
@@ -168,7 +168,7 @@ The two systems have **compatible but distinct** context models:
 | **Context source** | `build_task_context()` in spawn.rs | Same function — amplifier is a wg executor |
 | **Runtime context** | `wg context`, `wg show` | Same — agents call wg CLI |
 | **Artifact model** | Bare path strings | Same — uses wg's artifact system |
-| **Identity** | Agency system (role/motivation/skills) | Amplifier's own agent/behavior model |
+| **Identity** | Identity system (role/objective/skills) | Amplifier's own agent/behavior model |
 | **Protocol docs** | Inline in prompt template | Separate `wg-executor-protocol.md` file |
 
 The amplifier bundle **wraps** wg's context system rather than replacing it. The only amplifier-specific layer is the stdin→arg bridge (`amplifier-run.sh`) and the behavior/agent YAML that teaches Amplifier agents about wg.
@@ -185,7 +185,7 @@ The correct path is:
 
 3. **Keep the protocol document approach** from amplifier's bundle. The `wg-executor-protocol.md` pattern — a standalone document defining the agent↔wg interaction contract — is cleaner than embedding it inline in the default prompt template. wg could ship a similar file at `.workgraph/context/executor-protocol.md` that any executor config can reference via `{{include:executor-protocol.md}}`.
 
-4. **Don't adopt amplifier's behavior/agent model into wg**. wg already has the agency system (roles, motivations, agents). Amplifier has its own behavior/agent YAML format. These should remain separate — each system manages identity in its own way, and the bridge is the prompt template where `{{task_identity}}` renders wg's agency data while amplifier adds its own behavior context.
+4. **Don't adopt amplifier's behavior/agent model into wg**. wg already has the identity system (roles, objectives, agents). Amplifier has its own behavior/agent YAML format. These should remain separate — each system manages identity in its own way, and the bridge is the prompt template where `{{task_identity}}` renders wg's identity data while amplifier adds its own behavior context.
 
 ### What amplifier should adopt from wg
 

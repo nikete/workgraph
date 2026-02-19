@@ -42,11 +42,11 @@ wg service start --max-agents N
              ├─ 3. Load graph, get ready_tasks()
              │
              ├─ 4. [Optional] auto_assign subgraph construction
-             │     For unassigned ready tasks (without "assignment"/"evaluation"/"evolution" tags),
+             │     For unassigned ready tasks (without "assignment"/"reward"/"evolution" tags),
              │     create `assign-{task-id}` task that blocks the original
              │
-             ├─ 5. [Optional] auto_evaluate subgraph construction
-             │     Create `evaluate-{task-id}` tasks blocked by originals,
+             ├─ 5. [Optional] auto_reward subgraph construction
+             │     Create `reward-{task-id}` tasks blocked by originals,
              │     unblock eval tasks whose source Failed
              │
              ├─ 6. Re-load graph (post-subgraph), re-compute ready_tasks()
@@ -118,14 +118,14 @@ This function does too many things:
 2. Alive agent counting
 3. Ready task computation
 4. Auto-assign subgraph construction (~90 lines)
-5. Auto-evaluate subgraph construction (~120 lines)
+5. Auto-reward subgraph construction (~120 lines)
 6. Graph re-loading
 7. Agent spawning
 
-Each of the auto-assign and auto-evaluate blocks loads, mutates, and saves the graph independently, with the graph being loaded **up to 4 times** in a single tick (once for cleanup, once for ready tasks, once for auto-assign, once for auto-evaluate, then a final re-load).
+Each of the auto-assign and auto-reward blocks loads, mutates, and saves the graph independently, with the graph being loaded **up to 4 times** in a single tick (once for cleanup, once for ready tasks, once for auto-assign, once for auto-reward, then a final re-load).
 
 **Recommendation:**
-- Extract `auto_assign_subgraph()` and `auto_evaluate_subgraph()` into separate functions
+- Extract `auto_assign_subgraph()` and `auto_reward_subgraph()` into separate functions
 - Load the graph once, pass `&mut WorkGraph` through, save once at the end
 - The current pattern of repeated load/save is both inefficient and creates TOCTOU windows
 
@@ -201,7 +201,7 @@ Task: Open ──spawn_agent()──► InProgress (assigned=agent-N)
 
 1. **No retry logic in coordinator_tick:** If `spawn_agent()` fails for a task (e.g., can't create output dir), the task stays Open but gets re-attempted on every tick. There's no backoff or max-failure tracking at the coordinator level.
 
-2. **Silenced errors in auto-assign/auto-evaluate:** `save_graph` failures are logged with `eprintln!` but execution continues. The task graph could be in an inconsistent state (subgraph tasks created in memory but not persisted).
+2. **Silenced errors in auto-assign/auto-reward:** `save_graph` failures are logged with `eprintln!` but execution continues. The task graph could be in an inconsistent state (subgraph tasks created in memory but not persisted).
 
 3. **`cleanup_dead_agents` loads graph 3 times:** Once for unclaiming, once for output capture, and the caller loads it again for ready tasks. If any of these fail, partial state changes may have been committed.
 
@@ -254,7 +254,7 @@ The coordinator detects dead agents via `is_process_alive(pid)` only. The heartb
 
 ### Medium Priority
 
-4. **Extract auto-assign and auto-evaluate into functions**: Each is 90-120 lines embedded in `coordinator_tick()`. They should be standalone functions taking `&mut WorkGraph`.
+4. **Extract auto-assign and auto-reward into functions**: Each is 90-120 lines embedded in `coordinator_tick()`. They should be standalone functions taking `&mut WorkGraph`.
 
 5. **Add coordinator-level spawn failure tracking**: Prevent re-attempting tasks that consistently fail to spawn (e.g., missing executor).
 

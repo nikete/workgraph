@@ -97,7 +97,7 @@ wg agent create "Erik" \
 # AI agent
 wg agent create "Claude Coder" \
   --role <role-hash> \
-  --motivation <motivation-hash> \
+  --objective <objective-hash> \
   --capabilities coding,testing,docs
 ```
 
@@ -288,8 +288,8 @@ executor = "claude"
 model = "opus"         # default model (default: "opus")
 heartbeat_timeout = 5  # minutes before agent is considered dead (default: 5)
 
-[agency]
-auto_evaluate = false    # auto-create evaluation tasks on completion
+[identity]
+auto_reward = false    # auto-create reward tasks on completion
 auto_assign = false      # auto-create identity assignment tasks
 auto_triage = false      # auto-triage dead agents using LLM
 assigner_model = "haiku" # model for assigner agents
@@ -305,8 +305,8 @@ wg config --model sonnet
 wg config --poll-interval 120
 wg config --executor shell
 
-# Agency settings
-wg config --auto-evaluate true
+# Identity settings
+wg config --auto-reward true
 wg config --auto-assign true
 wg config --assigner-model haiku
 wg config --evaluator-model opus
@@ -493,18 +493,18 @@ wg service status
 | `coordinator-state.json` | Effective config and runtime metrics |
 | `registry.json` | Agent registry (IDs, PIDs, tasks, status) |
 
-## Agency system
+## Identity system
 
-The agency system gives agents composable identities — a **role** (what it does) paired with a **motivation** (why it acts that way). Instead of every spawned agent being a generic assistant, the agency system lets you define specialized agents that are evaluated and evolved over time.
+The identity system gives agents composable identities — a **role** (what it does) paired with a **objective** (why it acts that way). Instead of every spawned agent being a generic assistant, the identity system lets you define specialized agents that are rewardd and evolved over time.
 
 ### Quick start
 
 ```bash
-# Seed built-in starter roles and motivations
-wg agency init
+# Seed built-in starter roles and objectives
+wg identity init
 
 # Create an agent pairing
-wg agent create "Careful Coder" --role <role-hash> --motivation <motivation-hash>
+wg agent create "Careful Coder" --role <role-hash> --objective <objective-hash>
 
 # Assign the agent identity to a task
 wg assign my-task <agent-hash>
@@ -515,25 +515,25 @@ wg assign my-task <agent-hash>
 ### What it does
 
 1. **Roles** define skills and desired outcomes ("Programmer" → working, tested code)
-2. **Motivations** define trade-offs and constraints ("Careful" → prioritizes reliability, rejects untested code)
-3. **Agents** pair one role + one motivation into a named identity
+2. **Objectives** define trade-offs and constraints ("Careful" → prioritizes reliability, rejects untested code)
+3. **Agents** pair one role + one objective into a named identity
 4. **Assignment** binds an agent to a task — its identity is injected at spawn time
-5. **Evaluation** scores completed tasks across four dimensions (correctness, completeness, efficiency, style adherence)
-6. **Evolution** uses performance data to create new roles/motivations and retire weak ones
+5. **Reward** scores completed tasks across four dimensions (correctness, completeness, efficiency, style adherence)
+6. **Evolution** uses performance data to create new roles/objectives and retire weak ones
 
 ### Automation
 
-Enable auto-assign and auto-evaluate to run the full loop without manual intervention:
+Enable auto-assign and auto-reward to run the full loop without manual intervention:
 
 ```bash
 wg config --auto-assign true     # auto-creates assignment tasks for ready work
-wg config --auto-evaluate true   # auto-creates evaluation tasks on completion
+wg config --auto-reward true   # auto-creates reward tasks on completion
 wg config --assigner-model haiku # cheap model for assignment decisions
-wg config --evaluator-model opus # strong model for quality evaluation
+wg config --evaluator-model opus # strong model for quality reward
 wg config --evolver-model opus   # strong model for evolution decisions
 ```
 
-When the coordinator ticks, it automatically creates `assign-{task}` and `evaluate-{task}` meta-tasks that are dispatched like any other work.
+When the coordinator ticks, it automatically creates `assign-{task}` and `reward-{task}` meta-tasks that are dispatched like any other work.
 
 ### Evolution
 
@@ -543,7 +543,7 @@ wg evolve --strategy mutation --budget 3  # targeted changes
 wg evolve --dry-run                    # preview without applying
 ```
 
-See [docs/AGENCY.md](docs/AGENCY.md) for the full agency system documentation.
+See [docs/IDENTITY.md](docs/IDENTITY.md) for the full identity system documentation.
 
 ## Graph locking
 
@@ -590,7 +590,7 @@ Some workflows repeat: write → review → revise → write again. Loop edges l
 
 ### How it works
 
-When the source task completes (via `wg done`), each of its loop edges is evaluated:
+When the source task completes (via `wg done`), each of its loop edges is rewardd:
 
 1. **Guard check** — if a guard condition is set, it must be true for the loop to fire.
 2. **Iteration check** — the target's `loop_iteration` must be below `max_iterations`.
@@ -656,7 +656,7 @@ wg viz                 # Loop edges appear as dashed lines in graph output
 
 **Tasks** have a status (`open`, `in-progress`, `done`, `failed`, `abandoned`, `blocked`) and can block other tasks. Tasks can carry a per-task `model` override and an `agent` identity assignment.
 
-**Agents** are humans or AIs that do work. They can be AI agents (with a role and motivation that shape their behavior) or human agents (with contact info and a human executor like Matrix or email). All agents share the same identity model: capabilities, trust levels, rate, and capacity.
+**Agents** are humans or AIs that do work. They can be AI agents (with a role and objective that shape their behavior) or human agents (with contact info and a human executor like Matrix or email). All agents share the same identity model: capabilities, trust levels, rate, and capacity.
 
 **The graph** is tasks connected by "blocked-by" relationships. A task is blocked until all its blockers are done. Concurrent writes are protected by flock-based file locking.
 
@@ -664,7 +664,7 @@ wg viz                 # Loop edges appear as dashed lines in graph output
 
 **Trajectories**: For AI agents, `wg trajectory <task>` suggests the best order to claim related tasks, minimizing context switches.
 
-**Agency**: Composable agent identities (role + motivation) that are assigned to tasks, evaluated after completion, and evolved over time based on performance data.
+**Identity**: Composable agent identities (role + objective) that are assigned to tasks, rewardd after completion, and evolved over time based on performance data.
 
 ## Query and analysis
 
@@ -723,22 +723,22 @@ interval = 10
 max_agents = 4
 poll_interval = 60
 
-[agency]
-auto_evaluate = false
+[identity]
+auto_reward = false
 auto_assign = false
 
 [project]
 name = "My Project"
 ```
 
-Agency data lives in `.workgraph/agency/`:
+Identity data lives in `.workgraph/identity/`:
 
 ```
-.workgraph/agency/
+.workgraph/identity/
   roles/           # Role YAML files (keyed by content-hash)
-  motivations/     # Motivation YAML files
-  agents/          # Agent YAML files (role+motivation pairings)
-  evaluations/     # Evaluation records (JSON)
+  objectives/     # Objective YAML files
+  agents/          # Agent YAML files (role+objective pairings)
+  rewards/     # Reward records (JSON)
   evolver-skills/  # Strategy-specific skill documents for evolution
 ```
 
@@ -747,7 +747,7 @@ Agency data lives in `.workgraph/agency/`:
 - [docs/COMMANDS.md](docs/COMMANDS.md) - Complete command reference
 - [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md) - Deep dive on agent operation
 - [docs/AGENT-SERVICE.md](docs/AGENT-SERVICE.md) - Service architecture and coordinator lifecycle
-- [docs/AGENCY.md](docs/AGENCY.md) - Agency system: roles, motivations, evaluation, evolution
+- [docs/IDENTITY.md](docs/IDENTITY.md) - Identity system: roles, objectives, reward, evolution
 
 ## License
 

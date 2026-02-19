@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::Path;
 use std::process::Command;
-use workgraph::graph::{LogEntry, Status, evaluate_loop_edges};
+use workgraph::graph::{LogEntry, Status, reward_loop_edges};
 use workgraph::parser::{load_graph, save_graph};
 
 #[cfg(test)]
@@ -90,8 +90,8 @@ pub fn run(dir: &Path, task_id: &str, actor: Option<&str>, dry_run: bool) -> Res
             actor: actor.map(String::from),
             message: "Execution completed successfully".to_string(),
         });
-        // Evaluate loop edges: re-activate upstream tasks if conditions are met
-        let reactivated = evaluate_loop_edges(&mut graph, task_id);
+        // Reward loop edges: re-activate upstream tasks if conditions are met
+        let reactivated = reward_loop_edges(&mut graph, task_id);
         save_graph(&graph, &path).context("Failed to save graph")?;
         super::notify_graph_changed(dir);
         println!("Task '{}' completed successfully", task_id);

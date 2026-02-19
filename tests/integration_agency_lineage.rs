@@ -6,19 +6,19 @@
 //! 3. Chain of 3+ mutations to verify deep ancestry walking
 //! 4. Crossover with 2 parents to verify both parents appear in ancestry
 //! 5. Generation numbers increment correctly through chains
-//! 6. role_ancestry and motivation_ancestry with missing intermediate parents (orphan resilience)
+//! 6. role_ancestry and objective_ancestry with missing intermediate parents (orphan resilience)
 //! 7. AncestryNode output format
 
 use tempfile::TempDir;
 
-use workgraph::agency::{self, Lineage, SkillRef};
+use workgraph::identity::{self, Lineage, SkillRef};
 
-/// Helper: set up agency storage and return (tmp, agency_dir).
+/// Helper: set up identity storage and return (tmp, identity_dir).
 fn setup() -> (TempDir, std::path::PathBuf) {
     let tmp = TempDir::new().unwrap();
-    let agency_dir = tmp.path().join("agency");
-    agency::init(&agency_dir).unwrap();
-    (tmp, agency_dir)
+    let identity_dir = tmp.path().join("identity");
+    identity::init(&identity_dir).unwrap();
+    (tmp, identity_dir)
 }
 
 // ---------------------------------------------------------------------------
@@ -27,11 +27,11 @@ fn setup() -> (TempDir, std::path::PathBuf) {
 
 #[test]
 fn test_role_no_parents_generation_zero() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
-    let role = agency::build_role("Root Role", "A manually created role", vec![], "Outcome");
-    agency::save_role(&role, &roles_dir).unwrap();
+    let role = identity::build_role("Root Role", "A manually created role", vec![], "Outcome");
+    identity::save_role(&role, &roles_dir).unwrap();
 
     // Default lineage: no parents, generation 0, created by "human"
     assert!(role.lineage.parent_ids.is_empty());
@@ -39,7 +39,7 @@ fn test_role_no_parents_generation_zero() {
     assert_eq!(role.lineage.created_by, "human");
 
     // Ancestry should contain only the role itself
-    let ancestry = agency::role_ancestry(&role.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&role.id, &roles_dir).unwrap();
     assert_eq!(ancestry.len(), 1);
     assert_eq!(ancestry[0].id, role.id);
     assert_eq!(ancestry[0].generation, 0);
@@ -48,18 +48,18 @@ fn test_role_no_parents_generation_zero() {
 }
 
 #[test]
-fn test_motivation_no_parents_generation_zero() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+fn test_objective_no_parents_generation_zero() {
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let mot = agency::build_motivation("Root Motivation", "Manual", vec![], vec![]);
-    agency::save_motivation(&mot, &motivations_dir).unwrap();
+    let mot = identity::build_objective("Root Objective", "Manual", vec![], vec![]);
+    identity::save_objective(&mot, &objectives_dir).unwrap();
 
     assert!(mot.lineage.parent_ids.is_empty());
     assert_eq!(mot.lineage.generation, 0);
     assert_eq!(mot.lineage.created_by, "human");
 
-    let ancestry = agency::motivation_ancestry(&mot.id, &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry(&mot.id, &objectives_dir).unwrap();
     assert_eq!(ancestry.len(), 1);
     assert_eq!(ancestry[0].id, mot.id);
     assert_eq!(ancestry[0].generation, 0);
@@ -71,23 +71,23 @@ fn test_motivation_no_parents_generation_zero() {
 
 #[test]
 fn test_role_mutation_single_parent() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     // Parent role (gen 0)
-    let parent = agency::build_role("Parent", "Original role", vec![], "Outcome A");
-    agency::save_role(&parent, &roles_dir).unwrap();
+    let parent = identity::build_role("Parent", "Original role", vec![], "Outcome A");
+    identity::save_role(&parent, &roles_dir).unwrap();
 
     // Child role via mutation (gen 1)
-    let mut child = agency::build_role("Child", "Mutated role", vec![], "Outcome B");
+    let mut child = identity::build_role("Child", "Mutated role", vec![], "Outcome B");
     child.lineage = Lineage::mutation(&parent.id, parent.lineage.generation, "run-1");
-    agency::save_role(&child, &roles_dir).unwrap();
+    identity::save_role(&child, &roles_dir).unwrap();
 
     assert_eq!(child.lineage.parent_ids, vec![parent.id.clone()]);
     assert_eq!(child.lineage.generation, 1);
     assert_eq!(child.lineage.created_by, "evolver-run-1");
 
-    let ancestry = agency::role_ancestry(&child.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&child.id, &roles_dir).unwrap();
     assert_eq!(ancestry.len(), 2);
     // First node is the target itself
     assert_eq!(ancestry[0].id, child.id);
@@ -100,21 +100,21 @@ fn test_role_mutation_single_parent() {
 }
 
 #[test]
-fn test_motivation_mutation_single_parent() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+fn test_objective_mutation_single_parent() {
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let parent = agency::build_motivation("Parent Mot", "Original", vec![], vec![]);
-    agency::save_motivation(&parent, &motivations_dir).unwrap();
+    let parent = identity::build_objective("Parent Mot", "Original", vec![], vec![]);
+    identity::save_objective(&parent, &objectives_dir).unwrap();
 
-    let mut child = agency::build_motivation("Child Mot", "Mutated", vec![], vec![]);
+    let mut child = identity::build_objective("Child Mot", "Mutated", vec![], vec![]);
     child.lineage = Lineage::mutation(&parent.id, parent.lineage.generation, "run-2");
-    agency::save_motivation(&child, &motivations_dir).unwrap();
+    identity::save_objective(&child, &objectives_dir).unwrap();
 
     assert_eq!(child.lineage.parent_ids, vec![parent.id.clone()]);
     assert_eq!(child.lineage.generation, 1);
 
-    let ancestry = agency::motivation_ancestry(&child.id, &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry(&child.id, &objectives_dir).unwrap();
     assert_eq!(ancestry.len(), 2);
     assert_eq!(ancestry[0].id, child.id);
     assert_eq!(ancestry[1].id, parent.id);
@@ -126,31 +126,31 @@ fn test_motivation_mutation_single_parent() {
 
 #[test]
 fn test_role_deep_ancestry_chain() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     // Create a chain: gen0 -> gen1 -> gen2 -> gen3
-    let gen0 = agency::build_role("Gen0", "root", vec![], "outcome-0");
-    agency::save_role(&gen0, &roles_dir).unwrap();
+    let gen0 = identity::build_role("Gen0", "root", vec![], "outcome-0");
+    identity::save_role(&gen0, &roles_dir).unwrap();
 
-    let mut gen1 = agency::build_role("Gen1", "first mutation", vec![], "outcome-1");
+    let mut gen1 = identity::build_role("Gen1", "first mutation", vec![], "outcome-1");
     gen1.lineage = Lineage::mutation(&gen0.id, 0, "evo-1");
-    agency::save_role(&gen1, &roles_dir).unwrap();
+    identity::save_role(&gen1, &roles_dir).unwrap();
 
-    let mut gen2 = agency::build_role(
+    let mut gen2 = identity::build_role(
         "Gen2",
         "second mutation",
         vec![SkillRef::Name("extra".to_string())],
         "outcome-2",
     );
     gen2.lineage = Lineage::mutation(&gen1.id, 1, "evo-2");
-    agency::save_role(&gen2, &roles_dir).unwrap();
+    identity::save_role(&gen2, &roles_dir).unwrap();
 
-    let mut gen3 = agency::build_role("Gen3", "third mutation", vec![], "outcome-3");
+    let mut gen3 = identity::build_role("Gen3", "third mutation", vec![], "outcome-3");
     gen3.lineage = Lineage::mutation(&gen2.id, 2, "evo-3");
-    agency::save_role(&gen3, &roles_dir).unwrap();
+    identity::save_role(&gen3, &roles_dir).unwrap();
 
-    let ancestry = agency::role_ancestry(&gen3.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&gen3.id, &roles_dir).unwrap();
     assert_eq!(ancestry.len(), 4, "Should walk entire chain of 4 roles");
 
     // Verify all generations present
@@ -173,26 +173,26 @@ fn test_role_deep_ancestry_chain() {
 }
 
 #[test]
-fn test_motivation_deep_ancestry_chain() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+fn test_objective_deep_ancestry_chain() {
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let gen0 = agency::build_motivation("M0", "root", vec![], vec![]);
-    agency::save_motivation(&gen0, &motivations_dir).unwrap();
+    let gen0 = identity::build_objective("M0", "root", vec![], vec![]);
+    identity::save_objective(&gen0, &objectives_dir).unwrap();
 
-    let mut gen1 = agency::build_motivation("M1", "mut-1", vec!["trade1".into()], vec![]);
+    let mut gen1 = identity::build_objective("M1", "mut-1", vec!["trade1".into()], vec![]);
     gen1.lineage = Lineage::mutation(&gen0.id, 0, "e1");
-    agency::save_motivation(&gen1, &motivations_dir).unwrap();
+    identity::save_objective(&gen1, &objectives_dir).unwrap();
 
-    let mut gen2 = agency::build_motivation("M2", "mut-2", vec![], vec!["no-trade".into()]);
+    let mut gen2 = identity::build_objective("M2", "mut-2", vec![], vec!["no-trade".into()]);
     gen2.lineage = Lineage::mutation(&gen1.id, 1, "e2");
-    agency::save_motivation(&gen2, &motivations_dir).unwrap();
+    identity::save_objective(&gen2, &objectives_dir).unwrap();
 
-    let mut gen3 = agency::build_motivation("M3", "mut-3", vec![], vec![]);
+    let mut gen3 = identity::build_objective("M3", "mut-3", vec![], vec![]);
     gen3.lineage = Lineage::mutation(&gen2.id, 2, "e3");
-    agency::save_motivation(&gen3, &motivations_dir).unwrap();
+    identity::save_objective(&gen3, &objectives_dir).unwrap();
 
-    let ancestry = agency::motivation_ancestry(&gen3.id, &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry(&gen3.id, &objectives_dir).unwrap();
     assert_eq!(ancestry.len(), 4);
     assert_eq!(ancestry[0].id, gen3.id);
     assert_eq!(ancestry[0].generation, 3);
@@ -204,33 +204,33 @@ fn test_motivation_deep_ancestry_chain() {
 
 #[test]
 fn test_role_crossover_two_parents() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
-    let parent_a = agency::build_role("Parent A", "first parent", vec![], "outcome-a");
-    agency::save_role(&parent_a, &roles_dir).unwrap();
+    let parent_a = identity::build_role("Parent A", "first parent", vec![], "outcome-a");
+    identity::save_role(&parent_a, &roles_dir).unwrap();
 
-    let parent_b = agency::build_role(
+    let parent_b = identity::build_role(
         "Parent B",
         "second parent",
         vec![SkillRef::Name("python".to_string())],
         "outcome-b",
     );
-    agency::save_role(&parent_b, &roles_dir).unwrap();
+    identity::save_role(&parent_b, &roles_dir).unwrap();
 
-    let mut crossover = agency::build_role("Crossover", "combined", vec![], "outcome-c");
+    let mut crossover = identity::build_role("Crossover", "combined", vec![], "outcome-c");
     crossover.lineage = Lineage::crossover(
         &[&parent_a.id, &parent_b.id],
         0, // max parent generation
         "cross-run-1",
     );
-    agency::save_role(&crossover, &roles_dir).unwrap();
+    identity::save_role(&crossover, &roles_dir).unwrap();
 
     assert_eq!(crossover.lineage.parent_ids.len(), 2);
     assert_eq!(crossover.lineage.generation, 1);
     assert_eq!(crossover.lineage.created_by, "evolver-cross-run-1");
 
-    let ancestry = agency::role_ancestry(&crossover.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&crossover.id, &roles_dir).unwrap();
     assert_eq!(ancestry.len(), 3, "Crossover + 2 parents");
 
     assert_eq!(ancestry[0].id, crossover.id);
@@ -240,21 +240,21 @@ fn test_role_crossover_two_parents() {
 }
 
 #[test]
-fn test_motivation_crossover_two_parents() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+fn test_objective_crossover_two_parents() {
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let parent_a = agency::build_motivation("MA", "first", vec![], vec![]);
-    agency::save_motivation(&parent_a, &motivations_dir).unwrap();
+    let parent_a = identity::build_objective("MA", "first", vec![], vec![]);
+    identity::save_objective(&parent_a, &objectives_dir).unwrap();
 
-    let parent_b = agency::build_motivation("MB", "second", vec!["tradeoff".into()], vec![]);
-    agency::save_motivation(&parent_b, &motivations_dir).unwrap();
+    let parent_b = identity::build_objective("MB", "second", vec!["tradeoff".into()], vec![]);
+    identity::save_objective(&parent_b, &objectives_dir).unwrap();
 
-    let mut crossover = agency::build_motivation("MC", "merged", vec![], vec![]);
+    let mut crossover = identity::build_objective("MC", "merged", vec![], vec![]);
     crossover.lineage = Lineage::crossover(&[&parent_a.id, &parent_b.id], 0, "cross-mot-1");
-    agency::save_motivation(&crossover, &motivations_dir).unwrap();
+    identity::save_objective(&crossover, &objectives_dir).unwrap();
 
-    let ancestry = agency::motivation_ancestry(&crossover.id, &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry(&crossover.id, &objectives_dir).unwrap();
     assert_eq!(ancestry.len(), 3);
     assert_eq!(ancestry[0].id, crossover.id);
     let parent_ids: Vec<&str> = ancestry[1..].iter().map(|n| n.id.as_str()).collect();
@@ -292,31 +292,31 @@ fn test_generation_increments_crossover() {
 
 #[test]
 fn test_generation_increments_through_deep_chain() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     let mut roles = vec![];
-    let root = agency::build_role("R0", "gen-0", vec![], "o0");
-    agency::save_role(&root, &roles_dir).unwrap();
+    let root = identity::build_role("R0", "gen-0", vec![], "o0");
+    identity::save_role(&root, &roles_dir).unwrap();
     roles.push(root);
 
     // Create chain of 5 generations
     for i in 1..=5u32 {
-        let mut role = agency::build_role(
+        let mut role = identity::build_role(
             format!("R{}", i),
             format!("gen-{}", i),
             vec![],
             format!("o{}", i),
         );
         role.lineage = Lineage::mutation(&roles[(i - 1) as usize].id, i - 1, &format!("e{}", i));
-        agency::save_role(&role, &roles_dir).unwrap();
+        identity::save_role(&role, &roles_dir).unwrap();
         roles.push(role);
     }
 
     // The last role should be generation 5
     assert_eq!(roles[5].lineage.generation, 5);
 
-    let ancestry = agency::role_ancestry(&roles[5].id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&roles[5].id, &roles_dir).unwrap();
     assert_eq!(ancestry.len(), 6);
 
     // Verify each generation is present
@@ -331,31 +331,31 @@ fn test_generation_increments_through_deep_chain() {
 
 #[test]
 fn test_crossover_generation_from_mixed_gen_parents() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     // Parent A at gen 0
-    let parent_a = agency::build_role("PA", "gen0 parent", vec![], "oa");
-    agency::save_role(&parent_a, &roles_dir).unwrap();
+    let parent_a = identity::build_role("PA", "gen0 parent", vec![], "oa");
+    identity::save_role(&parent_a, &roles_dir).unwrap();
 
     // Parent B at gen 2 (simulated by explicit lineage)
-    let mut parent_b = agency::build_role("PB", "gen2 parent", vec![], "ob");
+    let mut parent_b = identity::build_role("PB", "gen2 parent", vec![], "ob");
     parent_b.lineage = Lineage {
         parent_ids: vec!["fake-intermediate".to_string()],
         generation: 2,
         created_by: "evolver-test".to_string(),
         created_at: chrono::Utc::now(),
     };
-    agency::save_role(&parent_b, &roles_dir).unwrap();
+    identity::save_role(&parent_b, &roles_dir).unwrap();
 
     // Crossover: max(0, 2) + 1 = 3
-    let mut cross = agency::build_role("Cross", "crossover", vec![], "oc");
+    let mut cross = identity::build_role("Cross", "crossover", vec![], "oc");
     cross.lineage = Lineage::crossover(&[&parent_a.id, &parent_b.id], 2, "x-run");
-    agency::save_role(&cross, &roles_dir).unwrap();
+    identity::save_role(&cross, &roles_dir).unwrap();
 
     assert_eq!(cross.lineage.generation, 3);
 
-    let ancestry = agency::role_ancestry(&cross.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&cross.id, &roles_dir).unwrap();
     // cross (gen3), parent_a (gen0), parent_b (gen2)
     // parent_b references "fake-intermediate" which doesn't exist, so only 3 nodes
     assert_eq!(ancestry.len(), 3);
@@ -367,29 +367,29 @@ fn test_crossover_generation_from_mixed_gen_parents() {
 
 #[test]
 fn test_role_ancestry_missing_intermediate_parent() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     // Create grandparent (gen 0)
-    let grandparent = agency::build_role("GP", "grandparent", vec![], "o-gp");
-    agency::save_role(&grandparent, &roles_dir).unwrap();
+    let grandparent = identity::build_role("GP", "grandparent", vec![], "o-gp");
+    identity::save_role(&grandparent, &roles_dir).unwrap();
 
     // Parent (gen 1) references grandparent
-    let mut parent = agency::build_role("P", "parent", vec![], "o-p");
+    let mut parent = identity::build_role("P", "parent", vec![], "o-p");
     parent.lineage = Lineage::mutation(&grandparent.id, 0, "e-p");
-    agency::save_role(&parent, &roles_dir).unwrap();
+    identity::save_role(&parent, &roles_dir).unwrap();
 
     // Child (gen 2) references parent
-    let mut child = agency::build_role("C", "child", vec![], "o-c");
+    let mut child = identity::build_role("C", "child", vec![], "o-c");
     child.lineage = Lineage::mutation(&parent.id, 1, "e-c");
-    agency::save_role(&child, &roles_dir).unwrap();
+    identity::save_role(&child, &roles_dir).unwrap();
 
     // DELETE the parent file to simulate a missing intermediate
     let parent_path = roles_dir.join(format!("{}.yaml", parent.id));
     std::fs::remove_file(&parent_path).unwrap();
 
     // Ancestry should still succeed, returning only the nodes that exist
-    let ancestry = agency::role_ancestry(&child.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&child.id, &roles_dir).unwrap();
     // child is found (it references parent), but parent is missing,
     // so the walk stops there. grandparent is NOT reachable.
     assert_eq!(
@@ -404,49 +404,49 @@ fn test_role_ancestry_missing_intermediate_parent() {
 }
 
 #[test]
-fn test_motivation_ancestry_missing_intermediate_parent() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+fn test_objective_ancestry_missing_intermediate_parent() {
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let grandparent = agency::build_motivation("GP", "grandparent", vec![], vec![]);
-    agency::save_motivation(&grandparent, &motivations_dir).unwrap();
+    let grandparent = identity::build_objective("GP", "grandparent", vec![], vec![]);
+    identity::save_objective(&grandparent, &objectives_dir).unwrap();
 
-    let mut parent = agency::build_motivation("P", "parent", vec![], vec![]);
+    let mut parent = identity::build_objective("P", "parent", vec![], vec![]);
     parent.lineage = Lineage::mutation(&grandparent.id, 0, "e-p");
-    agency::save_motivation(&parent, &motivations_dir).unwrap();
+    identity::save_objective(&parent, &objectives_dir).unwrap();
 
-    let mut child = agency::build_motivation("C", "child", vec![], vec![]);
+    let mut child = identity::build_objective("C", "child", vec![], vec![]);
     child.lineage = Lineage::mutation(&parent.id, 1, "e-c");
-    agency::save_motivation(&child, &motivations_dir).unwrap();
+    identity::save_objective(&child, &objectives_dir).unwrap();
 
     // Delete parent
-    let parent_path = motivations_dir.join(format!("{}.yaml", parent.id));
+    let parent_path = objectives_dir.join(format!("{}.yaml", parent.id));
     std::fs::remove_file(&parent_path).unwrap();
 
-    let ancestry = agency::motivation_ancestry(&child.id, &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry(&child.id, &objectives_dir).unwrap();
     assert_eq!(ancestry.len(), 1);
     assert_eq!(ancestry[0].id, child.id);
 }
 
 #[test]
 fn test_role_ancestry_missing_one_crossover_parent() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
-    let parent_a = agency::build_role("PA", "parent a", vec![], "oa");
-    agency::save_role(&parent_a, &roles_dir).unwrap();
+    let parent_a = identity::build_role("PA", "parent a", vec![], "oa");
+    identity::save_role(&parent_a, &roles_dir).unwrap();
 
-    let parent_b = agency::build_role("PB", "parent b", vec![], "ob");
-    agency::save_role(&parent_b, &roles_dir).unwrap();
+    let parent_b = identity::build_role("PB", "parent b", vec![], "ob");
+    identity::save_role(&parent_b, &roles_dir).unwrap();
 
-    let mut cross = agency::build_role("Cross", "crossover", vec![], "oc");
+    let mut cross = identity::build_role("Cross", "crossover", vec![], "oc");
     cross.lineage = Lineage::crossover(&[&parent_a.id, &parent_b.id], 0, "x-run");
-    agency::save_role(&cross, &roles_dir).unwrap();
+    identity::save_role(&cross, &roles_dir).unwrap();
 
     // Delete parent_b
     std::fs::remove_file(roles_dir.join(format!("{}.yaml", parent_b.id))).unwrap();
 
-    let ancestry = agency::role_ancestry(&cross.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&cross.id, &roles_dir).unwrap();
     // cross + parent_a (parent_b missing, silently skipped)
     assert_eq!(ancestry.len(), 2);
     let ids: Vec<&str> = ancestry.iter().map(|n| n.id.as_str()).collect();
@@ -457,11 +457,11 @@ fn test_role_ancestry_missing_one_crossover_parent() {
 
 #[test]
 fn test_role_ancestry_target_does_not_exist() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     // Query ancestry for an ID that doesn't exist
-    let ancestry = agency::role_ancestry("nonexistent-id", &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry("nonexistent-id", &roles_dir).unwrap();
     assert!(
         ancestry.is_empty(),
         "Ancestry of nonexistent role should be empty"
@@ -469,11 +469,11 @@ fn test_role_ancestry_target_does_not_exist() {
 }
 
 #[test]
-fn test_motivation_ancestry_target_does_not_exist() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+fn test_objective_ancestry_target_does_not_exist() {
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let ancestry = agency::motivation_ancestry("nonexistent-id", &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry("nonexistent-id", &objectives_dir).unwrap();
     assert!(ancestry.is_empty());
 }
 
@@ -483,22 +483,22 @@ fn test_motivation_ancestry_target_does_not_exist() {
 
 #[test]
 fn test_ancestry_node_fields_populated() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
-    let parent = agency::build_role("Root Role", "The root", vec![], "Root outcome");
-    agency::save_role(&parent, &roles_dir).unwrap();
+    let parent = identity::build_role("Root Role", "The root", vec![], "Root outcome");
+    identity::save_role(&parent, &roles_dir).unwrap();
 
-    let mut child = agency::build_role(
+    let mut child = identity::build_role(
         "Evolved Role",
         "A mutated descendant",
         vec![SkillRef::Name("rust".to_string())],
         "Better outcome",
     );
     child.lineage = Lineage::mutation(&parent.id, 0, "evo-42");
-    agency::save_role(&child, &roles_dir).unwrap();
+    identity::save_role(&child, &roles_dir).unwrap();
 
-    let ancestry = agency::role_ancestry(&child.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&child.id, &roles_dir).unwrap();
     assert_eq!(ancestry.len(), 2);
 
     // Check child node
@@ -523,20 +523,20 @@ fn test_ancestry_node_fields_populated() {
 
 #[test]
 fn test_ancestry_node_crossover_parent_ids() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let pa = agency::build_motivation("A", "first", vec![], vec![]);
-    agency::save_motivation(&pa, &motivations_dir).unwrap();
+    let pa = identity::build_objective("A", "first", vec![], vec![]);
+    identity::save_objective(&pa, &objectives_dir).unwrap();
 
-    let pb = agency::build_motivation("B", "second", vec!["trade".into()], vec![]);
-    agency::save_motivation(&pb, &motivations_dir).unwrap();
+    let pb = identity::build_objective("B", "second", vec!["trade".into()], vec![]);
+    identity::save_objective(&pb, &objectives_dir).unwrap();
 
-    let mut cross = agency::build_motivation("AB", "combined", vec![], vec![]);
+    let mut cross = identity::build_objective("AB", "combined", vec![], vec![]);
     cross.lineage = Lineage::crossover(&[&pa.id, &pb.id], 0, "cross-99");
-    agency::save_motivation(&cross, &motivations_dir).unwrap();
+    identity::save_objective(&cross, &objectives_dir).unwrap();
 
-    let ancestry = agency::motivation_ancestry(&cross.id, &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry(&cross.id, &objectives_dir).unwrap();
     let cross_node = &ancestry[0];
 
     // The crossover node should list both parent IDs
@@ -582,28 +582,28 @@ fn test_lineage_crossover_constructor() {
 fn test_ancestry_no_duplicate_visits() {
     // If a diamond pattern exists (A -> B, A -> C, B -> D, C -> D),
     // the ancestry walker should visit D only once.
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     // D is the common ancestor (gen 0)
-    let d = agency::build_role("D", "common ancestor", vec![], "od");
-    agency::save_role(&d, &roles_dir).unwrap();
+    let d = identity::build_role("D", "common ancestor", vec![], "od");
+    identity::save_role(&d, &roles_dir).unwrap();
 
     // B and C both descend from D (gen 1)
-    let mut b = agency::build_role("B", "branch b", vec![], "ob");
+    let mut b = identity::build_role("B", "branch b", vec![], "ob");
     b.lineage = Lineage::mutation(&d.id, 0, "e-b");
-    agency::save_role(&b, &roles_dir).unwrap();
+    identity::save_role(&b, &roles_dir).unwrap();
 
-    let mut c = agency::build_role("C", "branch c", vec![SkillRef::Name("extra".into())], "oc");
+    let mut c = identity::build_role("C", "branch c", vec![SkillRef::Name("extra".into())], "oc");
     c.lineage = Lineage::mutation(&d.id, 0, "e-c");
-    agency::save_role(&c, &roles_dir).unwrap();
+    identity::save_role(&c, &roles_dir).unwrap();
 
     // A is a crossover of B and C (gen 2)
-    let mut a = agency::build_role("A", "crossover of b and c", vec![], "oa");
+    let mut a = identity::build_role("A", "crossover of b and c", vec![], "oa");
     a.lineage = Lineage::crossover(&[&b.id, &c.id], 1, "e-a");
-    agency::save_role(&a, &roles_dir).unwrap();
+    identity::save_role(&a, &roles_dir).unwrap();
 
-    let ancestry = agency::role_ancestry(&a.id, &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry(&a.id, &roles_dir).unwrap();
     // A, B, C, D — D should appear exactly once even though both B and C reference it
     assert_eq!(
         ancestry.len(),
@@ -621,19 +621,19 @@ fn test_ancestry_no_duplicate_visits() {
 
 #[test]
 fn test_role_ancestry_empty_directory() {
-    let (_tmp, agency_dir) = setup();
-    let roles_dir = agency_dir.join("roles");
+    let (_tmp, identity_dir) = setup();
+    let roles_dir = identity_dir.join("roles");
 
     // No roles saved — ancestry of any ID returns empty
-    let ancestry = agency::role_ancestry("anything", &roles_dir).unwrap();
+    let ancestry = identity::role_ancestry("anything", &roles_dir).unwrap();
     assert!(ancestry.is_empty());
 }
 
 #[test]
-fn test_motivation_ancestry_empty_directory() {
-    let (_tmp, agency_dir) = setup();
-    let motivations_dir = agency_dir.join("motivations");
+fn test_objective_ancestry_empty_directory() {
+    let (_tmp, identity_dir) = setup();
+    let objectives_dir = identity_dir.join("objectives");
 
-    let ancestry = agency::motivation_ancestry("anything", &motivations_dir).unwrap();
+    let ancestry = identity::objective_ancestry("anything", &objectives_dir).unwrap();
     assert!(ancestry.is_empty());
 }

@@ -11,7 +11,7 @@ use tempfile::{NamedTempFile, TempDir};
 use workgraph::check::{
     LoopEdgeIssueKind, check_all, check_cycles, check_loop_edges, check_orphans,
 };
-use workgraph::graph::{LoopEdge, LoopGuard, Node, Status, Task, WorkGraph, evaluate_loop_edges};
+use workgraph::graph::{LoopEdge, LoopGuard, Node, Status, Task, WorkGraph, reward_loop_edges};
 use workgraph::parser::{ParseError, load_graph, save_graph};
 use workgraph::query::{blocked_by, ready_tasks};
 
@@ -376,7 +376,7 @@ fn test_done_to_open_via_loop_edge_is_valid() {
 
     graph.add_node(Node::Task(t1));
 
-    let reactivated = evaluate_loop_edges(&mut graph, "t1");
+    let reactivated = reward_loop_edges(&mut graph, "t1");
     assert!(reactivated.contains(&"t1".to_string()));
     assert_eq!(graph.get_task("t1").unwrap().status, Status::Open);
     assert_eq!(graph.get_task("t1").unwrap().loop_iteration, 1);
@@ -385,7 +385,7 @@ fn test_done_to_open_via_loop_edge_is_valid() {
 #[test]
 fn test_loop_does_not_fire_from_non_done_status() {
     // Loop edges should only fire when the source transitions to Done.
-    // If we call evaluate_loop_edges on a task that isn't Done, nothing happens
+    // If we call reward_loop_edges on a task that isn't Done, nothing happens
     // because the function doesn't check source status — it's the caller's
     // responsibility. But the target check (iteration < max) still works.
     let mut graph = WorkGraph::new();
@@ -400,15 +400,15 @@ fn test_loop_does_not_fire_from_non_done_status() {
     // Leave t1 as Open — it hasn't actually completed
     graph.add_node(Node::Task(t1));
 
-    // Even though we call evaluate_loop_edges, the target is Open and iteration=0,
+    // Even though we call reward_loop_edges, the target is Open and iteration=0,
     // so it would "re-activate" it (setting it to Open, which it already is).
     // This tests the idempotent behavior.
-    let reactivated = evaluate_loop_edges(&mut graph, "t1");
+    let reactivated = reward_loop_edges(&mut graph, "t1");
 
     let t1 = graph.get_task("t1").unwrap();
     assert_eq!(t1.status, Status::Open);
     // The iteration counter gets incremented even in this case because
-    // evaluate_loop_edges doesn't check source status
+    // reward_loop_edges doesn't check source status
     assert_eq!(t1.loop_iteration, 1);
     assert!(reactivated.contains(&"t1".to_string()));
 }
@@ -853,7 +853,7 @@ fn test_loop_edge_zero_max_iterations() {
 
     // Even if we try to fire it, zero max_iterations means it never fires
     graph.get_task_mut("source").unwrap().status = Status::Done;
-    let reactivated = evaluate_loop_edges(&mut graph, "source");
+    let reactivated = reward_loop_edges(&mut graph, "source");
     assert!(
         reactivated.is_empty(),
         "Loop with max_iterations=0 should never fire"
@@ -886,12 +886,12 @@ fn test_loop_edge_guard_references_nonexistent_task() {
             .any(|i| i.kind == LoopEdgeIssueKind::GuardTaskNotFound("phantom".to_string()))
     );
 
-    // Guard evaluates to false when the referenced task doesn't exist
+    // Guard rewards to false when the referenced task doesn't exist
     graph.get_task_mut("source").unwrap().status = Status::Done;
-    let reactivated = evaluate_loop_edges(&mut graph, "source");
+    let reactivated = reward_loop_edges(&mut graph, "source");
     assert!(
         reactivated.is_empty(),
-        "Guard referencing nonexistent task should evaluate to false"
+        "Guard referencing nonexistent task should reward to false"
     );
 }
 
@@ -1002,7 +1002,7 @@ fn test_loop_edge_fires_only_up_to_max_iterations_with_persistence() {
 
     // Iteration 0 -> 1
     graph.get_task_mut("looper").unwrap().status = Status::Done;
-    evaluate_loop_edges(&mut graph, "looper");
+    reward_loop_edges(&mut graph, "looper");
     assert_eq!(graph.get_task("looper").unwrap().loop_iteration, 1);
 
     // Save and reload
@@ -1012,7 +1012,7 @@ fn test_loop_edge_fires_only_up_to_max_iterations_with_persistence() {
 
     // Iteration 1 -> 2
     graph.get_task_mut("looper").unwrap().status = Status::Done;
-    evaluate_loop_edges(&mut graph, "looper");
+    reward_loop_edges(&mut graph, "looper");
     assert_eq!(graph.get_task("looper").unwrap().loop_iteration, 2);
 
     // Save and reload
@@ -1021,7 +1021,7 @@ fn test_loop_edge_fires_only_up_to_max_iterations_with_persistence() {
 
     // Iteration 2: max reached, should NOT fire
     graph.get_task_mut("looper").unwrap().status = Status::Done;
-    let reactivated = evaluate_loop_edges(&mut graph, "looper");
+    let reactivated = reward_loop_edges(&mut graph, "looper");
     assert!(
         reactivated.is_empty(),
         "Should not fire past max_iterations"
@@ -1137,12 +1137,12 @@ fn test_graph_with_multiple_error_types() {
 }
 
 #[test]
-fn test_evaluate_loop_edges_on_nonexistent_source() {
+fn test_reward_loop_edges_on_nonexistent_source() {
     let mut graph = WorkGraph::new();
     graph.add_node(Node::Task(make_task("t1")));
 
     // Calling with a nonexistent source should return empty, not panic
-    let reactivated = evaluate_loop_edges(&mut graph, "nonexistent");
+    let reactivated = reward_loop_edges(&mut graph, "nonexistent");
     assert!(reactivated.is_empty());
 }
 

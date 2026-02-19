@@ -1,7 +1,7 @@
 //! Integration tests for the service coordinator lifecycle.
 //!
 //! Tests the coordinator's tick loop, agent lifecycle management, dead agent
-//! detection, cleanup flow, agent registry operations, auto-evaluate subgraph
+//! detection, cleanup flow, agent registry operations, auto-reward subgraph
 //! construction, and slot accounting.
 //!
 //! All non-LLM tests use tempdir-based workgraphs and don't require external
@@ -532,18 +532,18 @@ fn test_registry_locked_operations() {
 }
 
 // ===========================================================================
-// 7. Auto-evaluate subgraph construction
+// 7. Auto-reward subgraph construction
 // ===========================================================================
 
 #[test]
-fn test_auto_evaluate_creates_eval_tasks() {
+fn test_auto_reward_creates_eval_tasks() {
     let tmp = TempDir::new().unwrap();
     let (wg_dir, graph_path) = setup_workgraph(&tmp);
 
-    // Write config enabling auto_evaluate
+    // Write config enabling auto_reward
     let config_content = r#"
-[agency]
-auto_evaluate = true
+[identity]
+auto_reward = true
 "#;
     fs::write(wg_dir.join("config.toml"), config_content).unwrap();
 
@@ -561,9 +561,9 @@ auto_evaluate = true
     )));
     save_graph(&graph, &graph_path).unwrap();
 
-    // Simulate auto_evaluate logic (same as in coordinator_tick)
+    // Simulate auto_reward logic (same as in coordinator_tick)
     let config = Config::load(&wg_dir).unwrap_or_default();
-    assert!(config.agency.auto_evaluate);
+    assert!(config.identity.auto_reward);
 
     let mut mutable_graph = load_graph(&graph_path).unwrap();
     let mut graph_modified = false;
@@ -571,11 +571,11 @@ auto_evaluate = true
     let tasks_needing_eval: Vec<_> = mutable_graph
         .tasks()
         .filter(|t| {
-            let eval_id = format!("evaluate-{}", t.id);
+            let eval_id = format!("reward-{}", t.id);
             if mutable_graph.get_task(&eval_id).is_some() {
                 return false;
             }
-            let dominated_tags = ["evaluation", "assignment", "evolution"];
+            let dominated_tags = ["reward", "assignment", "evolution"];
             if t.tags
                 .iter()
                 .any(|tag| dominated_tags.contains(&tag.as_str()))
@@ -588,19 +588,19 @@ auto_evaluate = true
         .collect();
 
     for (task_id, task_title) in &tasks_needing_eval {
-        let eval_task_id = format!("evaluate-{}", task_id);
+        let eval_task_id = format!("reward-{}", task_id);
         if mutable_graph.get_task(&eval_task_id).is_some() {
             continue;
         }
 
         let eval_task = make_task(
             &eval_task_id,
-            &format!("Evaluate: {}", task_title),
+            &format!("Reward: {}", task_title),
             Status::Open,
         );
         let mut eval_task_with_deps = eval_task;
         eval_task_with_deps.blocked_by = vec![task_id.clone()];
-        eval_task_with_deps.tags = vec!["evaluation".to_string(), "agency".to_string()];
+        eval_task_with_deps.tags = vec!["reward".to_string(), "identity".to_string()];
         mutable_graph.add_node(Node::Task(eval_task_with_deps));
         graph_modified = true;
     }
@@ -612,25 +612,25 @@ auto_evaluate = true
     // Verify eval tasks were created
     let final_graph = load_graph(&graph_path).unwrap();
 
-    // evaluate-task-1 should exist and be blocked by task-1
-    let eval1 = final_graph.get_task("evaluate-task-1").unwrap();
+    // reward-task-1 should exist and be blocked by task-1
+    let eval1 = final_graph.get_task("reward-task-1").unwrap();
     assert_eq!(eval1.blocked_by, vec!["task-1".to_string()]);
-    assert!(eval1.tags.contains(&"evaluation".to_string()));
+    assert!(eval1.tags.contains(&"reward".to_string()));
 
-    // evaluate-task-2 should exist and be blocked by task-2
-    let eval2 = final_graph.get_task("evaluate-task-2").unwrap();
+    // reward-task-2 should exist and be blocked by task-2
+    let eval2 = final_graph.get_task("reward-task-2").unwrap();
     assert_eq!(eval2.blocked_by, vec!["task-2".to_string()]);
 }
 
 #[test]
-fn test_auto_evaluate_skips_evaluation_tasks() {
-    // Evaluation tasks should not get their own evaluation tasks (no infinite regress)
+fn test_auto_reward_skips_reward_tasks() {
+    // Reward tasks should not get their own reward tasks (no infinite regress)
     let tmp = TempDir::new().unwrap();
     let (_wg_dir, graph_path) = setup_workgraph(&tmp);
 
     let mut graph = WorkGraph::new();
-    let mut eval_task = make_task("evaluate-task-x", "Evaluate: X", Status::Open);
-    eval_task.tags = vec!["evaluation".to_string()];
+    let mut eval_task = make_task("reward-task-x", "Reward: X", Status::Open);
+    eval_task.tags = vec!["reward".to_string()];
     graph.add_node(Node::Task(eval_task));
 
     let mut assign_task = make_task("assign-task-y", "Assign agent for: Y", Status::Open);
@@ -643,11 +643,11 @@ fn test_auto_evaluate_skips_evaluation_tasks() {
     let tasks_needing_eval: Vec<_> = loaded
         .tasks()
         .filter(|t| {
-            let eval_id = format!("evaluate-{}", t.id);
+            let eval_id = format!("reward-{}", t.id);
             if loaded.get_task(&eval_id).is_some() {
                 return false;
             }
-            let dominated_tags = ["evaluation", "assignment", "evolution"];
+            let dominated_tags = ["reward", "assignment", "evolution"];
             if t.tags
                 .iter()
                 .any(|tag| dominated_tags.contains(&tag.as_str()))
@@ -660,12 +660,12 @@ fn test_auto_evaluate_skips_evaluation_tasks() {
 
     assert!(
         tasks_needing_eval.is_empty(),
-        "Evaluation and assignment tasks should not produce eval tasks"
+        "Reward and assignment tasks should not produce eval tasks"
     );
 }
 
 #[test]
-fn test_auto_evaluate_skips_abandoned_tasks() {
+fn test_auto_reward_skips_abandoned_tasks() {
     let tmp = TempDir::new().unwrap();
     let (_wg_dir, graph_path) = setup_workgraph(&tmp);
 
@@ -681,7 +681,7 @@ fn test_auto_evaluate_skips_abandoned_tasks() {
     let tasks_needing_eval: Vec<_> = loaded
         .tasks()
         .filter(|t| {
-            let dominated_tags = ["evaluation", "assignment", "evolution"];
+            let dominated_tags = ["reward", "assignment", "evolution"];
             if t.tags
                 .iter()
                 .any(|tag| dominated_tags.contains(&tag.as_str()))
@@ -699,7 +699,7 @@ fn test_auto_evaluate_skips_abandoned_tasks() {
 }
 
 #[test]
-fn test_auto_evaluate_idempotent() {
+fn test_auto_reward_idempotent() {
     // Running eval creation twice should not create duplicates
     let tmp = TempDir::new().unwrap();
     let (_wg_dir, graph_path) = setup_workgraph(&tmp);
@@ -711,9 +711,9 @@ fn test_auto_evaluate_idempotent() {
         Status::Open,
     )));
     // Pre-create the eval task
-    let mut eval_task = make_task("evaluate-task-1", "Evaluate: Regular Task", Status::Open);
+    let mut eval_task = make_task("reward-task-1", "Reward: Regular Task", Status::Open);
     eval_task.blocked_by = vec!["task-1".to_string()];
-    eval_task.tags = vec!["evaluation".to_string()];
+    eval_task.tags = vec!["reward".to_string()];
     graph.add_node(Node::Task(eval_task));
     save_graph(&graph, &graph_path).unwrap();
 
@@ -721,11 +721,11 @@ fn test_auto_evaluate_idempotent() {
     let tasks_needing_eval: Vec<_> = loaded
         .tasks()
         .filter(|t| {
-            let eval_id = format!("evaluate-{}", t.id);
+            let eval_id = format!("reward-{}", t.id);
             if loaded.get_task(&eval_id).is_some() {
                 return false;
             }
-            let dominated_tags = ["evaluation", "assignment", "evolution"];
+            let dominated_tags = ["reward", "assignment", "evolution"];
             if t.tags
                 .iter()
                 .any(|tag| dominated_tags.contains(&tag.as_str()))
@@ -743,8 +743,8 @@ fn test_auto_evaluate_idempotent() {
 }
 
 #[test]
-fn test_auto_evaluate_unblocks_on_failed_source() {
-    // When a source task fails, its evaluation task should be unblocked
+fn test_auto_reward_unblocks_on_failed_source() {
+    // When a source task fails, its reward task should be unblocked
     let tmp = TempDir::new().unwrap();
     let (_wg_dir, graph_path) = setup_workgraph(&tmp);
 
@@ -754,9 +754,9 @@ fn test_auto_evaluate_unblocks_on_failed_source() {
         "Source",
         Status::Failed,
     )));
-    let mut eval_task = make_task("evaluate-source-task", "Evaluate: Source", Status::Open);
+    let mut eval_task = make_task("reward-source-task", "Reward: Source", Status::Open);
     eval_task.blocked_by = vec!["source-task".to_string()];
-    eval_task.tags = vec!["evaluation".to_string()];
+    eval_task.tags = vec!["reward".to_string()];
     graph.add_node(Node::Task(eval_task));
     save_graph(&graph, &graph_path).unwrap();
 
@@ -764,7 +764,7 @@ fn test_auto_evaluate_unblocks_on_failed_source() {
     let mut mutable_graph = load_graph(&graph_path).unwrap();
     let eval_fixups: Vec<(String, String)> = mutable_graph
         .tasks()
-        .filter(|t| t.id.starts_with("evaluate-") && t.status == Status::Open)
+        .filter(|t| t.id.starts_with("reward-") && t.status == Status::Open)
         .filter_map(|t| {
             if t.blocked_by.len() == 1 {
                 let source_id = &t.blocked_by[0];
@@ -779,7 +779,7 @@ fn test_auto_evaluate_unblocks_on_failed_source() {
         .collect();
 
     assert_eq!(eval_fixups.len(), 1);
-    assert_eq!(eval_fixups[0].0, "evaluate-source-task");
+    assert_eq!(eval_fixups[0].0, "reward-source-task");
     assert_eq!(eval_fixups[0].1, "source-task");
 
     for (eval_id, source_id) in &eval_fixups {
@@ -791,7 +791,7 @@ fn test_auto_evaluate_unblocks_on_failed_source() {
 
     // Verify the eval task is now unblocked
     let final_graph = load_graph(&graph_path).unwrap();
-    let eval = final_graph.get_task("evaluate-source-task").unwrap();
+    let eval = final_graph.get_task("reward-source-task").unwrap();
     assert!(
         eval.blocked_by.is_empty(),
         "Eval task should be unblocked after source task failed"
@@ -800,7 +800,7 @@ fn test_auto_evaluate_unblocks_on_failed_source() {
     // And it should now be ready
     let ready = ready_tasks(&final_graph);
     let ready_ids: Vec<&str> = ready.iter().map(|t| t.id.as_str()).collect();
-    assert!(ready_ids.contains(&"evaluate-source-task"));
+    assert!(ready_ids.contains(&"reward-source-task"));
 }
 
 // ===========================================================================
@@ -1270,42 +1270,42 @@ Begin working on the task now.
         );
     }
 
-    /// Test: spawn a Claude agent to create roles, motivations, and agents from scratch.
+    /// Test: spawn a Claude agent to create roles, objectives, and agents from scratch.
     ///
     /// This test verifies that:
-    /// 1. An LLM agent can be spawned with a task to build agency components
-    /// 2. The agent can execute wg CLI commands to create roles and motivations
-    /// 3. The agency system correctly persists and retrieves the created entities
-    /// 4. An agent pairing role + motivation can be created
+    /// 1. An LLM agent can be spawned with a task to build identity components
+    /// 2. The agent can execute wg CLI commands to create roles and objectives
+    /// 3. The identity system correctly persists and retrieves the created entities
+    /// 4. An agent pairing role + objective can be created
     #[test]
     fn test_agent_creation_via_llm() {
         let tmp = TempDir::new().unwrap();
         let wg_dir = setup_llm_workgraph(tmp.path());
         let model = test_model();
 
-        // Add a task that instructs Claude to create agency components
-        let task_desc = r#"You MUST create agency components using the wg CLI. Run these commands in order:
+        // Add a task that instructs Claude to create identity components
+        let task_desc = r#"You MUST create identity components using the wg CLI. Run these commands in order:
 
 Step 1 — Create a role:
 ```
 wg role add "CodeReviewer" --outcome "High-quality code reviews with constructive feedback" --skill code-review --description "Reviews code for quality and correctness"
 ```
 
-Step 2 — Create a motivation:
+Step 2 — Create a objective:
 ```
-wg motivation add "Thorough" --accept "Slower delivery" --reject "Incomplete reviews" --description "Prioritizes thoroughness over speed"
+wg objective add "Thorough" --accept "Slower delivery" --reject "Incomplete reviews" --description "Prioritizes thoroughness over speed"
 ```
 
 Step 3 — Get the hashes from the output above, then create an agent:
 ```
-wg agent create "Thorough Reviewer" --role <ROLE_HASH> --motivation <MOTIVATION_HASH>
+wg agent create "Thorough Reviewer" --role <ROLE_HASH> --objective <MOTIVATION_HASH>
 ```
 Replace <ROLE_HASH> and <MOTIVATION_HASH> with the 8-char prefixes printed in steps 1 and 2.
 
 Step 4 — Verify and complete:
 ```
 wg agent list
-wg done create-agency-components
+wg done create-identity-components
 ```
 
 IMPORTANT: You MUST run ALL four steps. Do NOT skip any."#;
@@ -1314,9 +1314,9 @@ IMPORTANT: You MUST run ALL four steps. Do NOT skip any."#;
             &wg_dir,
             &[
                 "add",
-                "Build agency components",
+                "Build identity components",
                 "--id",
-                "create-agency-components",
+                "create-identity-components",
                 "-d",
                 task_desc,
             ],
@@ -1327,7 +1327,7 @@ IMPORTANT: You MUST run ALL four steps. Do NOT skip any."#;
             &wg_dir,
             &[
                 "spawn",
-                "create-agency-components",
+                "create-identity-components",
                 "--executor",
                 "claude",
                 "--model",
@@ -1342,35 +1342,35 @@ IMPORTANT: You MUST run ALL four steps. Do NOT skip any."#;
 
         // Wait for the task to complete (up to 180s for LLM, as this is more complex)
         let completed = wait_for(Duration::from_secs(180), 1000, || {
-            let status = task_status(&wg_dir, "create-agency-components");
+            let status = task_status(&wg_dir, "create-identity-components");
             status == "done" || status == "failed"
         });
         assert!(
             completed,
-            "create-agency-components did not complete within 180s. Status: {}",
-            task_status(&wg_dir, "create-agency-components")
+            "create-identity-components did not complete within 180s. Status: {}",
+            task_status(&wg_dir, "create-identity-components")
         );
 
         // Verify the task succeeded
-        let final_status = task_status(&wg_dir, "create-agency-components");
+        let final_status = task_status(&wg_dir, "create-identity-components");
         assert_eq!(
             final_status, "done",
-            "create-agency-components should be done, got: {}",
+            "create-identity-components should be done, got: {}",
             final_status
         );
 
-        // Verify the role and motivation were actually created
-        // Check that the agency directory exists
-        let agency_dir = wg_dir.join("agency");
-        assert!(agency_dir.exists(), "Agency directory should exist");
+        // Verify the role and objective were actually created
+        // Check that the identity directory exists
+        let identity_dir = wg_dir.join("identity");
+        assert!(identity_dir.exists(), "Identity directory should exist");
 
-        let roles_dir = agency_dir.join("roles");
+        let roles_dir = identity_dir.join("roles");
         assert!(roles_dir.exists(), "Roles directory should exist");
 
-        let motivations_dir = agency_dir.join("motivations");
+        let objectives_dir = identity_dir.join("objectives");
         assert!(
-            motivations_dir.exists(),
-            "Motivations directory should exist"
+            objectives_dir.exists(),
+            "Objectives directory should exist"
         );
 
         // List roles to verify at least one was created
@@ -1399,24 +1399,24 @@ IMPORTANT: You MUST run ALL four steps. Do NOT skip any."#;
             "CodeReviewer role should exist in the created roles"
         );
 
-        // List motivations to verify at least one was created
-        let motivations_output = wg_ok(&wg_dir, &["motivation", "list", "--json"]);
-        let motivations_json: serde_json::Value = serde_json::from_str(&motivations_output)
-            .expect("Failed to parse motivation list JSON");
+        // List objectives to verify at least one was created
+        let objectives_output = wg_ok(&wg_dir, &["objective", "list", "--json"]);
+        let objectives_json: serde_json::Value = serde_json::from_str(&objectives_output)
+            .expect("Failed to parse objective list JSON");
         assert!(
-            motivations_json.is_array(),
-            "motivation list --json should return an array"
+            objectives_json.is_array(),
+            "objective list --json should return an array"
         );
-        let motivations_array = motivations_json
+        let objectives_array = objectives_json
             .as_array()
-            .expect("Expected array of motivations");
+            .expect("Expected array of objectives");
         assert!(
-            !motivations_array.is_empty(),
-            "At least one motivation should have been created"
+            !objectives_array.is_empty(),
+            "At least one objective should have been created"
         );
 
-        // Check that Thorough motivation exists
-        let has_thorough = motivations_array.iter().any(|m| {
+        // Check that Thorough objective exists
+        let has_thorough = objectives_array.iter().any(|m| {
             m.get("name")
                 .and_then(|n| n.as_str())
                 .map(|s| s.contains("Thorough"))
@@ -1424,10 +1424,10 @@ IMPORTANT: You MUST run ALL four steps. Do NOT skip any."#;
         });
         assert!(
             has_thorough,
-            "Thorough motivation should exist in the created motivations"
+            "Thorough objective should exist in the created objectives"
         );
 
-        // Verify an agent was created (role+motivation pairing)
+        // Verify an agent was created (role+objective pairing)
         let agents_output = wg_ok(&wg_dir, &["agent", "list", "--json"]);
         let agents_json: serde_json::Value =
             serde_json::from_str(&agents_output).expect("Failed to parse agent list JSON");
@@ -1448,7 +1448,7 @@ IMPORTANT: You MUST run ALL four steps. Do NOT skip any."#;
         );
 
         eprintln!(
-            "LLM agent creation test passed: role, motivation, and agent created (model: {})",
+            "LLM agent creation test passed: role, objective, and agent created (model: {})",
             model
         );
     }

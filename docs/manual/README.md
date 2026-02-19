@@ -1,15 +1,15 @@
 # Workgraph Manual
 
-A conceptual manual for humans who want to understand and use workgraph and its agency system. This is not an API reference or CLI cheat-sheet — it is a book of tight, precise prose that builds understanding from first principles.
+A conceptual manual for humans who want to understand and use workgraph and its identity system. This is not an API reference or CLI cheat-sheet — it is a book of tight, precise prose that builds understanding from first principles.
 
 ## Contents
 
 1. **Glossary** — precise definitions for every term used in the manual
-2. **System Overview** — what workgraph is, what the agency adds, and how they relate
+2. **System Overview** — what workgraph is, what the identity adds, and how they relate
 3. **The Task Graph** — tasks, statuses, dependencies, loop edges, readiness, and emergent patterns
-4. **The Agency Model** — roles, motivations, agents, content-hash IDs, skills, and trust
+4. **The Identity Model** — roles, objectives, agents, content-hash IDs, skills, and trust
 5. **Coordination & Execution** — the service daemon, coordinator tick, dispatch cycle, and parallelism
-6. **Evolution & Improvement** — evaluation, evolution strategies, lineage, and the autopoietic loop
+6. **Evolution & Improvement** — reward, evolution strategies, lineage, and the autopoietic loop
 
 ## Compiling
 
@@ -35,7 +35,7 @@ The unified manual (`workgraph-manual.typ`) is composed from five section files 
 |------|---------|
 | `01-overview.typ` | System Overview |
 | `02-task-graph.typ` | The Task Graph |
-| `03-agency.typ` | The Agency Model |
+| `03-identity.typ` | The Identity Model |
 | `04-coordination.typ` | Coordination & Execution |
 | `05-evolution.typ` | Evolution & Improvement |
 

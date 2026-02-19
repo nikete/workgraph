@@ -312,7 +312,7 @@ enum Commands {
         #[arg(long, short)]
         output: Option<String>,
 
-        /// Show internal tasks (assign-*, evaluate-*) normally hidden
+        /// Show internal tasks (assign-*, reward-*) normally hidden
         #[arg(long)]
         show_internal: bool,
     },
@@ -476,9 +476,9 @@ enum Commands {
         #[arg(long)]
         failed_only: bool,
 
-        /// Only reset tasks with evaluation score below this threshold
+        /// Only reset tasks with reward value below this threshold
         #[arg(long)]
-        below_score: Option<f64>,
+        below_reward: Option<f64>,
 
         /// Reset specific tasks (comma-separated) plus their transitive dependents
         #[arg(long, value_delimiter = ',')]
@@ -540,22 +540,22 @@ enum Commands {
         command: SkillCommands,
     },
 
-    /// Manage the agency (roles + motivations)
-    Agency {
+    /// Manage the identity (roles + objectives)
+    Identity {
         #[command(subcommand)]
-        command: AgencyCommands,
+        command: IdentityCommands,
     },
 
-    /// Manage agency roles (what an agent does)
+    /// Manage identity roles (what an agent does)
     Role {
         #[command(subcommand)]
         command: RoleCommands,
     },
 
-    /// Manage agency motivations (why an agent acts)
-    Motivation {
+    /// Manage identity objectives (why an agent acts)
+    Objective {
         #[command(subcommand)]
-        command: MotivationCommands,
+        command: ObjectiveCommands,
     },
 
     /// Assign an agent to a task
@@ -654,7 +654,7 @@ enum Commands {
         clear: bool,
     },
 
-    /// Manage agents (role+motivation pairings) and run agent loops
+    /// Manage agents (role+objective pairings) and run agent loops
     Agent {
         #[command(subcommand)]
         command: AgentCommands,
@@ -678,27 +678,27 @@ enum Commands {
         model: Option<String>,
     },
 
-    /// Trigger evaluation of a completed task
-    Evaluate {
-        /// Task ID to evaluate
+    /// Trigger reward of a completed task
+    Reward {
+        /// Task ID to reward
         task: String,
 
         /// Model to use for the evaluator (overrides config and task defaults)
         #[arg(long)]
         evaluator_model: Option<String>,
 
-        /// Show what would be evaluated without spawning the evaluator agent
+        /// Show what would be rewardd without spawning the evaluator agent
         #[arg(long)]
         dry_run: bool,
     },
 
-    /// Trigger an evolution cycle on agency roles and motivations
+    /// Trigger an evolution cycle on identity roles and objectives
     Evolve {
         /// Show proposed changes without applying them
         #[arg(long)]
         dry_run: bool,
 
-        /// Evolution strategy: mutation, crossover, gap-analysis, retirement, motivation-tuning, all (default: all)
+        /// Evolution strategy: mutation, crossover, gap-analysis, retirement, objective-tuning, all (default: all)
         #[arg(long)]
         strategy: Option<String>,
 
@@ -773,9 +773,9 @@ enum Commands {
         #[arg(long)]
         room: Option<String>,
 
-        /// Enable/disable automatic evaluation on task completion
+        /// Enable/disable automatic reward on task completion
         #[arg(long)]
-        auto_evaluate: Option<bool>,
+        auto_reward: Option<bool>,
 
         /// Enable/disable automatic identity assignment when spawning agents
         #[arg(long)]
@@ -1002,17 +1002,17 @@ enum SkillCommands {
 }
 
 #[derive(Subcommand)]
-enum AgencyCommands {
-    /// Seed agency with starter roles and motivations
+enum IdentityCommands {
+    /// Seed identity with starter roles and objectives
     Init,
 
-    /// Show agency performance analytics
+    /// Show identity performance analytics
     Stats {
-        /// Minimum evaluations to consider a pair "explored" (default: 3)
+        /// Minimum rewards to consider a pair "explored" (default: 3)
         #[arg(long, default_value = "3")]
         min_evals: u32,
 
-        /// Group stats by model (shows per-model score breakdown)
+        /// Group stats by model (shows per-model value breakdown)
         #[arg(long)]
         by_model: bool,
     },
@@ -1067,10 +1067,10 @@ enum RoleCommands {
 }
 
 #[derive(Subcommand)]
-enum MotivationCommands {
-    /// Create a new motivation
+enum ObjectiveCommands {
+    /// Create a new objective
     Add {
-        /// Motivation name
+        /// Objective name
         name: String,
 
         /// Acceptable tradeoffs (can be repeated)
@@ -1081,42 +1081,42 @@ enum MotivationCommands {
         #[arg(long)]
         reject: Vec<String>,
 
-        /// Motivation description
+        /// Objective description
         #[arg(long, short = 'd')]
         description: Option<String>,
     },
 
-    /// List all motivations
+    /// List all objectives
     List,
 
-    /// Show full motivation details
+    /// Show full objective details
     Show {
-        /// Motivation ID
+        /// Objective ID
         id: String,
     },
 
-    /// Open motivation YAML in EDITOR for manual editing
+    /// Open objective YAML in EDITOR for manual editing
     Edit {
-        /// Motivation ID
+        /// Objective ID
         id: String,
     },
 
-    /// Remove a motivation
+    /// Remove a objective
     Rm {
-        /// Motivation ID
+        /// Objective ID
         id: String,
     },
 
-    /// Show evolutionary lineage/ancestry tree for a motivation
+    /// Show evolutionary lineage/ancestry tree for a objective
     Lineage {
-        /// Motivation ID
+        /// Objective ID
         id: String,
     },
 }
 
 #[derive(Subcommand)]
 enum AgentCommands {
-    /// Create a new agent (role + motivation pairing)
+    /// Create a new agent (role + objective pairing)
     Create {
         /// Agent name
         name: String,
@@ -1125,9 +1125,9 @@ enum AgentCommands {
         #[arg(long)]
         role: Option<String>,
 
-        /// Motivation ID (or prefix) — optional for human agents
+        /// Objective ID (or prefix) — optional for human agents
         #[arg(long)]
-        motivation: Option<String>,
+        objective: Option<String>,
 
         /// Skills/capabilities (comma-separated or repeated)
         #[arg(long, value_delimiter = ',')]
@@ -1157,7 +1157,7 @@ enum AgentCommands {
     /// List all agents
     List,
 
-    /// Show full agent details including resolved role/motivation
+    /// Show full agent details including resolved role/objective
     Show {
         /// Agent ID (or prefix)
         id: String,
@@ -1169,13 +1169,13 @@ enum AgentCommands {
         id: String,
     },
 
-    /// Show ancestry (lineage of constituent role and motivation)
+    /// Show ancestry (lineage of constituent role and objective)
     Lineage {
         /// Agent ID (or prefix)
         id: String,
     },
 
-    /// Show evaluation history for an agent
+    /// Show reward history for an agent
     Performance {
         /// Agent ID (or prefix)
         id: String,
@@ -1580,9 +1580,9 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Log { .. } => "log",
         Commands::Resource { .. } => "resource",
         Commands::Skill { .. } => "skill",
-        Commands::Agency { .. } => "agency",
+        Commands::Identity { .. } => "identity",
         Commands::Role { .. } => "role",
-        Commands::Motivation { .. } => "motivation",
+        Commands::Objective { .. } => "objective",
         Commands::Assign { .. } => "assign",
         Commands::Match { .. } => "match",
         Commands::Heartbeat { .. } => "heartbeat",
@@ -1593,7 +1593,7 @@ fn command_name(cmd: &Commands) -> &'static str {
         Commands::Exec { .. } => "exec",
         Commands::Agent { .. } => "agent",
         Commands::Spawn { .. } => "spawn",
-        Commands::Evaluate { .. } => "evaluate",
+        Commands::Reward { .. } => "reward",
         Commands::Evolve { .. } => "evolve",
         Commands::Config { .. } => "config",
         Commands::DeadAgents { .. } => "dead-agents",
@@ -1640,9 +1640,9 @@ fn supports_json(cmd: &Commands) -> bool {
             | Commands::Log { .. }
             | Commands::Resource { .. }
             | Commands::Skill { .. }
-            | Commands::Agency { .. }
+            | Commands::Identity { .. }
             | Commands::Role { .. }
-            | Commands::Motivation { .. }
+            | Commands::Objective { .. }
             | Commands::Match { .. }
             | Commands::Heartbeat { .. }
             | Commands::Artifact { .. }
@@ -1650,7 +1650,7 @@ fn supports_json(cmd: &Commands) -> bool {
             | Commands::Next { .. }
             | Commands::Trajectory { .. }
             | Commands::Agent { .. }
-            | Commands::Evaluate { .. }
+            | Commands::Reward { .. }
             | Commands::Evolve { .. }
             | Commands::Config { .. }
             | Commands::DeadAgents { .. }
@@ -1924,7 +1924,7 @@ fn main() -> Result<()> {
         Commands::Replay {
             model,
             failed_only,
-            below_score,
+            below_reward,
             tasks,
             keep_done,
             plan_only,
@@ -1933,7 +1933,7 @@ fn main() -> Result<()> {
             let opts = commands::replay::ReplayOptions {
                 model,
                 failed_only,
-                below_score,
+                below_reward,
                 tasks,
                 keep_done,
                 plan_only,
@@ -2003,12 +2003,12 @@ fn main() -> Result<()> {
             }
             SkillCommands::Install => commands::skills::run_install(),
         },
-        Commands::Agency { command } => match command {
-            AgencyCommands::Init => commands::agency_init::run(&workgraph_dir),
-            AgencyCommands::Stats {
+        Commands::Identity { command } => match command {
+            IdentityCommands::Init => commands::identity_init::run(&workgraph_dir),
+            IdentityCommands::Stats {
                 min_evals,
                 by_model,
-            } => commands::agency_stats::run(&workgraph_dir, cli.json, min_evals, by_model),
+            } => commands::identity_stats::run(&workgraph_dir, cli.json, min_evals, by_model),
         },
         Commands::Role { command } => match command {
             RoleCommands::Add {
@@ -2031,27 +2031,27 @@ fn main() -> Result<()> {
                 commands::role::run_lineage(&workgraph_dir, &id, cli.json)
             }
         },
-        Commands::Motivation { command } => match command {
-            MotivationCommands::Add {
+        Commands::Objective { command } => match command {
+            ObjectiveCommands::Add {
                 name,
                 accept,
                 reject,
                 description,
-            } => commands::motivation::run_add(
+            } => commands::objective::run_add(
                 &workgraph_dir,
                 &name,
                 &accept,
                 &reject,
                 description.as_deref(),
             ),
-            MotivationCommands::List => commands::motivation::run_list(&workgraph_dir, cli.json),
-            MotivationCommands::Show { id } => {
-                commands::motivation::run_show(&workgraph_dir, &id, cli.json)
+            ObjectiveCommands::List => commands::objective::run_list(&workgraph_dir, cli.json),
+            ObjectiveCommands::Show { id } => {
+                commands::objective::run_show(&workgraph_dir, &id, cli.json)
             }
-            MotivationCommands::Edit { id } => commands::motivation::run_edit(&workgraph_dir, &id),
-            MotivationCommands::Rm { id } => commands::motivation::run_rm(&workgraph_dir, &id),
-            MotivationCommands::Lineage { id } => {
-                commands::motivation::run_lineage(&workgraph_dir, &id, cli.json)
+            ObjectiveCommands::Edit { id } => commands::objective::run_edit(&workgraph_dir, &id),
+            ObjectiveCommands::Rm { id } => commands::objective::run_rm(&workgraph_dir, &id),
+            ObjectiveCommands::Lineage { id } => {
+                commands::objective::run_lineage(&workgraph_dir, &id, cli.json)
             }
         },
         Commands::Assign {
@@ -2117,7 +2117,7 @@ fn main() -> Result<()> {
             AgentCommands::Create {
                 name,
                 role,
-                motivation,
+                objective,
                 capabilities,
                 rate,
                 capacity,
@@ -2128,7 +2128,7 @@ fn main() -> Result<()> {
                 &workgraph_dir,
                 &name,
                 role.as_deref(),
-                motivation.as_deref(),
+                objective.as_deref(),
                 &capabilities,
                 rate,
                 capacity,
@@ -2176,11 +2176,11 @@ fn main() -> Result<()> {
             model.as_deref(),
             cli.json,
         ),
-        Commands::Evaluate {
+        Commands::Reward {
             task,
             evaluator_model,
             dry_run,
-        } => commands::evaluate::run(
+        } => commands::reward::run(
             &workgraph_dir,
             &task,
             evaluator_model.as_deref(),
@@ -2216,7 +2216,7 @@ fn main() -> Result<()> {
             password,
             access_token,
             room,
-            auto_evaluate,
+            auto_reward,
             auto_assign,
             assigner_model,
             evaluator_model,
@@ -2265,7 +2265,7 @@ fn main() -> Result<()> {
                     && coordinator_interval.is_none()
                     && poll_interval.is_none()
                     && coordinator_executor.is_none()
-                    && auto_evaluate.is_none()
+                    && auto_reward.is_none()
                     && auto_assign.is_none()
                     && assigner_model.is_none()
                     && evaluator_model.is_none()
@@ -2290,7 +2290,7 @@ fn main() -> Result<()> {
                     coordinator_interval,
                     poll_interval,
                     coordinator_executor.as_deref(),
-                    auto_evaluate,
+                    auto_reward,
                     auto_assign,
                     assigner_model.as_deref(),
                     evaluator_model.as_deref(),

@@ -7,7 +7,7 @@ use workgraph::parser::{load_graph, save_graph};
 use super::graph_path;
 
 /// Auto-generated task prefixes that should be gc'd alongside their parent task.
-const INTERNAL_PREFIXES: &[&str] = &["assign-", "evaluate-"];
+const INTERNAL_PREFIXES: &[&str] = &["assign-", "reward-"];
 
 pub fn run(dir: &Path, dry_run: bool, include_done: bool) -> Result<()> {
     let path = graph_path(dir);
@@ -49,7 +49,7 @@ pub fn run(dir: &Path, dry_run: bool, include_done: bool) -> Result<()> {
         to_gc.insert(task.id.clone());
     }
 
-    // Also collect internal tasks (assign-*, evaluate-*) whose parent is being gc'd
+    // Also collect internal tasks (assign-*, reward-*) whose parent is being gc'd
     for task in &all_tasks {
         for prefix in INTERNAL_PREFIXES {
             if let Some(parent_id) = task.id.strip_prefix(prefix)
@@ -279,7 +279,7 @@ mod tests {
             vec![
                 make_task("my-task", "Abandoned task", Status::Abandoned),
                 make_task("assign-my-task", "Assign task", Status::Done),
-                make_task("evaluate-my-task", "Evaluate task", Status::Done),
+                make_task("reward-my-task", "Reward task", Status::Done),
                 make_task("task-b", "Open task", Status::Open),
             ],
         );
@@ -293,8 +293,8 @@ mod tests {
             "assign- internal task should be removed"
         );
         assert!(
-            !remaining.contains("evaluate-my-task"),
-            "evaluate- internal task should be removed"
+            !remaining.contains("reward-my-task"),
+            "reward- internal task should be removed"
         );
         assert!(remaining.contains("task-b"), "open task should remain");
     }
@@ -358,7 +358,7 @@ mod tests {
             wg_dir,
             vec![
                 make_task("assign-old-task", "Stale assign", Status::Done),
-                make_task("evaluate-old-task", "Stale evaluate", Status::Abandoned),
+                make_task("reward-old-task", "Stale reward", Status::Abandoned),
                 make_task("task-b", "Open task", Status::Open),
             ],
         );
@@ -371,8 +371,8 @@ mod tests {
             "orphaned assign- task should be removed"
         );
         assert!(
-            !remaining.contains("evaluate-old-task"),
-            "orphaned evaluate- task should be removed"
+            !remaining.contains("reward-old-task"),
+            "orphaned reward- task should be removed"
         );
         assert!(remaining.contains("task-b"));
     }

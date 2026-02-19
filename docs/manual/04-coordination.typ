@@ -24,11 +24,11 @@ Each tick has six phases:
 
 + *Clean up dead agents and count slots.* The coordinator walks the agent registry and checks each alive agent's PID. If the process is gone, the agent is dead. Dead agents have their tasks unclaimed—the task status reverts to open, ready for re-dispatch. The coordinator then counts truly alive agents (not just registry entries, but processes with running PIDs) and compares against `max_agents`. If all slots are full, the tick ends early.
 
-+ *Build auto-assign meta-tasks.* If `auto_assign` is enabled in the agency configuration, the coordinator scans for ready tasks that have no agent identity bound to them. For each, it creates an `assign-{task-id}` meta-task that blocks the original. This meta-task, when dispatched, will spawn an assigner agent that inspects the agency's roster and picks the best fit. The meta-task is tagged `"assignment"` to prevent recursive auto-assignment—the coordinator never creates an assignment task for an assignment task.
++ *Build auto-assign meta-tasks.* If `auto_assign` is enabled in the identity configuration, the coordinator scans for ready tasks that have no agent identity bound to them. For each, it creates an `assign-{task-id}` meta-task that blocks the original. This meta-task, when dispatched, will spawn an assigner agent that inspects the identity's roster and picks the best fit. The meta-task is tagged `"assignment"` to prevent recursive auto-assignment—the coordinator never creates an assignment task for an assignment task.
 
-+ *Build auto-evaluate meta-tasks.* If `auto_evaluate` is enabled, the coordinator creates `evaluate-{task-id}` meta-tasks blocked by each work task. When the work task reaches a terminal status, the evaluation task becomes ready. Evaluation tasks use the shell executor to run `wg evaluate`, which spawns a separate evaluator to score the work. Tasks assigned to human agents are skipped—the system does not presume to evaluate human judgment. Meta-tasks tagged `"evaluation"`, `"assignment"`, or `"evolution"` are excluded to prevent infinite regress.
++ *Build auto-reward meta-tasks.* If `auto_reward` is enabled, the coordinator creates `reward-{task-id}` meta-tasks blocked by each work task. When the work task reaches a terminal status, the reward task becomes ready. Reward tasks use the shell executor to run `wg reward`, which spawns a separate evaluator to score the work. Tasks assigned to human agents are skipped—the system does not presume to reward human judgment. Meta-tasks tagged `"reward"`, `"assignment"`, or `"evolution"` are excluded to prevent infinite regress.
 
-+ *Save graph and find ready tasks.* If the auto-assign or auto-evaluate phases modified the graph (adding meta-tasks, adjusting blockers), the coordinator saves it before proceeding. Then it computes the set of ready tasks. If no tasks are ready, the tick ends. If all tasks in the graph are terminal, the coordinator logs that the project is complete.
++ *Save graph and find ready tasks.* If the auto-assign or auto-reward phases modified the graph (adding meta-tasks, adjusting blockers), the coordinator saves it before proceeding. Then it computes the set of ready tasks. If no tasks are ready, the tick ends. If all tasks in the graph are terminal, the coordinator logs that the project is complete.
 
 + *Spawn agents.* For each ready task, up to the number of available slots, the coordinator dispatches an agent. This is where the dispatch cycle—the core of the system—begins.
 
@@ -40,7 +40,7 @@ Each tick has six phases:
   │  1. reap_zombies()                                │
   │  2. cleanup_dead_agents → count alive slots       │
   │  3. build_auto_assign_tasks    (if enabled)       │
-  │  4. build_auto_evaluate_tasks  (if enabled)       │
+  │  4. build_auto_reward_tasks  (if enabled)       │
   │  5. save graph → find ready tasks                 │
   │  6. spawn_agents_for_ready_tasks(slots_available) │
   │                                                   │
@@ -58,11 +58,11 @@ For each ready task, the coordinator proceeds as follows:
 
 *Resolve the executor.* If the task has an `exec` field (a shell command), the executor is `shell`—no AI agent needed. Otherwise, the coordinator checks whether the task has an assigned agent identity. If it does, it looks up that agent's `executor` field (which might be `claude`, `shell`, or a custom executor). If no agent is assigned, the coordinator falls back to the service-level default executor (typically `claude`).
 
-*Resolve the model.* Model selection follows a priority chain: the task's own `model` field takes precedence, then the coordinator's configured model, then the agent identity's model preference. This lets you pin specific tasks to specific models—a cheap model for routine evaluation tasks, a capable one for complex implementation.
+*Resolve the model.* Model selection follows a priority chain: the task's own `model` field takes precedence, then the coordinator's configured model, then the agent identity's model preference. This lets you pin specific tasks to specific models—a cheap model for routine reward tasks, a capable one for complex implementation.
 
 *Build context from dependencies.* The coordinator reads each terminal dependency's artifacts (file paths recorded by the previous agent) and recent log entries. This context is injected into the prompt so the new agent knows what upstream work produced and what decisions were made. The agent does not start from a blank slate—it inherits the trail of work that came before it.
 
-*Render the prompt.* The executor's prompt template is filled with template variables: `{{task_id}}`, `{{task_title}}`, `{{task_description}}`, `{{task_context}}`, `{{task_identity}}`. The identity block—the agent's role, motivation, skills, and operational parameters—comes from resolving the assigned agent's role and motivation from agency storage. Skills are resolved at this point: file skills read from disk, URL skills fetch via HTTP, inline skills expand in place. The rendered prompt is written to a file in the agent's output directory.
+*Render the prompt.* The executor's prompt template is filled with template variables: `{{task_id}}`, `{{task_title}}`, `{{task_description}}`, `{{task_context}}`, `{{task_identity}}`. The identity block—the agent's role, objective, skills, and operational parameters—comes from resolving the assigned agent's role and objective from identity storage. Skills are resolved at this point: file skills read from disk, URL skills fetch via HTTP, inline skills expand in place. The rendered prompt is written to a file in the agent's output directory.
 
 *Generate the wrapper script.* The coordinator writes a `run.sh` that:
 - Unsets `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` environment variables so the spawned agent starts a clean session.
@@ -137,23 +137,23 @@ These patterns are not built-in primitives. They emerge from dependency edges. A
 
 == Auto-Assign <auto-assign>
 
-When the agency system is active and `auto_assign` is enabled in configuration, the coordinator automates the binding of agent identities to tasks. Without auto-assign, a human must run `wg assign <task-id> <agent-hash>` for each task. With it, the coordinator handles matching.
+When the identity system is active and `auto_assign` is enabled in configuration, the coordinator automates the binding of agent identities to tasks. Without auto-assign, a human must run `wg assign <task-id> <agent-hash>` for each task. With it, the coordinator handles matching.
 
-The mechanism is indirect. The coordinator does not contain matching logic itself. Instead, it creates a blocking `assign-{task-id}` meta-task for each unassigned ready task. This meta-task is dispatched like any other—an assigner agent (itself an agency entity with its own role and motivation) is spawned to evaluate the available agents and pick the best fit. The assigner reads the agency roster via `wg agent list`, compares capabilities to task requirements, considers performance history, and calls `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
+The mechanism is indirect. The coordinator does not contain matching logic itself. Instead, it creates a blocking `assign-{task-id}` meta-task for each unassigned ready task. This meta-task is dispatched like any other—an assigner agent (itself an identity entity with its own role and objective) is spawned to reward the available agents and pick the best fit. The assigner reads the identity roster via `wg agent list`, compares capabilities to task requirements, considers performance history, and calls `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
 
 The result is a two-phase dispatch: first the assigner runs, binding an identity to the task. The assignment task completes, unblocking the original task. On the next tick, the original task is ready again—now with an agent identity attached—and the coordinator dispatches it normally.
 
-Meta-tasks tagged `"assignment"`, `"evaluation"`, or `"evolution"` are excluded from auto-assignment. This prevents the coordinator from creating an assignment task for an assignment task, which would recurse infinitely.
+Meta-tasks tagged `"assignment"`, `"reward"`, or `"evolution"` are excluded from auto-assignment. This prevents the coordinator from creating an assignment task for an assignment task, which would recurse infinitely.
 
-== Auto-Evaluate <auto-evaluate>
+== Auto-Reward <auto-reward>
 
-When `auto_evaluate` is enabled, the coordinator creates evaluation meta-tasks for completed work. For every non-meta-task in the graph, an `evaluate-{task-id}` task is created, blocked by the original. When the original task reaches a terminal status (done or failed), the evaluation task becomes ready and is dispatched.
+When `auto_reward` is enabled, the coordinator creates reward meta-tasks for completed work. For every non-meta-task in the graph, an `reward-{task-id}` task is created, blocked by the original. When the original task reaches a terminal status (done or failed), the reward task becomes ready and is dispatched.
 
-Evaluation tasks use the shell executor to run `wg evaluate <task-id>`, which spawns a separate evaluator that reads the task definition, artifacts, and output logs, then scores the work on four dimensions: correctness (40% weight), completeness (30%), efficiency (15%), and style adherence (15%). The scores propagate to the agent, its role, and its motivation, building the performance data that drives evolution (see §5). #label("forward-ref-evolution")
+Reward tasks use the shell executor to run `wg reward <task-id>`, which spawns a separate evaluator that reads the task definition, artifacts, and output logs, then scores the work on four dimensions: correctness (40% weight), completeness (30%), efficiency (15%), and style adherence (15%). The scores propagate to the agent, its role, and its objective, building the performance data that drives evolution (see §5). #label("forward-ref-evolution")
 
-Two exclusions apply. Tasks assigned to human agents are not auto-evaluated—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"evaluation"`, `"assignment"`, or `"evolution"`) are excluded to prevent evaluation of evaluations.
+Two exclusions apply. Tasks assigned to human agents are not auto-rewardd—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"reward"`, `"assignment"`, or `"evolution"`) are excluded to prevent reward of rewards.
 
-Failed tasks also get evaluated. When a task's status is failed, the coordinator removes the blocker from the evaluation task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-motivation pairing that the evolution system can act on.
+Failed tasks also get rewardd. When a task's status is failed, the coordinator removes the blocker from the reward task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-objective pairing that the evolution system can act on.
 
 == Dead Agent Detection and Triage <dead-agents>
 
@@ -161,9 +161,9 @@ Every tick, the coordinator checks whether each agent's process is still alive. 
 
 But simple restart is wasteful when the agent made significant progress before dying. This is where _triage_ comes in.
 
-When `auto_triage` is enabled in the agency configuration, the coordinator does not immediately unclaim a dead agent's task. Instead, it reads the agent's output log and sends it to a fast, cheap LLM (defaulting to Haiku) with a structured prompt. The triage model classifies the result into one of three verdicts:
+When `auto_triage` is enabled in the identity configuration, the coordinator does not immediately unclaim a dead agent's task. Instead, it reads the agent's output log and sends it to a fast, cheap LLM (defaulting to Haiku) with a structured prompt. The triage model classifies the result into one of three verdicts:
 
-- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are evaluated.
+- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are rewardd.
 - *Continue.* Significant progress was made. The task is reopened with recovery context injected into its description: a summary of what was accomplished, with instructions to continue from where the previous agent left off rather than starting over.
 - *Restart.* Little or no meaningful progress. The task is reopened cleanly for a fresh attempt.
 
@@ -201,7 +201,7 @@ Executors are defined as TOML files in `.workgraph/executors/`. Each specifies a
 
 Custom executors enable integration with any tool. An executor for a different LLM provider, a code execution sandbox, a notification system—any process that can be launched from a shell command can serve as an executor. The prompt template supports the same `{{task_id}}`, `{{task_title}}`, `{{task_description}}`, `{{task_context}}`, and `{{task_identity}}` variables as the built-in executors.
 
-The executor also determines whether an agent is AI or human. The `claude` executor means AI. Executors like `matrix` or `email` (for sending notifications to humans) mean human. This distinction matters for auto-evaluation: human-agent tasks are skipped.
+The executor also determines whether an agent is AI or human. The `claude` executor means AI. Executors like `matrix` or `email` (for sending notifications to humans) mean human. This distinction matters for auto-reward: human-agent tasks are skipped.
 
 == Pause, Resume, and Manual Control <manual-control>
 
@@ -213,18 +213,18 @@ For debugging and testing, `wg service tick` runs a single coordinator tick with
 
 == The Full Picture <full-picture>
 
-Here is what happens, end to end, when a human operator types `wg service start --max-agents 5` on a project with tasks and an agency:
+Here is what happens, end to end, when a human operator types `wg service start --max-agents 5` on a project with tasks and an identity:
 
 The daemon forks into the background. It opens a Unix socket, reads `config.toml` for coordinator settings, and writes its PID to the state file. Its first tick runs immediately.
 
-The tick reaps zombies (there are none yet), checks the agent registry (empty), and counts zero alive agents out of a maximum of five. If `auto_assign` is enabled, it scans for ready tasks without agent identities and creates assignment meta-tasks. If `auto_evaluate` is enabled, it creates evaluation tasks for work tasks. It saves the graph if modified, then finds ready tasks.
+The tick reaps zombies (there are none yet), checks the agent registry (empty), and counts zero alive agents out of a maximum of five. If `auto_assign` is enabled, it scans for ready tasks without agent identities and creates assignment meta-tasks. If `auto_reward` is enabled, it creates reward tasks for work tasks. It saves the graph if modified, then finds ready tasks.
 
 Suppose three tasks are ready: two assignment meta-tasks and one task that was already assigned. The coordinator spawns three agents (five slots available, three tasks ready). Each spawn follows the dispatch cycle: resolve executor, resolve model, build context, render prompt, write wrapper script, claim task, fork process, register agent.
 
-The three agents run concurrently. The two assigners examine the agency roster and bind identities. They call `wg done assign-{task-id}`, which triggers `graph_changed` IPC. The daemon wakes for an immediate tick. Now the two originally-unassigned tasks are ready (their assignment blockers are done). The coordinator spawns two more agents. All five slots are full.
+The three agents run concurrently. The two assigners examine the identity roster and bind identities. They call `wg done assign-{task-id}`, which triggers `graph_changed` IPC. The daemon wakes for an immediate tick. Now the two originally-unassigned tasks are ready (their assignment blockers are done). The coordinator spawns two more agents. All five slots are full.
 
 Work proceeds. Agents call `wg log` to record progress, `wg artifact` to register output files, and `wg done` when finished. Each `wg done` triggers another tick. Completed tasks unblock their dependents. The coordinator spawns new agents as slots open. If an agent crashes, the next tick detects the dead PID, triages the output, and either marks the task done, injects recovery context and reopens it, or restarts it cleanly.
 
-The graph drains. Tasks move from open through in-progress to done. Evaluation tasks score completed work. Eventually the coordinator finds no ready tasks and all tasks terminal. It logs: "All tasks complete." The daemon continues running, waiting for new tasks. The operator adds more work with `wg add`, the graph_changed signal fires, and the cycle begins again.
+The graph drains. Tasks move from open through in-progress to done. Reward tasks score completed work. Eventually the coordinator finds no ready tasks and all tasks terminal. It logs: "All tasks complete." The daemon continues running, waiting for new tasks. The operator adds more work with `wg add`, the graph_changed signal fires, and the cycle begins again.
 
 This is coordination: a loop that converts a plan into action, one tick at a time.

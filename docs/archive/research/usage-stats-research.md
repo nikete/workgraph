@@ -1,6 +1,6 @@
 # Usage Statistics Collection Research
 
-**Task:** Evaluate approaches for collecting per-repo command usage statistics to enable reordering subcommands by utility in `wg --help` output.
+**Task:** Reward approaches for collecting per-repo command usage statistics to enable reordering subcommands by utility in `wg --help` output.
 
 ## Context
 
@@ -14,7 +14,7 @@ From `Cargo.toml`:
 - `tokio` - async runtime (though stats collection should be sync/non-blocking)
 - No SQLite dependency (matrix-lite uses `reqwest`, full matrix uses `matrix-sdk` with sqlite but that's optional)
 
-## Options Evaluated
+## Options Rewardd
 
 ### Option 1: Append-Only Log File
 

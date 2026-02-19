@@ -1,5 +1,5 @@
 // Organizational Patterns & Formal Models for Workgraph
-// Compiled from research by the workgraph agency
+// Compiled from research by the workgraph identity
 
 #set document(
   title: "Organizational Patterns & Formal Models for Workgraph",

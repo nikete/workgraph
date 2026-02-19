@@ -57,10 +57,10 @@ The following terms have precise meanings throughout this manual. They are defin
   [*loop edge*], [A conditional back-edge (`loops_to`) that fires when its source task completes, re-opening a target task upstream. Not a blocking edge—does not affect readiness. Every loop edge has a mandatory `max_iterations` cap.],
   [*guard*], [A condition on a loop edge. Three kinds: _Always_, _TaskStatus_, and _IterationLessThan_.],
   [*loop iteration*], [A counter tracking how many times a task has been re-activated by a loop edge.],
-  [*role*], [An agency entity defining _what_ an agent does. Contains a description, skills, and a desired outcome. Identified by a content-hash of its identity-defining fields.],
-  [*motivation*], [An agency entity defining _why_ an agent acts the way it does. Contains a description, acceptable trade-offs, and unacceptable trade-offs. Identified by a content-hash of its identity-defining fields.],
-  [*agent*], [The unified identity in the agency system—a named pairing of a role and a motivation. Identified by a content-hash of `(role_id, motivation_id)`.],
-  [*agency*], [The collective system of roles, motivations, and agents. Also refers to the storage directory (`.workgraph/agency/`).],
+  [*role*], [An identity entity defining _what_ an agent does. Contains a description, skills, and a desired outcome. Identified by a content-hash of its identity-defining fields.],
+  [*objective*], [An identity entity defining _why_ an agent acts the way it does. Contains a description, acceptable trade-offs, and unacceptable trade-offs. Identified by a content-hash of its identity-defining fields.],
+  [*agent*], [The unified identity in the identity system—a named pairing of a role and a objective. Identified by a content-hash of `(role_id, objective_id)`.],
+  [*identity*], [The collective system of roles, objectives, and agents. Also refers to the storage directory (`.workgraph/identity/`).],
   [*content-hash ID*], [A SHA-256 hash of an entity's identity-defining fields. Deterministic, deduplicating, and immutable. Displayed as 8-character hex prefixes.],
   [*capability*], [A flat string tag on an agent used for task-to-agent matching at dispatch time. Distinct from role skills: capabilities are for _routing_, skills are for _prompt injection_.],
   [*skill*], [A capability reference attached to a role. Four types: _Name_, _File_, _Url_, _Inline_. Resolved at dispatch time and injected into the prompt.],
@@ -71,17 +71,17 @@ The following terms have precise meanings throughout this manual. They are defin
   [*tick*], [One iteration of the coordinator loop. Triggered by IPC or a safety-net poll timer.],
   [*dispatch*], [The full cycle of selecting a ready task and spawning an agent: claim + spawn + register.],
   [*claim*], [Marking a task as _in-progress_ and recording who is working on it. Distinct from _assignment_—claiming sets execution state.],
-  [*assignment*], [Binding an agency agent identity to a task. Sets identity, not execution state.],
+  [*assignment*], [Binding an identity agent identity to a task. Sets identity, not execution state.],
   [*auto-assign*], [A coordinator feature that creates `assign-{task-id}` meta-tasks for unassigned ready work.],
-  [*auto-evaluate*], [A coordinator feature that creates `evaluate-{task-id}` meta-tasks for completed work.],
-  [*evaluation*], [A scored assessment of an agent's work. Four dimensions: correctness (40%), completeness (30%), efficiency (15%), style adherence (15%). Scores propagate to the agent, its role, and its motivation.],
-  [*performance record*], [A running tally on each agent, role, and motivation: task count, average score, and evaluation references with context IDs.],
-  [*evolution*], [The process of improving agency entities based on evaluation data. Triggered manually via `wg evolve`.],
-  [*strategy*], [An evolution approach: _mutation_, _crossover_, _gap analysis_, _retirement_, _motivation tuning_, or _all_.],
-  [*lineage*], [Evolutionary history on every role, motivation, and agent. Records parent IDs, generation number, creator identity, and timestamp.],
+  [*auto-reward*], [A coordinator feature that creates `reward-{task-id}` meta-tasks for completed work.],
+  [*reward*], [A scored assessment of an agent's work. Four dimensions: correctness (40%), completeness (30%), efficiency (15%), style adherence (15%). Scores propagate to the agent, its role, and its objective.],
+  [*performance record*], [A running tally on each agent, role, and objective: task count, average score, and reward references with context IDs.],
+  [*evolution*], [The process of improving identity entities based on reward data. Triggered manually via `wg evolve`.],
+  [*strategy*], [An evolution approach: _mutation_, _crossover_, _gap analysis_, _retirement_, _objective tuning_, or _all_.],
+  [*lineage*], [Evolutionary history on every role, objective, and agent. Records parent IDs, generation number, creator identity, and timestamp.],
   [*generation*], [Steps from a manually-created ancestor. Generation 0 = human-created. Each evolution increments by one.],
-  [*synergy matrix*], [A performance cross-reference of every (role, motivation) pair, showing average score and evaluation count.],
-  [*meta-task*], [A task created by the coordinator to manage the agency loop. Assignment, evaluation, and evolution review tasks are meta-tasks.],
+  [*synergy matrix*], [A performance cross-reference of every (role, objective) pair, showing average score and reward count.],
+  [*meta-task*], [A task created by the coordinator to manage the identity loop. Assignment, reward, and evolution review tasks are meta-tasks.],
   [*map/reduce pattern*], [An emergent workflow: fan-out (one task unblocks parallel children) and fan-in (parallel tasks block a single aggregator). Arises from dependency edges, not a built-in primitive.],
   [*triage*], [An LLM-based assessment of a dead agent's output, classifying the result as _done_, _continue_, or _restart_.],
   [*wrapper script*], [The `run.sh` generated for each spawned agent. Runs the executor, captures output, and handles post-exit fallback logic.],
@@ -97,9 +97,9 @@ The following terms have precise meanings throughout this manual. They are defin
 
 Workgraph is a task coordination system for humans and AI agents. It models work as a directed graph: tasks are nodes, dependency edges connect them, and a scheduler moves through the structure by finding what is ready and dispatching agents to do it. Everything---the graph, the agent identities, the configuration---lives in plain files under version control. There is no database. There is no mandatory server. The simplest possible deployment is a directory and a command-line tool.
 
-But simplicity of storage belies richness of structure. The graph is not a flat list. Dependencies create ordering, parallelism emerges from independence, and loop edges introduce intentional cycles where work revisits earlier stages. Layered on top of this graph is an _agency_---a system of composable identities that gives each agent a declared purpose and a set of constraints. Together, the graph and the agency form a coordination system where the work is precisely defined, the workers are explicitly characterized, and improvement is built into the process.
+But simplicity of storage belies richness of structure. The graph is not a flat list. Dependencies create ordering, parallelism emerges from independence, and loop edges introduce intentional cycles where work revisits earlier stages. Layered on top of this graph is an _identity_---a system of composable identities that gives each agent a declared purpose and a set of constraints. Together, the graph and the identity form a coordination system where the work is precisely defined, the workers are explicitly characterized, and improvement is built into the process.
 
-This section establishes the big picture. The details follow in later sections: the task graph in @sec-task-graph, the agency model in @sec-agency, coordination and execution in @sec-coordination, and evolution in @sec-evolution.
+This section establishes the big picture. The details follow in later sections: the task graph in @sec-task-graph, the identity model in @sec-identity, coordination and execution in @sec-coordination, and evolution in @sec-evolution.
 
 == The Graph Is the Work
 
@@ -113,19 +113,19 @@ The graph is also not required to be acyclic. _Loop edges_---conditional back-ed
 
 The entire graph lives in a single JSONL file---one JSON object per line, human-readable, friendly to version control, protected by file locking for concurrent writes. This is the canonical state. Every command reads from it; every mutation writes to it.
 
-== The Agency Is Who Does It
+== The Identity Is Who Does It
 
-Without the agency system, every AI agent dispatched by workgraph is a blank slate---a generic assistant that receives a task description and does its best. This works, but it leaves performance on the table. A generic agent has no declared priorities, no persistent personality, no way to improve across tasks. The agency system addresses this by giving agents _composable identities_.
+Without the identity system, every AI agent dispatched by workgraph is a blank slate---a generic assistant that receives a task description and does its best. This works, but it leaves performance on the table. A generic agent has no declared priorities, no persistent personality, no way to improve across tasks. The identity system addresses this by giving agents _composable identities_.
 
-An identity has two components. A _role_ defines _what_ the agent does: its description, its skills, its desired outcome. A _motivation_ defines _why_ the agent acts the way it does: its priorities, its acceptable trade-offs, and its hard constraints. The same role paired with different motivations produces different agents. A Programmer role with a Careful motivation---one that prioritizes reliability and rejects untested code---will behave differently than the same Programmer role with a Fast motivation that tolerates rough edges in exchange for speed. The combinatorial identity space is the key insight: a handful of roles and motivations yield a diverse population of agents.
+An identity has two components. A _role_ defines _what_ the agent does: its description, its skills, its desired outcome. A _objective_ defines _why_ the agent acts the way it does: its priorities, its acceptable trade-offs, and its hard constraints. The same role paired with different objectives produces different agents. A Programmer role with a Careful objective---one that prioritizes reliability and rejects untested code---will behave differently than the same Programmer role with a Fast objective that tolerates rough edges in exchange for speed. The combinatorial identity space is the key insight: a handful of roles and objectives yield a diverse population of agents.
 
-Each role, each motivation, and each agent is identified by a _content-hash ID_---a SHA-256 hash of its identity-defining fields, displayed as an eight-character prefix. Content-hashing gives three properties that matter: identity is deterministic (same content always produces the same ID), deduplicating (you cannot create two identical entities), and immutable (changing an identity-defining field produces a _new_ entity; the old one remains). This makes identity a mathematical fact, not an administrative convention. You can verify that two agents share the same role by comparing hashes.
+Each role, each objective, and each agent is identified by a _content-hash ID_---a SHA-256 hash of its identity-defining fields, displayed as an eight-character prefix. Content-hashing gives three properties that matter: identity is deterministic (same content always produces the same ID), deduplicating (you cannot create two identical entities), and immutable (changing an identity-defining field produces a _new_ entity; the old one remains). This makes identity a mathematical fact, not an administrative convention. You can verify that two agents share the same role by comparing hashes.
 
-When an agent is dispatched to a task, its role and motivation are resolved---skills fetched from files, URLs, or inline definitions---and injected into the prompt. The agent doesn't just receive a task description; it receives an identity. This is what separates a workgraph agent from a one-off LLM call.
+When an agent is dispatched to a task, its role and objective are resolved---skills fetched from files, URLs, or inline definitions---and injected into the prompt. The agent doesn't just receive a task description; it receives an identity. This is what separates a workgraph agent from a one-off LLM call.
 
-The agency as a whole---the collection of roles, motivations, and their pairings---functions as a _stable_ of specialized workers. Each agent in the stable has a distinct behavioral signature derived from its role-motivation combination. You design the stable to match your project's needs: a few generalists for routine work, specialists for domain-specific tasks, careful reviewers, fast prototypers. The stable evolves over time as evaluation data reveals which identities perform well and which need improvement.
+The identity as a whole---the collection of roles, objectives, and their pairings---functions as a _stable_ of specialized workers. Each agent in the stable has a distinct behavioral signature derived from its role-objective combination. You design the stable to match your project's needs: a few generalists for routine work, specialists for domain-specific tasks, careful reviewers, fast prototypers. The stable evolves over time as reward data reveals which identities perform well and which need improvement.
 
-Human agents participate in the same model. The only difference is the _executor_: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or motivations---they bring their own judgment. But both human and AI agents are tracked, evaluated, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
+Human agents participate in the same model. The only difference is the _executor_: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or objectives---they bring their own judgment. But both human and AI agents are tracked, rewardd, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
 
 == The Core Loop
 
@@ -150,48 +150,48 @@ Workgraph operates through a cycle that applies at every scale, from a single ta
 
 *Dispatch agents.* A _coordinator_---the scheduling brain inside an optional service daemon---finds _ready_ tasks: those that are open, not paused, past any time constraints, and whose every dependency has reached a terminal status. For each ready task, it resolves the executor, builds context from completed dependencies, renders the prompt with the agent's identity, and spawns a detached process. The coordinator _claims_ the task before spawning to prevent double-dispatch. Each agent instance handles exactly one task---one task, one process, one identity. When that task is done, the agent process exits. If more work is ready, the coordinator spawns a new agent for it.
 
-*Execute.* The spawned agent does its work. It may log progress, record artifacts, create subtasks, or mark the task done or failed. It operates with full autonomy within the boundaries set by its role and motivation.
+*Execute.* The spawned agent does its work. It may log progress, record artifacts, create subtasks, or mark the task done or failed. It operates with full autonomy within the boundaries set by its role and objective.
 
-*Complete and learn.* When a task reaches a terminal status, its dependents may become ready, continuing the flow. If the agency system is active, a completed task can also trigger _evaluation_---a scored assessment across four dimensions (correctness, completeness, efficiency, style adherence) whose results propagate to the agent, its role, and its motivation.
+*Complete and learn.* When a task reaches a terminal status, its dependents may become ready, continuing the flow. If the identity system is active, a completed task can also trigger _reward_---a scored assessment across four dimensions (correctness, completeness, efficiency, style adherence) whose results propagate to the agent, its role, and its objective.
 
 This is the basic heartbeat. Most projects run on this loop alone.
 
-== The Agency Loop
+== The Identity Loop
 
-The agency system extends the core loop with a second, slower cycle of improvement:
+The identity system extends the core loop with a second, slower cycle of improvement:
 
 #figure(
   align(center)[
     ```
     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-    │  Assign  │────▶│ Execute  │────▶│ Evaluate │────▶│  Evolve  │
-    │ identity │     │   task   │     │ results  │     │  agency  │
+    │  Assign  │────▶│ Execute  │────▶│ Reward │────▶│  Evolve  │
+    │ identity │     │   task   │     │ results  │     │  identity  │
     └──────────┘     └──────────┘     └──────────┘     └──────────┘
           ▲                                                   │
           └───────────────────────────────────────────────────┘
                       improved identities feed back
     ```
   ],
-  caption: [The agency improvement cycle.],
-) <fig-agency-loop>
+  caption: [The identity improvement cycle.],
+) <fig-identity-loop>
 
-*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent evaluates the available agents and picks the best fit. _Assignment_ sets identity; it is distinct from _claiming_, which sets execution state.
+*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent rewards the available agents and picks the best fit. _Assignment_ sets identity; it is distinct from _claiming_, which sets execution state.
 
 *Execute task.* The agent works with its assigned identity injected into the prompt.
 
-*Evaluate results.* After the task completes, an evaluator agent scores the work. Evaluation produces a weighted score that propagates to three levels: the agent, its role (with the motivation as context), and its motivation (with the role as context). This three-level propagation creates the data needed for cross-cutting analysis---how does a role perform with different motivations, and vice versa?
+*Reward results.* After the task completes, an evaluator agent scores the work. Reward produces a weighted score that propagates to three levels: the agent, its role (with the objective as context), and its objective (with the role as context). This three-level propagation creates the data needed for cross-cutting analysis---how does a role perform with different objectives, and vice versa?
 
-*Evolve the agency.* When enough evaluations accumulate, an evolver agent analyzes performance data and proposes structured changes: mutate a role to strengthen a weak dimension, cross two high-performing roles into a hybrid, retire a consistently poor motivation, create an entirely new role for unmet needs. Modified entities receive new content-hash IDs with _lineage_ metadata linking them to their parents, creating an auditable evolutionary history. These modified entities---mutated roles, tuned motivations, crossover hybrids---become the new generation of identities. Agents built from evolved components are themselves new agents with new content-hash IDs. Evolution is a manual trigger (`wg evolve`), not an automated process, because the human decides when there is enough data to act on and reviews every proposed change.
+*Evolve the identity.* When enough rewards accumulate, an evolver agent analyzes performance data and proposes structured changes: mutate a role to strengthen a weak dimension, cross two high-performing roles into a hybrid, retire a consistently poor objective, create an entirely new role for unmet needs. Modified entities receive new content-hash IDs with _lineage_ metadata linking them to their parents, creating an auditable evolutionary history. These modified entities---mutated roles, tuned objectives, crossover hybrids---become the new generation of identities. Agents built from evolved components are themselves new agents with new content-hash IDs. Evolution is a manual trigger (`wg evolve`), not an automated process, because the human decides when there is enough data to act on and reviews every proposed change.
 
-Each step in this cycle can be manual or automated. A project might start with manual assignment and no evaluation, graduate to auto-assign once agent identities stabilize, enable auto-evaluate to build a performance record, and eventually run evolution to refine the agency. The system meets you where you are.
+Each step in this cycle can be manual or automated. A project might start with manual assignment and no reward, graduate to auto-assign once agent identities stabilize, enable auto-reward to build a performance record, and eventually run evolution to refine the identity. The system meets you where you are.
 
 == How They Relate
 
-The task graph and the agency are complementary systems with a clean separation. The graph defines _what_ needs to happen and _in what order_. The agency defines _who_ does it and _how they approach it_. Neither depends on the other for basic operation: you can run workgraph without the agency (every agent is generic), and you can define agency entities without a graph (though they have nothing to do). The power is in the combination.
+The task graph and the identity are complementary systems with a clean separation. The graph defines _what_ needs to happen and _in what order_. The identity defines _who_ does it and _how they approach it_. Neither depends on the other for basic operation: you can run workgraph without the identity (every agent is generic), and you can define identity entities without a graph (though they have nothing to do). The power is in the combination.
 
-The coordinator sits at the intersection. It reads the graph to find ready work, reads the agency to resolve agent identities, dispatches the work, and---when evaluation is enabled---closes the feedback loop by scoring results and feeding data back into the agency. The graph is the skeleton; the agency is the musculature; the coordinator is the nervous system.
+The coordinator sits at the intersection. It reads the graph to find ready work, reads the identity to resolve agent identities, dispatches the work, and---when reward is enabled---closes the feedback loop by scoring results and feeding data back into the identity. The graph is the skeleton; the identity is the musculature; the coordinator is the nervous system.
 
-Everything is files. The graph is JSONL. Agency entities---roles, motivations, agents---are YAML. Configuration is TOML. Evaluations are YAML. There is no database, no external dependency, no required network connection. The optional service daemon automates dispatch but is not required for operation. You can run the entire system from the command line, one task at a time, or you can start the daemon and let it manage a fleet of parallel agents. The architecture scales from a solo developer tracking personal tasks to a coordinated multi-agent project with dozens of concurrent workers, all from the same set of files in a `.workgraph` directory.
+Everything is files. The graph is JSONL. Identity entities---roles, objectives, agents---are YAML. Configuration is TOML. Rewards are YAML. There is no database, no external dependency, no required network connection. The optional service daemon automates dispatch but is not required for operation. You can run the entire system from the command line, one task at a time, or you can start the daemon and let it manage a fleet of parallel agents. The architecture scales from a solo developer tracking personal tasks to a coordinated multi-agent project with dozens of concurrent workers, all from the same set of files in a `.workgraph` directory.
 
 #pagebreak()
 
@@ -203,7 +203,7 @@ Everything is files. The graph is JSONL. Agency entities---roles, motivations, a
 
 Work is structure. A project without structure is a list—and lists lie. They hide the fact that you cannot deploy before you test, cannot test before you build, cannot build before you design. A list says "here are things to do." A graph says "here is the order in which reality permits you to do them."
 
-Workgraph models work as a directed graph. Tasks are nodes. Dependencies are edges. The graph is the single source of truth for what exists, what depends on what, and what is available for execution right now. Everything else—the coordinator, the agency, the evolution system—reads from this graph and writes back to it. The graph is not a view of the project. It _is_ the project.
+Workgraph models work as a directed graph. Tasks are nodes. Dependencies are edges. The graph is the single source of truth for what exists, what depends on what, and what is available for execution right now. Everything else—the coordinator, the identity, the evolution system—reads from this graph and writes back to it. The graph is not a view of the project. It _is_ the project.
 
 == Tasks as Nodes
 
@@ -228,7 +228,7 @@ A task is the atom of work. It has an identity, a lifecycle, and a body of metad
     [`exec`], [A shell command for automated execution via the shell executor.],
     [`model`], [Preferred AI model (haiku, sonnet, opus). Overrides coordinator and agent defaults.],
     [`verify`], [Verification criteria—if set, the task requires review before it can be marked done.],
-    [`agent`], [Content-hash ID binding an agency agent identity to this task.],
+    [`agent`], [Content-hash ID binding an identity agent identity to this task.],
     [`log`], [Append-only progress entries with timestamps and optional actor attribution.],
   ),
   caption: [Task fields. Every field except `id`, `title`, and `status` is optional.],
@@ -322,7 +322,7 @@ A task is _ready_ when four conditions hold simultaneously:
 + *Past time constraints.* If the task has a `not_before` timestamp, the current time must be past it. If the task has a `ready_after` timestamp (set by loop edge delays), the current time must be past that too. Invalid or missing timestamps are treated as satisfied—they do not block.
 + *All blockers terminal.* Every task ID in the `blocked_by` list must correspond to a task in a terminal status (done, failed, or abandoned). Non-existent blockers are treated as resolved.
 
-These four conditions are evaluated by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
+These four conditions are rewardd by `ready_tasks()`, the function that the coordinator calls every tick to find work to dispatch. Ready is a precise, computed property—not a flag someone sets. You cannot manually mark a task as ready; you can only create the conditions under which the scheduler derives it.
 
 The `not_before` field enables future scheduling: "do not start this task before next Monday." The `ready_after` field serves a different purpose—it is set automatically by loop edges with delays, creating pacing between loop iterations. Both are checked against the current wall-clock time.
 
@@ -336,7 +336,7 @@ These patterns are cycles, and they are not bugs. They are the structure of iter
 
 === The `loops_to` Mechanism
 
-A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, evaluate a condition—if true and iterations remain, re-open the target task upstream."
+A loop edge is a conditional back-edge declared via the `loops_to` field on a task. It says: "when I complete, reward a condition—if true and iterations remain, re-open the target task upstream."
 
 #figure(
   table(
@@ -352,7 +352,7 @@ A loop edge is a conditional back-edge declared via the `loops_to` field on a ta
   caption: [Loop edge fields. Every loop edge requires a target and a max_iterations cap.],
 ) <loop-edge-fields>
 
-The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—evaluated when the source task transitions to done, and ignored at all other times.
+The critical property: *loop edges are not blocking edges.* They are completely separate from `blocked_by`. They do not appear in the dependency lists. The scheduler never reads them when computing readiness. They exist only as post-completion triggers—rewardd when the source task transitions to done, and ignored at all other times.
 
 This separation is the key insight of the design. The forward dependency chain (via `blocked_by`) remains acyclic and schedulable. The backward loop edge (via `loops_to`) layers iteration on top without disturbing the scheduler.
 
@@ -525,28 +525,28 @@ The graph file lives at `.workgraph/graph.jsonl` and is the canonical state of t
 
 ---
 
-The task graph is the foundation. Dependencies encode the ordering constraints of reality. Loop edges encode the iterative patterns of practice. Readiness is a derived property—the scheduler's answer to "what can happen next?" The coordinator uses this answer to dispatch work, as described in @sec-coordination. The agency system uses the graph to record evaluations at each task boundary, feeding the evolution process described in @sec-evolution.
+The task graph is the foundation. Dependencies encode the ordering constraints of reality. Loop edges encode the iterative patterns of practice. Readiness is a derived property—the scheduler's answer to "what can happen next?" The coordinator uses this answer to dispatch work, as described in @sec-coordination. The identity system uses the graph to record rewards at each task boundary, feeding the evolution process described in @sec-evolution.
 
 A well-designed task graph does not just organize work. It makes the structure of the project legible—to humans reviewing progress, to agents receiving dispatch, and to the system itself as it learns from its own history.
 
 #pagebreak()
 
 // ──────────────────────────────────────────────────
-// Section 3: The Agency Model
+// Section 3: The Identity Model
 // ──────────────────────────────────────────────────
 
-= The Agency Model <sec-agency>
+= The Identity Model <sec-identity>
 
 A generic AI assistant is a blank slate. It has no declared priorities, no persistent
-personality, no way to accumulate craft. Every session starts from zero. The agency
+personality, no way to accumulate craft. Every session starts from zero. The identity
 system exists to change this. It gives agents _composable identities_---a role that
-defines what the agent does, paired with a motivation that defines why it acts the way
-it does. The same role combined with a different motivation produces a different agent.
+defines what the agent does, paired with a objective that defines why it acts the way
+it does. The same role combined with a different objective produces a different agent.
 This is the key insight: identity is not a name tag, it is a _function_---the
 Cartesian product of competence and intent.
 
 The result is an identity space that grows combinatorially. Four roles and four
-motivations yield sixteen distinct agents, each with its own behavioral signature.
+objectives yield sixteen distinct agents, each with its own behavioral signature.
 These identities are not administrative labels. They are content-hashed, immutable,
 evaluable, and evolvable. An agent's identity is a mathematical fact, verifiable by
 anyone who knows the hash.
@@ -565,62 +565,62 @@ It carries three identity-defining fields:
   instructions (see @skills below).
 
 - *Desired outcome.* What good output looks like. This is the standard against which
-  the agent's work will be evaluated---not a vague aspiration, but a crisp definition
+  the agent's work will be rewardd---not a vague aspiration, but a crisp definition
   of success.
 
 A role also carries a _name_ (a human-readable label like "Programmer" or
-"Architect"), a _performance_ record (aggregated evaluation scores), and _lineage_
+"Architect"), a _performance_ record (aggregated reward scores), and _lineage_
 metadata (evolutionary history). These are mutable---they can change without altering
 the role's identity. The name is for humans. The identity is for the system.
 
 Consider two roles: one describes a code reviewer who checks for correctness, testing
-gaps, and style violations; the other describes an architect who evaluates structural
+gaps, and style violations; the other describes an architect who rewards structural
 decisions and dependency management. They may share some skills, but their descriptions
 and desired outcomes differ, so they produce different content-hash IDs---different
-identities, different agents, different behaviors when paired with the same motivation.
+identities, different agents, different behaviors when paired with the same objective.
 
-== Motivations <motivations>
+== Objectives <objectives>
 
-A motivation answers the complementary question: _why does this agent act the way it does?_
+A objective answers the complementary question: _why does this agent act the way it does?_
 
-Where a role defines competence, a motivation defines character. It carries three
+Where a role defines competence, a objective defines character. It carries three
 identity-defining fields:
 
-- *Description.* What this motivation prioritizes---the values and principles that
+- *Description.* What this objective prioritizes---the values and principles that
   guide the agent's approach to work.
 
-- *Acceptable trade-offs.* Compromises the agent may make. A "Fast" motivation might
-  accept less thorough documentation. A "Careful" motivation might accept slower
+- *Acceptable trade-offs.* Compromises the agent may make. A "Fast" objective might
+  accept less thorough documentation. A "Careful" objective might accept slower
   delivery. These are the negotiable costs of the agent's operating philosophy.
 
 - *Unacceptable trade-offs.* Hard constraints the agent must never violate. A "Careful"
-  motivation might refuse to ship untested code under any circumstances. A "Thorough"
-  motivation might refuse to skip edge cases. These are non-negotiable.
+  objective might refuse to ship untested code under any circumstances. A "Thorough"
+  objective might refuse to skip edge cases. These are non-negotiable.
 
-Like roles, motivations carry a mutable name, performance record, and lineage. And like
+Like roles, objectives carry a mutable name, performance record, and lineage. And like
 roles, only the identity-defining fields contribute to the content-hash.
 
 The distinction between acceptable and unacceptable trade-offs is not decorative. When
 an agent's identity is rendered into a prompt, the acceptable trade-offs appear as
 _operational parameters_---flexibility the agent may exercise---and the unacceptable
 trade-offs appear as _non-negotiable constraints_---lines it must not cross. The
-motivation shapes behavior through the prompt: same role, different motivation, different
+objective shapes behavior through the prompt: same role, different objective, different
 output.
 
 == Agents: The Pairing <agents>
 
-An agent is the unified identity in the agency system. For AI agents, it is the named
-pairing of exactly one role and exactly one motivation:
+An agent is the unified identity in the identity system. For AI agents, it is the named
+pairing of exactly one role and exactly one objective:
 
 #align(center)[
   #box(stroke: 0.5pt, inset: 12pt, radius: 4pt)[
-    *agent* #h(4pt) $=$ #h(4pt) *role* #h(4pt) $times$ #h(4pt) *motivation*
+    *agent* #h(4pt) $=$ #h(4pt) *role* #h(4pt) $times$ #h(4pt) *objective*
   ]
 ]
 
-The agent's content-hash ID is computed from `(role_id, motivation_id)`. Nothing else
+The agent's content-hash ID is computed from `(role_id, objective_id)`. Nothing else
 enters the hash. This means the agent is entirely determined by its constituents: if you
-know the role and the motivation, you know the agent.
+know the role and the objective, you know the agent.
 
 An agent also carries operational fields that do not affect its identity:
 
@@ -641,21 +641,21 @@ An agent also carries operational fields that do not affect its identity:
 / Executor: The backend that runs the agent's work (see @human-vs-ai below).
 
 The compositional nature of agents is what makes the identity space powerful. A
-"Programmer" role paired with a "Careful" motivation produces an agent that writes
+"Programmer" role paired with a "Careful" objective produces an agent that writes
 methodical, well-tested code and refuses to ship without tests. The same "Programmer"
-role paired with a "Fast" motivation produces an agent that prioritizes rapid delivery
+role paired with a "Fast" objective produces an agent that prioritizes rapid delivery
 and accepts less thorough documentation. Both are programmers. They differ in _why_ they
 program the way they do.
 
 This is not a theoretical nicety. When the coordinator dispatches a task (see @sec-coordination for the full dispatch cycle), the agent's
 full identity---role description, skills, desired outcome, acceptable trade-offs,
 non-negotiable constraints---is rendered into the prompt. The AI receives a complete
-behavioral specification before it sees the task. The motivation is not a hint; it is a
+behavioral specification before it sees the task. The objective is not a hint; it is a
 contract.
 
 == Content-Hash IDs <content-hash>
 
-Every role, motivation, and agent is identified by a SHA-256 hash of its
+Every role, objective, and agent is identified by a SHA-256 hash of its
 identity-defining fields. The hash is computed from canonical YAML serialization of
 those fields, ensuring determinism across platforms and implementations.
 
@@ -667,8 +667,8 @@ those fields, ensuring determinism across platforms and implementations.
     inset: 8pt,
     [*Entity*], [*Hashed fields*],
     [Role], [description + skills + desired outcome],
-    [Motivation], [description + acceptable trade-offs + unacceptable trade-offs],
-    [Agent], [role ID + motivation ID],
+    [Objective], [description + acceptable trade-offs + unacceptable trade-offs],
+    [Agent], [role ID + objective ID],
   ),
   caption: [Identity-defining fields for content-hash computation.],
 ) <hash-fields>
@@ -763,15 +763,15 @@ property.
 
 == Human and AI Agents <human-vs-ai>
 
-The agency system does not distinguish between human and AI agents at the identity
-level. Both are entries in the same agent registry. Both can have roles, motivations,
-capabilities, and trust levels. Both are tracked, evaluated, and appear in the synergy
+The identity system does not distinguish between human and AI agents at the identity
+level. Both are entries in the same agent registry. Both can have roles, objectives,
+capabilities, and trust levels. Both are tracked, rewardd, and appear in the synergy
 matrix. The identity model is uniform.
 
 The difference is the *executor*---the backend that delivers work to the agent.
 
 / `claude`: The default. Pipes a rendered prompt into the Claude CLI. The agent is an
-  AI. Its role and motivation are injected into the prompt, shaping behavior through
+  AI. Its role and objective are injected into the prompt, shaping behavior through
   language.
 
 / `matrix`: Sends a notification via the Matrix protocol. The agent is a human who
@@ -782,21 +782,21 @@ The difference is the *executor*---the backend that delivers work to the agent.
 / `shell`: Runs a shell command from the task's `exec` field. The agent is a human (or
   a script) that responds to a trigger.
 
-For AI agents, role and motivation are _required_---an AI without identity is a blank
-slate, which is precisely what the agency system exists to prevent. For human agents,
-role and motivation are _optional_. Humans bring their own judgment, priorities, and
+For AI agents, role and objective are _required_---an AI without identity is a blank
+slate, which is precisely what the identity system exists to prevent. For human agents,
+role and objective are _optional_. Humans bring their own judgment, priorities, and
 character. A human agent might have a role (to signal what kind of work to route to
 them) or might operate without one (receiving any work that matches their capabilities).
 
-Both types are evaluated using the same rubric. But human agent evaluations are excluded
+Both types are rewardd using the same rubric. But human agent rewards are excluded
 from the evolution signal---the system does not attempt to "improve" humans through
 the evolutionary process. Evolution operates only on AI identities, where changing the
-role or motivation has a direct, mechanistic effect on behavior through prompt injection.
+role or objective has a direct, mechanistic effect on behavior through prompt injection.
 
 == Composition in Practice
 
-To make the compositional nature of agents concrete, consider a small agency seeded with
-`wg agency init`. This creates four starter roles and four starter motivations:
+To make the compositional nature of agents concrete, consider a small identity seeded with
+`wg identity init`. This creates four starter roles and four starter objectives:
 
 #figure(
   table(
@@ -804,14 +804,14 @@ To make the compositional nature of agents concrete, consider a small agency see
     align: (left, left),
     stroke: 0.5pt,
     inset: 8pt,
-    [*Starter Roles*], [*Starter Motivations*],
+    [*Starter Roles*], [*Starter Objectives*],
     [Programmer], [Careful],
     [Reviewer], [Fast],
     [Documenter], [Thorough],
     [Architect], [Balanced],
   ),
-  caption: [The sixteen possible pairings from four roles and four motivations.],
-) <starter-agency>
+  caption: [The sixteen possible pairings from four roles and four objectives.],
+) <starter-identity>
 
 A "Programmer" paired with "Careful" produces an agent that writes methodical, tested
 code and treats untested output as a hard constraint violation. The same "Programmer"
@@ -821,7 +821,7 @@ refuses to approve incomplete coverage. A "Reviewer" with "Balanced" weighs
 thoroughness against schedule pressure and accepts pragmatic compromises.
 
 Each of these sixteen pairings has a unique content-hash ID. Each accumulates its own
-performance history. Over time, the evaluation data reveals which combinations excel at
+performance history. Over time, the reward data reveals which combinations excel at
 which kinds of work---the synergy matrix (@synergy) makes this visible.
 High-performing pairs are dispatched more often. Low-performing pairs are candidates for
 evolution or retirement.
@@ -829,15 +829,15 @@ evolution or retirement.
 The same compositionality applies to evolved entities. When the evolver mutates a role---say, refining the "Programmer" description to emphasize error handling---a _new_
 role is created with a new hash. Every agent that referenced the old role continues to
 exist unchanged. New agents can be created pairing the refined role with existing
-motivations. The old and new coexist, each with their own performance records, until
+objectives. The old and new coexist, each with their own performance records, until
 the evidence shows which is superior.
 
-== Lineage and Deduplication <agency-lineage>
+== Lineage and Deduplication <identity-lineage>
 
 Content-hash IDs enable two properties that matter at scale: lineage tracking and
 deduplication.
 
-*Lineage.* Every role, motivation, and agent records its evolutionary ancestry. A
+*Lineage.* Every role, objective, and agent records its evolutionary ancestry. A
 manually created entity has no parents and generation zero. A mutated entity records one
 parent and increments the generation. A crossover entity records two parents and
 increments from the highest. The `created_by` field distinguishes human creation
@@ -848,10 +848,10 @@ be silently altered---any change would produce a different hash, breaking the li
 link. You can walk the ancestry chain from any entity back to its manually created
 roots, confident that each link refers to the exact content that existed at creation
 time. This is not a version history in the traditional sense. It is an immutable record
-of how the agency's identity space has evolved.
+of how the identity's identity space has evolved.
 
 *Deduplication.* If the evolver proposes a role that is identical to an existing one---same description, same skills, same desired outcome---the content-hash collision is
-detected and the duplicate is rejected. This prevents the agency from accumulating
+detected and the duplicate is rejected. This prevents the identity from accumulating
 redundant entities. It also means that convergent evolution is recognized: if two
 independent mutation paths arrive at the same role definition, the system knows they are
 the same role.
@@ -888,11 +888,11 @@ Each tick has six phases:
 
 + *Clean up dead agents and count slots.* The coordinator walks the agent registry and checks each alive agent's PID. If the process is gone, the agent is dead. Dead agents have their tasks unclaimed—the task status reverts to open, ready for re-dispatch. The coordinator then counts truly alive agents (not just registry entries, but processes with running PIDs) and compares against `max_agents`. If all slots are full, the tick ends early.
 
-+ *Build auto-assign meta-tasks.* If `auto_assign` is enabled in the agency configuration, the coordinator scans for ready tasks that have no agent identity bound to them. For each, it creates an `assign-{task-id}` meta-task that blocks the original. This meta-task, when dispatched, will spawn an assigner agent that inspects the agency's roster and picks the best fit. The meta-task is tagged `"assignment"` to prevent recursive auto-assignment—the coordinator never creates an assignment task for an assignment task.
++ *Build auto-assign meta-tasks.* If `auto_assign` is enabled in the identity configuration, the coordinator scans for ready tasks that have no agent identity bound to them. For each, it creates an `assign-{task-id}` meta-task that blocks the original. This meta-task, when dispatched, will spawn an assigner agent that inspects the identity's roster and picks the best fit. The meta-task is tagged `"assignment"` to prevent recursive auto-assignment—the coordinator never creates an assignment task for an assignment task.
 
-+ *Build auto-evaluate meta-tasks.* If `auto_evaluate` is enabled, the coordinator creates `evaluate-{task-id}` meta-tasks blocked by each work task. When the work task reaches a terminal status, the evaluation task becomes ready. Evaluation tasks use the shell executor to run `wg evaluate`, which spawns a separate evaluator to score the work. Tasks assigned to human agents are skipped—the system does not presume to evaluate human judgment. Meta-tasks tagged `"evaluation"`, `"assignment"`, or `"evolution"` are excluded to prevent infinite regress.
++ *Build auto-reward meta-tasks.* If `auto_reward` is enabled, the coordinator creates `reward-{task-id}` meta-tasks blocked by each work task. When the work task reaches a terminal status, the reward task becomes ready. Reward tasks use the shell executor to run `wg reward`, which spawns a separate evaluator to score the work. Tasks assigned to human agents are skipped—the system does not presume to reward human judgment. Meta-tasks tagged `"reward"`, `"assignment"`, or `"evolution"` are excluded to prevent infinite regress.
 
-+ *Save graph and find ready tasks.* If the auto-assign or auto-evaluate phases modified the graph (adding meta-tasks, adjusting blockers), the coordinator saves it before proceeding. Then it computes the set of ready tasks. If no tasks are ready, the tick ends. If all tasks in the graph are terminal, the coordinator logs that the project is complete.
++ *Save graph and find ready tasks.* If the auto-assign or auto-reward phases modified the graph (adding meta-tasks, adjusting blockers), the coordinator saves it before proceeding. Then it computes the set of ready tasks. If no tasks are ready, the tick ends. If all tasks in the graph are terminal, the coordinator logs that the project is complete.
 
 + *Spawn agents.* For each ready task, up to the number of available slots, the coordinator dispatches an agent. This is where the dispatch cycle—the core of the system—begins.
 
@@ -904,7 +904,7 @@ Each tick has six phases:
   │  1. reap_zombies()                                │
   │  2. cleanup_dead_agents → count alive slots       │
   │  3. build_auto_assign_tasks    (if enabled)       │
-  │  4. build_auto_evaluate_tasks  (if enabled)       │
+  │  4. build_auto_reward_tasks  (if enabled)       │
   │  5. save graph → find ready tasks                 │
   │  6. spawn_agents_for_ready_tasks(slots_available) │
   │                                                   │
@@ -922,11 +922,11 @@ For each ready task, the coordinator proceeds as follows:
 
 *Resolve the executor.* If the task has an `exec` field (a shell command), the executor is `shell`—no AI agent needed. Otherwise, the coordinator checks whether the task has an assigned agent identity. If it does, it looks up that agent's `executor` field (which might be `claude`, `shell`, or a custom executor). If no agent is assigned, the coordinator falls back to the service-level default executor (typically `claude`).
 
-*Resolve the model.* Model selection follows a priority chain: the task's own `model` field takes precedence, then the coordinator's configured model, then the agent identity's model preference. This lets you pin specific tasks to specific models—a cheap model for routine evaluation tasks, a capable one for complex implementation.
+*Resolve the model.* Model selection follows a priority chain: the task's own `model` field takes precedence, then the coordinator's configured model, then the agent identity's model preference. This lets you pin specific tasks to specific models—a cheap model for routine reward tasks, a capable one for complex implementation.
 
 *Build context from dependencies.* The coordinator reads each terminal dependency's artifacts (file paths recorded by the previous agent) and recent log entries. This context is injected into the prompt so the new agent knows what upstream work produced and what decisions were made. The agent does not start from a blank slate—it inherits the trail of work that came before it.
 
-*Render the prompt.* The executor's prompt template is filled with template variables: `{{task_id}}`, `{{task_title}}`, `{{task_description}}`, `{{task_context}}`, `{{task_identity}}`. The identity block—the agent's role, motivation, skills, and operational parameters—comes from resolving the assigned agent's role and motivation from agency storage (see @sec-agency). Skills are resolved at this point: file skills read from disk, URL skills fetch via HTTP, inline skills expand in place. The rendered prompt is written to a file in the agent's output directory.
+*Render the prompt.* The executor's prompt template is filled with template variables: `{{task_id}}`, `{{task_title}}`, `{{task_description}}`, `{{task_context}}`, `{{task_identity}}`. The identity block—the agent's role, objective, skills, and operational parameters—comes from resolving the assigned agent's role and objective from identity storage (see @sec-identity). Skills are resolved at this point: file skills read from disk, URL skills fetch via HTTP, inline skills expand in place. The rendered prompt is written to a file in the agent's output directory.
 
 *Generate the wrapper script.* The coordinator writes a `run.sh` that:
 - Unsets `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` environment variables so the spawned agent starts a clean session.
@@ -1001,23 +1001,23 @@ These patterns are not built-in primitives. They emerge from dependency edges, a
 
 == Auto-Assign <auto-assign>
 
-When the agency system is active and `auto_assign` is enabled in configuration, the coordinator automates the binding of agent identities to tasks. Without auto-assign, a human must run `wg assign <task-id> <agent-hash>` for each task. With it, the coordinator handles matching.
+When the identity system is active and `auto_assign` is enabled in configuration, the coordinator automates the binding of agent identities to tasks. Without auto-assign, a human must run `wg assign <task-id> <agent-hash>` for each task. With it, the coordinator handles matching.
 
-The mechanism is indirect. The coordinator does not contain matching logic itself. Instead, it creates a blocking `assign-{task-id}` meta-task for each unassigned ready task. This meta-task is dispatched like any other—an assigner agent (itself an agency entity with its own role and motivation) is spawned to evaluate the available agents and pick the best fit. The assigner reads the agency roster via `wg agent list`, compares capabilities to task requirements, considers performance history, and calls `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
+The mechanism is indirect. The coordinator does not contain matching logic itself. Instead, it creates a blocking `assign-{task-id}` meta-task for each unassigned ready task. This meta-task is dispatched like any other—an assigner agent (itself an identity entity with its own role and objective) is spawned to reward the available agents and pick the best fit. The assigner reads the identity roster via `wg agent list`, compares capabilities to task requirements, considers performance history, and calls `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
 
 The result is a two-phase dispatch: first the assigner runs, binding an identity to the task. The assignment task completes, unblocking the original task. On the next tick, the original task is ready again—now with an agent identity attached—and the coordinator dispatches it normally.
 
-Meta-tasks tagged `"assignment"`, `"evaluation"`, or `"evolution"` are excluded from auto-assignment. This prevents the coordinator from creating an assignment task for an assignment task, which would recurse infinitely.
+Meta-tasks tagged `"assignment"`, `"reward"`, or `"evolution"` are excluded from auto-assignment. This prevents the coordinator from creating an assignment task for an assignment task, which would recurse infinitely.
 
-== Auto-Evaluate <auto-evaluate>
+== Auto-Reward <auto-reward>
 
-When `auto_evaluate` is enabled, the coordinator creates evaluation meta-tasks for completed work. For every non-meta-task in the graph, an `evaluate-{task-id}` task is created, blocked by the original. When the original task reaches a terminal status (done or failed), the evaluation task becomes ready and is dispatched.
+When `auto_reward` is enabled, the coordinator creates reward meta-tasks for completed work. For every non-meta-task in the graph, an `reward-{task-id}` task is created, blocked by the original. When the original task reaches a terminal status (done or failed), the reward task becomes ready and is dispatched.
 
-Evaluation tasks use the shell executor to run `wg evaluate <task-id>`, which spawns a separate evaluator that reads the task definition, artifacts, and output logs, then scores the work on four dimensions: correctness (40% weight), completeness (30%), efficiency (15%), and style adherence (15%). The scores propagate to the agent, its role, and its motivation, building the performance data that drives the evolution process described in @sec-evolution.
+Reward tasks use the shell executor to run `wg reward <task-id>`, which spawns a separate evaluator that reads the task definition, artifacts, and output logs, then scores the work on four dimensions: correctness (40% weight), completeness (30%), efficiency (15%), and style adherence (15%). The scores propagate to the agent, its role, and its objective, building the performance data that drives the evolution process described in @sec-evolution.
 
-Two exclusions apply. Tasks assigned to human agents are not auto-evaluated—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"evaluation"`, `"assignment"`, or `"evolution"`) are excluded to prevent evaluation of evaluations.
+Two exclusions apply. Tasks assigned to human agents are not auto-rewardd—the system does not presume to score human work. And tasks that are themselves meta-tasks (tagged `"reward"`, `"assignment"`, or `"evolution"`) are excluded to prevent reward of rewards.
 
-Failed tasks also get evaluated. When a task's status is failed, the coordinator removes the blocker from the evaluation task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-motivation pairing that the evolution system can act on.
+Failed tasks also get rewardd. When a task's status is failed, the coordinator removes the blocker from the reward task so it becomes ready immediately. This is deliberate: failure modes carry signal. An agent that fails consistently on certain kinds of tasks reveals information about its role-objective pairing that the evolution system can act on.
 
 == Dead Agent Detection and Triage <dead-agents>
 
@@ -1025,9 +1025,9 @@ Every tick, the coordinator checks whether each agent's process is still alive. 
 
 But simple restart is wasteful when the agent made significant progress before dying. This is where _triage_ comes in.
 
-When `auto_triage` is enabled in the agency configuration, the coordinator does not immediately unclaim a dead agent's task. Instead, it reads the agent's output log and sends it to a fast, cheap LLM (defaulting to Haiku) with a structured prompt. The triage model classifies the result into one of three verdicts:
+When `auto_triage` is enabled in the identity configuration, the coordinator does not immediately unclaim a dead agent's task. Instead, it reads the agent's output log and sends it to a fast, cheap LLM (defaulting to Haiku) with a structured prompt. The triage model classifies the result into one of three verdicts:
 
-- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are evaluated.
+- *Done.* The work appears complete—the agent just didn't call `wg done` before dying. The task is marked done, and loop edges are rewardd.
 - *Continue.* Significant progress was made. The task is reopened with recovery context injected into its description: a summary of what was accomplished, with instructions to continue from where the previous agent left off rather than starting over.
 - *Restart.* Little or no meaningful progress. The task is reopened cleanly for a fresh attempt.
 
@@ -1065,7 +1065,7 @@ Executors are defined as TOML files in `.workgraph/executors/`. Each specifies a
 
 Custom executors enable integration with any tool. An executor for a different LLM provider, a code execution sandbox, a notification system—any process that can be launched from a shell command can serve as an executor. The prompt template supports the same `{{task_id}}`, `{{task_title}}`, `{{task_description}}`, `{{task_context}}`, and `{{task_identity}}` variables as the built-in executors.
 
-The executor also determines whether an agent is AI or human. The `claude` executor means AI. Executors like `matrix` or `email` (for sending notifications to humans) mean human. This distinction matters for auto-evaluation: human-agent tasks are skipped.
+The executor also determines whether an agent is AI or human. The `claude` executor means AI. Executors like `matrix` or `email` (for sending notifications to humans) mean human. This distinction matters for auto-reward: human-agent tasks are skipped.
 
 == Pause, Resume, and Manual Control <manual-control>
 
@@ -1077,19 +1077,19 @@ For debugging and testing, `wg service tick` runs a single coordinator tick with
 
 == The Full Picture <full-picture>
 
-Here is what happens, end to end, when a human operator types `wg service start --max-agents 5` on a project with tasks and an agency:
+Here is what happens, end to end, when a human operator types `wg service start --max-agents 5` on a project with tasks and an identity:
 
 The daemon forks into the background. It opens a Unix socket, reads `config.toml` for coordinator settings, and writes its PID to the state file. Its first tick runs immediately.
 
-The tick reaps zombies (there are none yet), checks the agent registry (empty), and counts zero alive agents out of a maximum of five. If `auto_assign` is enabled, it scans for ready tasks without agent identities and creates assignment meta-tasks. If `auto_evaluate` is enabled, it creates evaluation tasks for work tasks. It saves the graph if modified, then finds ready tasks.
+The tick reaps zombies (there are none yet), checks the agent registry (empty), and counts zero alive agents out of a maximum of five. If `auto_assign` is enabled, it scans for ready tasks without agent identities and creates assignment meta-tasks. If `auto_reward` is enabled, it creates reward tasks for work tasks. It saves the graph if modified, then finds ready tasks.
 
 Suppose three tasks are ready: two assignment meta-tasks and one task that was already assigned. The coordinator spawns three agents (five slots available, three tasks ready). Each spawn follows the dispatch cycle: resolve executor, resolve model, build context, render prompt, write wrapper script, claim task, fork process, register agent.
 
-The three agents run concurrently. The two assigners examine the agency roster and bind identities. They call `wg done assign-{task-id}`, which triggers `graph_changed` IPC. The daemon wakes for an immediate tick. Now the two originally-unassigned tasks are ready (their assignment blockers are done). The coordinator spawns two more agents. All five slots are full.
+The three agents run concurrently. The two assigners examine the identity roster and bind identities. They call `wg done assign-{task-id}`, which triggers `graph_changed` IPC. The daemon wakes for an immediate tick. Now the two originally-unassigned tasks are ready (their assignment blockers are done). The coordinator spawns two more agents. All five slots are full.
 
 Work proceeds. Agents call `wg log` to record progress, `wg artifact` to register output files, and `wg done` when finished. Each `wg done` triggers another tick. Completed tasks unblock their dependents. The coordinator spawns new agents as slots open. If an agent crashes, the next tick detects the dead PID, triages the output, and either marks the task done, injects recovery context and reopens it, or restarts it cleanly.
 
-The graph drains. Tasks move from open through in-progress to done. Evaluation tasks score completed work. Eventually the coordinator finds no ready tasks and all tasks terminal. It logs: "All tasks complete." The daemon continues running, waiting for new tasks. The operator adds more work with `wg add`, the graph_changed signal fires, and the cycle begins again.
+The graph drains. Tasks move from open through in-progress to done. Reward tasks score completed work. Eventually the coordinator finds no ready tasks and all tasks terminal. It logs: "All tasks complete." The daemon continues running, waiting for new tasks. The operator adds more work with `wg add`, the graph_changed signal fires, and the cycle begins again.
 
 This is coordination: a loop that converts a plan into action, one tick at a time.
 
@@ -1101,17 +1101,17 @@ This is coordination: a loop that converts a plan into action, one tick at a tim
 
 = Evolution & Improvement <sec-evolution>
 
-The agency does not merely execute work. It learns from it.
+The identity does not merely execute work. It learns from it.
 
-Every completed task generates a signal—a scored evaluation measuring how well the agent performed against the task's requirements and the agent's own declared standards. These signals accumulate into performance records on agents, roles, and motivations. When enough data exists, an evolution cycle reads the aggregate picture and proposes structural changes: sharpen a role's description, tighten a motivation's constraints, combine two high-performers into something new, retire what consistently underperforms. The changed entities receive new content-hash IDs, linked to their parents by lineage metadata. Better identities produce better work. Better work produces sharper evaluations. The loop closes.
+Every completed task generates a signal—a scored reward measuring how well the agent performed against the task's requirements and the agent's own declared standards. These signals accumulate into performance records on agents, roles, and objectives. When enough data exists, an evolution cycle reads the aggregate picture and proposes structural changes: sharpen a role's description, tighten a objective's constraints, combine two high-performers into something new, retire what consistently underperforms. The changed entities receive new content-hash IDs, linked to their parents by lineage metadata. Better identities produce better work. Better work produces sharper rewards. The loop closes.
 
-This is the autopoietic core of the agency system—a structured feedback loop where work produces the data that drives its own improvement.
+This is the autopoietic core of the identity system—a structured feedback loop where work produces the data that drives its own improvement.
 
-== Evaluation <evaluation>
+== Reward <reward>
 
-Evaluation is the act of scoring a completed task. It answers a concrete question: given what this agent was asked to do and the identity it was given (see @sec-agency), how well did it perform?
+Reward is the act of scoring a completed task. It answers a concrete question: given what this agent was asked to do and the identity it was given (see @sec-identity), how well did it perform?
 
-The evaluator is itself an LLM agent. It receives the full context of the work: the task definition (title, description, deliverables), the agent's identity (role and motivation), any artifacts the agent produced, log entries from execution, and timing data (when the task started and finished). From this, it scores four dimensions:
+The evaluator is itself an LLM agent. It receives the full context of the work: the task definition (title, description, deliverables), the agent's identity (role and objective), any artifacts the agent produced, log entries from execution, and timing data (when the task started and finished). From this, it scores four dimensions:
 
 #table(
   columns: (auto, auto, auto),
@@ -1119,7 +1119,7 @@ The evaluator is itself an LLM agent. It receives the full context of the work: 
   [Correctness], [40%], [Does the output satisfy the task's requirements and the role's desired outcome?],
   [Completeness], [30%], [Were all aspects of the task addressed? Are deliverables present?],
   [Efficiency], [15%], [Was the work done without unnecessary steps, bloat, or wasted effort?],
-  [Style adherence], [15%], [Were project conventions followed? Were the motivation's constraints respected?],
+  [Style adherence], [15%], [Were project conventions followed? Were the objective's constraints respected?],
 )
 
 The weights are deliberate. Correctness dominates because wrong output is worse than incomplete output. Completeness follows because partial work still has value. Efficiency and style adherence matter but are secondary—a correct, complete solution with poor style is more useful than an elegant, incomplete one.
@@ -1128,67 +1128,67 @@ The four dimension scores are combined into a single weighted score between 0.0 
 
 === Three-Level Propagation <score-propagation>
 
-A single evaluation does not merely update one record. It propagates to three levels:
+A single reward does not merely update one record. It propagates to three levels:
 
-+ *The agent's performance record.* The score is appended to the agent's evaluation history. The agent's average score and task count update.
++ *The agent's performance record.* The score is appended to the agent's reward history. The agent's average score and task count update.
 
-+ *The role's performance record*—with the motivation's ID recorded as `context_id`. This means the role's record knows not just its average score, but _which motivation it was paired with_ for each evaluation.
++ *The role's performance record*—with the objective's ID recorded as `context_id`. This means the role's record knows not just its average score, but _which objective it was paired with_ for each reward.
 
-+ *The motivation's performance record*—with the role's ID recorded as `context_id`. Symmetrically, the motivation knows which role it was paired with.
++ *The objective's performance record*—with the role's ID recorded as `context_id`. Symmetrically, the objective knows which role it was paired with.
 
-This three-level, cross-referenced propagation creates the data structure that makes synergy analysis possible. A role's aggregate score tells you how it performs _in general_. The context IDs tell you how it performs _with specific motivations_. The distinction matters: a role might score 0.9 with one motivation and 0.5 with another. The aggregate alone would hide this.
+This three-level, cross-referenced propagation creates the data structure that makes synergy analysis possible. A role's aggregate score tells you how it performs _in general_. The context IDs tell you how it performs _with specific objectives_. The distinction matters: a role might score 0.9 with one objective and 0.5 with another. The aggregate alone would hide this.
 
-=== What Gets Evaluated
+=== What Gets Rewardd
 
-Both done and failed tasks can be evaluated. This is intentional—there is useful signal in failure. Which agents fail on which kinds of tasks reveals mismatches between identity and work that evolution can address.
+Both done and failed tasks can be rewardd. This is intentional—there is useful signal in failure. Which agents fail on which kinds of tasks reveals mismatches between identity and work that evolution can address.
 
-Human agents are tracked by the same evaluation machinery, but their evaluations are excluded from the evolution signal. The system does not attempt to "improve" humans. Human evaluation data exists for reporting and trend analysis, not for evolutionary pressure.
+Human agents are tracked by the same reward machinery, but their rewards are excluded from the evolution signal. The system does not attempt to "improve" humans. Human reward data exists for reporting and trend analysis, not for evolutionary pressure.
 
 == Performance Records and Aggregation <performance>
 
-Every role, motivation, and agent maintains a performance record: a task count, a running average score, and a list of evaluation references. Each reference carries the score, the task ID, a timestamp, and the crucial `context_id`—the ID of the paired entity.
+Every role, objective, and agent maintains a performance record: a task count, a running average score, and a list of reward references. Each reference carries the score, the task ID, a timestamp, and the crucial `context_id`—the ID of the paired entity.
 
 From these records, two analytical tools emerge.
 
 === The Synergy Matrix <synergy>
 
-The synergy matrix is a cross-reference of every (role, motivation) pair that has been evaluated together. For each pair, it shows the average score and the number of evaluations. `wg agency stats` renders this automatically.
+The synergy matrix is a cross-reference of every (role, objective) pair that has been rewardd together. For each pair, it shows the average score and the number of rewards. `wg identity stats` renders this automatically.
 
-High-synergy pairs—those scoring 0.8 or above—represent effective identity combinations worth preserving and expanding. Low-synergy pairs—0.4 or below—represent mismatches. Under-explored combinations with too few evaluations are surfaced as hypotheses: try this pairing and see what happens.
+High-synergy pairs—those scoring 0.8 or above—represent effective identity combinations worth preserving and expanding. Low-synergy pairs—0.4 or below—represent mismatches. Under-explored combinations with too few rewards are surfaced as hypotheses: try this pairing and see what happens.
 
-The matrix is not a static report. It is a map of the agency's combinatorial identity space, updated with every evaluation. It tells you where your agency is strong, where it is weak, and where it has not yet looked.
+The matrix is not a static report. It is a map of the identity's combinatorial identity space, updated with every reward. It tells you where your identity is strong, where it is weak, and where it has not yet looked.
 
 === Trend Indicators
 
-`wg agency stats` also computes directional trends. It splits each entity's recent evaluations into first and second halves and compares the averages. If the second half scores more than 0.03 higher, the trend is _improving_. More than 0.03 lower, _declining_. Within 0.03, _flat_.
+`wg identity stats` also computes directional trends. It splits each entity's recent rewards into first and second halves and compares the averages. If the second half scores more than 0.03 higher, the trend is _improving_. More than 0.03 lower, _declining_. Within 0.03, _flat_.
 
 Trends answer the question that aggregate scores cannot: is this entity getting better or worse over time? A role with a middling 0.65 average but an improving trend is a better evolution candidate than one with a static 0.70. Trends make the temporal dimension of performance visible.
 
 == Evolution <evolution>
 
-Evolution is the process of improving agency entities based on accumulated evaluation data. Where evaluation extracts signal from individual tasks, evolution acts on the aggregate—reading the full performance picture and proposing structural changes to roles and motivations.
+Evolution is the process of improving identity entities based on accumulated reward data. Where reward extracts signal from individual tasks, evolution acts on the aggregate—reading the full performance picture and proposing structural changes to roles and objectives.
 
-Evolution is triggered manually by running `wg evolve`. This is a deliberate design choice. The system accumulates evaluation data automatically (via the coordinator's auto-evaluate feature, see @auto-evaluate), but the decision to act on that data belongs to the human. Evolution is powerful enough to reshape the agency's identity space. It should not run unattended.
+Evolution is triggered manually by running `wg evolve`. This is a deliberate design choice. The system accumulates reward data automatically (via the coordinator's auto-reward feature, see @auto-reward), but the decision to act on that data belongs to the human. Evolution is powerful enough to reshape the identity's identity space. It should not run unattended.
 
 === The Evolver Agent
 
-The evolver is itself an LLM agent. It receives a comprehensive performance summary: every role and motivation with their scores, dimension breakdowns, generation numbers, lineage, and the synergy matrix. It also receives strategy-specific guidance documents from `.workgraph/agency/evolver-skills/`—prose procedures for each type of evolutionary operation.
+The evolver is itself an LLM agent. It receives a comprehensive performance summary: every role and objective with their scores, dimension breakdowns, generation numbers, lineage, and the synergy matrix. It also receives strategy-specific guidance documents from `.workgraph/identity/evolver-skills/`—prose procedures for each type of evolutionary operation.
 
-The evolver can have its own agency identity—a role and motivation that shape how it approaches improvement. A cautious evolver motivation that rejects aggressive changes will produce different proposals than an experimental one. The evolver's identity is configured in `config.toml` and injected into its prompt, just like any other agent.
+The evolver can have its own identity identity—a role and objective that shape how it approaches improvement. A cautious evolver objective that rejects aggressive changes will produce different proposals than an experimental one. The evolver's identity is configured in `config.toml` and injected into its prompt, just like any other agent.
 
 === Strategies <strategies>
 
 Six strategies define the space of evolutionary operations:
 
-*Mutation.* The most common operation. Take an existing role or motivation and modify it to address specific weaknesses. If a role scores poorly on completeness, the evolver might sharpen its desired outcome or add a skill reference that emphasizes thoroughness. The mutated entity receives a new content-hash ID—it is a new entity, linked to its parent by lineage. These mutated entities are what it means for agents to "evolve"—they are new versions of roles or motivations, reshaped by performance data, that produce new agents when paired.
+*Mutation.* The most common operation. Take an existing role or objective and modify it to address specific weaknesses. If a role scores poorly on completeness, the evolver might sharpen its desired outcome or add a skill reference that emphasizes thoroughness. The mutated entity receives a new content-hash ID—it is a new entity, linked to its parent by lineage. These mutated entities are what it means for agents to "evolve"—they are new versions of roles or objectives, reshaped by performance data, that produce new agents when paired.
 
 *Crossover.* Combine traits from two high-performing entities into a new one. If two roles each excel on different dimensions, crossover attempts to produce a child that inherits the strengths of both. The new entity records both parents in its lineage.
 
-*Gap analysis.* Create entirely new roles or motivations for capabilities the agency lacks. If tasks requiring a skill no agent possesses consistently fail or go unmatched, gap analysis proposes a new role to fill that space.
+*Gap analysis.* Create entirely new roles or objectives for capabilities the identity lacks. If tasks requiring a skill no agent possesses consistently fail or go unmatched, gap analysis proposes a new role to fill that space.
 
-*Retirement.* Remove consistently poor-performing entities. This is pruning—clearing out identities that evaluation has shown to be ineffective. Retired entities are not deleted; they are renamed to `.yaml.retired` and preserved for audit.
+*Retirement.* Remove consistently poor-performing entities. This is pruning—clearing out identities that reward has shown to be ineffective. Retired entities are not deleted; they are renamed to `.yaml.retired` and preserved for audit.
 
-*Motivation tuning.* Adjust the trade-offs on an existing motivation. Tighten a constraint that evaluations show is being violated. Relax one that is unnecessarily restrictive. This is a targeted form of mutation specific to the motivation's acceptable and unacceptable trade-off lists.
+*Objective tuning.* Adjust the trade-offs on an existing objective. Tighten a constraint that rewards show is being violated. Relax one that is unnecessarily restrictive. This is a targeted form of mutation specific to the objective's acceptable and unacceptable trade-off lists.
 
 *All.* Use every strategy as appropriate. The evolver reads the full performance picture and proposes whatever mix of operations it deems most impactful. This is the default.
 
@@ -1198,9 +1198,9 @@ Each strategy can be selected individually via `wg evolve --strategy mutation` o
 
 When `wg evolve` runs, the following sequence executes:
 
-+ All roles, motivations, and evaluations are loaded. Human-agent evaluations are filtered out—they would pollute the signal, since human performance does not reflect the effectiveness of a role-motivation prompt.
++ All roles, objectives, and rewards are loaded. Human-agent rewards are filtered out—they would pollute the signal, since human performance does not reflect the effectiveness of a role-objective prompt.
 
-+ A performance summary is built: role-by-role and motivation-by-motivation scores, dimension averages, generation numbers, lineage, and the synergy matrix.
++ A performance summary is built: role-by-role and objective-by-objective scores, dimension averages, generation numbers, lineage, and the synergy matrix.
 
 + The evolver prompt is assembled: system instructions, the evolver's own identity (if configured), meta-agent assignments (so the evolver knows which entities serve coordination roles), the chosen strategy, budget constraints, retention heuristics (a prose policy from configuration), the performance summary, and strategy-specific skill documents.
 
@@ -1208,7 +1208,7 @@ When `wg evolve` runs, the following sequence executes:
 
 + Operations are applied sequentially. Budget limits are enforced—if the evolver proposes more operations than the budget allows, only the first N are applied. After each operation, the local state is reloaded so subsequent operations can reference newly created entities.
 
-+ A run report is saved to `.workgraph/agency/evolution_runs/` with the full transcript: what was proposed, what was applied, and why.
++ A run report is saved to `.workgraph/identity/evolution_runs/` with the full transcript: what was proposed, what was applied, and why.
 
 === How Modified Entities Are Born
 
@@ -1222,7 +1222,7 @@ This is where content-hash IDs and immutability (see @content-hash) pay off. The
 
 Evolution is powerful. The guardrails are proportional.
 
-*The last remaining role or motivation cannot be retired.* The agency must always have at least one of each. This prevents an overzealous evolver from pruning the agency into nonexistence.
+*The last remaining role or objective cannot be retired.* The identity must always have at least one of each. This prevents an overzealous evolver from pruning the identity into nonexistence.
 
 *Retired entities are preserved, not deleted.* The `.yaml.retired` suffix removes them from active duty but keeps them on disk for audit, rollback, or lineage inspection.
 
@@ -1230,29 +1230,29 @@ Evolution is powerful. The guardrails are proportional.
 
 *Budget limits.* `--budget N` caps the number of operations applied per run. Start small—two or three operations—review the results, iterate. The evolver may propose ten changes, but you decide how many land.
 
-*Self-mutation deferral.* The evolver's own role and motivation are valid mutation targets—the system should be able to improve its own improvement mechanism. But self-modification without oversight is dangerous. When the evolver proposes a change to its own identity, the operation is not applied directly. Instead, a review meta-task is created in the workgraph with a `verify` field requiring human approval. The proposed operation is embedded in the task description as JSON. A human must inspect the change and apply it manually.
+*Self-mutation deferral.* The evolver's own role and objective are valid mutation targets—the system should be able to improve its own improvement mechanism. But self-modification without oversight is dangerous. When the evolver proposes a change to its own identity, the operation is not applied directly. Instead, a review meta-task is created in the workgraph with a `verify` field requiring human approval. The proposed operation is embedded in the task description as JSON. A human must inspect the change and apply it manually.
 
 == Lineage <lineage>
 
-Every role, motivation, and agent tracks its evolutionary history through a lineage record: parent IDs, generation number, creator identity, and timestamp.
+Every role, objective, and agent tracks its evolutionary history through a lineage record: parent IDs, generation number, creator identity, and timestamp.
 
-Generation zero entities are the seeds—created by humans via `wg role add`, `wg motivation add`, or `wg agency init`. They have no parents. Their `created_by` field reads `"human"`.
+Generation zero entities are the seeds—created by humans via `wg role add`, `wg objective add`, or `wg identity init`. They have no parents. Their `created_by` field reads `"human"`.
 
 Generation one entities are the first children of evolution. A mutation from a generation-zero role produces a generation-one role with a single parent. A crossover of two generation-zero roles produces a generation-one role with two parents. Each subsequent evolution increments from the highest parent's generation.
 
 The `created_by` field on evolved entities records the evolver run ID: `"evolver-run-20260115-143022"`. Combined with the run reports saved in `evolution_runs/`, this creates a complete audit trail: you can trace any entity to the exact evolution run that created it, see what performance data the evolver was working from, and read the rationale for the change.
 
-Lineage commands—`wg role lineage`, `wg motivation lineage`, `wg agent lineage`—walk the chain. Agent lineage is the most interesting: it shows not just the agent's own history but the lineage of its constituent role and motivation, revealing the full evolutionary tree that converged to produce that particular identity.
+Lineage commands—`wg role lineage`, `wg objective lineage`, `wg agent lineage`—walk the chain. Agent lineage is the most interesting: it shows not just the agent's own history but the lineage of its constituent role and objective, revealing the full evolutionary tree that converged to produce that particular identity.
 
 == The Autopoietic Loop <autopoiesis>
 
 Step back from the mechanics and see the shape of the whole.
 
-Work enters the system as tasks. The coordinator (see @sec-coordination) dispatches agents—each carrying an identity composed of a role and a motivation (see @sec-agency)—to execute those tasks. When a task completes, auto-evaluate creates an evaluation meta-task. The evaluator agent scores the work across four dimensions. Scores propagate to the agent, the role, and the motivation. Over time, performance records accumulate. Trends emerge. The synergy matrix fills in.
+Work enters the system as tasks. The coordinator (see @sec-coordination) dispatches agents—each carrying an identity composed of a role and a objective (see @sec-identity)—to execute those tasks. When a task completes, auto-reward creates an reward meta-task. The evaluator agent scores the work across four dimensions. Scores propagate to the agent, the role, and the objective. Over time, performance records accumulate. Trends emerge. The synergy matrix fills in.
 
-When the human decides enough signal has accumulated, `wg evolve` runs. The evolver reads the full performance picture and proposes changes. A role that consistently scores low on efficiency gets its description sharpened to emphasize economy. A motivation whose constraints are too tight gets its trade-offs relaxed. Two high-performing roles get crossed to produce a child that inherits both strengths. A consistently poor performer gets retired.
+When the human decides enough signal has accumulated, `wg evolve` runs. The evolver reads the full performance picture and proposes changes. A role that consistently scores low on efficiency gets its description sharpened to emphasize economy. A objective whose constraints are too tight gets its trade-offs relaxed. Two high-performing roles get crossed to produce a child that inherits both strengths. A consistently poor performer gets retired.
 
-The changed entities—new roles, new motivations—are paired into new agents. These agents are dispatched to the next round of tasks. Their work is evaluated. Their evaluations feed the next evolution cycle.
+The changed entities—new roles, new objectives—are paired into new agents. These agents are dispatched to the next round of tasks. Their work is rewardd. Their rewards feed the next evolution cycle.
 
 ```
         ┌──────────┐
@@ -1261,14 +1261,14 @@ The changed entities—new roles, new motivations—are paired into new agents. 
              │ dispatch
              ▼
         ┌──────────┐
-        │  Agents  │ ◄── roles + motivations
+        │  Agents  │ ◄── roles + objectives
         └────┬─────┘
              │ execute
              ▼
         ┌──────────┐
         │   Work   │
         └────┬─────┘
-             │ evaluate
+             │ reward
              ▼
         ┌──────────┐
         │  Scores  │ ──► performance records
@@ -1284,24 +1284,24 @@ The changed entities—new roles, new motivations—are paired into new agents. 
              └──────────► back to dispatch
 ```
 
-The meta-agents—the assigner that picks which agent gets which task, the evaluator that scores the work, the evolver that proposes changes—are themselves agency entities with roles and motivations. They too can be evaluated. They too can be evolved. The evolver can propose improvements to the evaluator's role. It can propose improvements to _its own_ role, subject to the self-mutation safety check that routes such proposals through human review.
+The meta-agents—the assigner that picks which agent gets which task, the evaluator that scores the work, the evolver that proposes changes—are themselves identity entities with roles and objectives. They too can be rewardd. They too can be evolved. The evolver can propose improvements to the evaluator's role. It can propose improvements to _its own_ role, subject to the self-mutation safety check that routes such proposals through human review.
 
-This is what makes the system autopoietic: it does not just produce work, it produces the conditions for better work. It does not just execute, it reflects on execution and restructures itself in response. The identity space of the agency—the set of roles, motivations, and their pairings—is not static. It is a living population subject to selective pressure from the evaluation signal and evolutionary operations from the evolver.
+This is what makes the system autopoietic: it does not just produce work, it produces the conditions for better work. It does not just execute, it reflects on execution and restructures itself in response. The identity space of the identity—the set of roles, objectives, and their pairings—is not static. It is a living population subject to selective pressure from the reward signal and evolutionary operations from the evolver.
 
 But the human hand is always on the wheel. Evolution is a manual trigger, not an automatic process. The human decides when to evolve, reviews what the evolver proposes (especially via `--dry-run`), sets budget limits, and must personally approve any self-mutations. The system improves itself, but only with permission.
 
 == Practical Guidance <practical>
 
-*When to evolve.* Wait until you have at least five to ten evaluations per role before running evolution. Fewer than that, and the evolver is working from noise rather than signal. `wg agency stats` shows evaluation counts and trends—use it to judge readiness.
+*When to evolve.* Wait until you have at least five to ten rewards per role before running evolution. Fewer than that, and the evolver is working from noise rather than signal. `wg identity stats` shows reward counts and trends—use it to judge readiness.
 
-*Start with dry run.* Always run `wg evolve --dry-run` first. Read the prompt. Understand what the evolver sees. This also serves as a diagnostic: if the performance summary looks thin, you need more evaluations before evolving.
+*Start with dry run.* Always run `wg evolve --dry-run` first. Read the prompt. Understand what the evolver sees. This also serves as a diagnostic: if the performance summary looks thin, you need more rewards before evolving.
 
 *Use budgets.* `--budget 2` or `--budget 3` for early runs. Review each operation's rationale. As you build confidence in the evolver's judgment, you can increase the budget or omit it.
 
-*Targeted strategies.* If you know what the problem is—roles scoring low on a specific dimension, motivations with constraints that are too strict—use a targeted strategy. `--strategy mutation` for improving existing entities. `--strategy motivation-tuning` for adjusting trade-offs. `--strategy gap-analysis` when tasks are going unmatched.
+*Targeted strategies.* If you know what the problem is—roles scoring low on a specific dimension, objectives with constraints that are too strict—use a targeted strategy. `--strategy mutation` for improving existing entities. `--strategy objective-tuning` for adjusting trade-offs. `--strategy gap-analysis` when tasks are going unmatched.
 
-*Seed, then evolve.* `wg agency init` creates four starter roles and four starter motivations. These are generic seeds—competent but not specialized. Run them through a few task cycles, accumulate evaluations, then run `wg evolve`. The starters are generation zero. Evolution produces generation one, two, and beyond—each generation shaped by the actual work your project requires.
+*Seed, then evolve.* `wg identity init` creates four starter roles and four starter objectives. These are generic seeds—competent but not specialized. Run them through a few task cycles, accumulate rewards, then run `wg evolve`. The starters are generation zero. Evolution produces generation one, two, and beyond—each generation shaped by the actual work your project requires.
 
-*Watch the synergy matrix.* The matrix reveals which role-motivation pairings work well together and which do not. High-synergy pairs should be preserved. Low-synergy pairs are candidates for mutation or retirement. Under-explored combinations are experiments waiting to happen—assign them to tasks and see what the evaluations say.
+*Watch the synergy matrix.* The matrix reveals which role-objective pairings work well together and which do not. High-synergy pairs should be preserved. Low-synergy pairs are candidates for mutation or retirement. Under-explored combinations are experiments waiting to happen—assign them to tasks and see what the rewards say.
 
 *Lineage as audit.* When an agent produces unexpectedly good or bad work, trace its lineage. Which evolution run created its role? What performance data informed that mutation? The lineage chain, combined with evolution run reports, makes every identity decision traceable.

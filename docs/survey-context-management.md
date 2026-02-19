@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-WorkGraph's context management is **conceptually sound but operationally minimal**. The system provides a clean pipeline: dependency artifacts → template variables → prompt injection, with optional identity context from the agency system. However, it lacks enforcement (context_limit is defined but never checked), size management (no truncation, summarization, or budgeting), and content awareness (artifacts are path strings, not content). The biggest risks are **unbounded skill content** from URL/file sources and **unused context_limit** on actors.
+WorkGraph's context management is **conceptually sound but operationally minimal**. The system provides a clean pipeline: dependency artifacts → template variables → prompt injection, with optional identity context from the identity system. However, it lacks enforcement (context_limit is defined but never checked), size management (no truncation, summarization, or budgeting), and content awareness (artifacts are path strings, not content). The biggest risks are **unbounded skill content** from URL/file sources and **unused context_limit** on actors.
 
 ---
 
@@ -49,11 +49,11 @@ pub struct TemplateVars {
     pub task_title: String,
     pub task_description: String,
     pub task_context: String,      // From dependency artifacts
-    pub task_identity: String,     // Rendered role+motivation+skills
+    pub task_identity: String,     // Rendered role+objective+skills
 }
 ```
 
-**Resolution**: Simple `{{placeholder}}` string replacement via `apply()` method. No conditionals, loops, escaping, or lazy evaluation. All templates resolved at spawn time.
+**Resolution**: Simple `{{placeholder}}` string replacement via `apply()` method. No conditionals, loops, escaping, or lazy reward. All templates resolved at spawn time.
 
 **Applied to**: Prompt template, command args, environment variables, working directory.
 
@@ -106,7 +106,7 @@ Full prompt structure (`src/service/executor.rs:440-502`, `src/service/claude.rs
 | Dependency task logs | No visibility into how artifacts were created |
 | Transitive dependencies | Can't access "grandparent" artifacts unless explicitly chained |
 | Task verification criteria | Agent sees description but not verification expectations |
-| Performance history | Role/motivation performance records not in prompt |
+| Performance history | Role/objective performance records not in prompt |
 | Other agents' work in progress | No visibility into parallel work |
 
 ### 2.3 Assessment
@@ -148,14 +148,14 @@ There is no:
 |---|---|---|---|
 | Static template | ~700 chars | Fixed | ✅ Yes |
 | Role description | ~500 chars | Unbounded | ❌ No |
-| Motivation | ~400 chars | Unbounded | ❌ No |
+| Objective | ~400 chars | Unbounded | ❌ No |
 | **URL-fetched skill** | **5-7KB each** | **UNLIMITED** | ❌ No |
 | **File-based skill** | **5-7KB each** | **UNLIMITED** | ❌ No |
 | Inline skill | User-defined | User-defined | ⚠️ Manual |
 | Task description | ~200-2000 chars | Unbounded | ❌ No |
 | Dependency context | ~50 chars/dep | Bounded by graph | ✅ Effectively |
 
-**Worst case**: A role with 5 evolver-generated skills (observed in `.workgraph/agency/evolver-skills/`, each 5-7KB) adds **~35KB** to every prompt using that role. With URL-fetched skills pointing to external docs, there is **no upper bound**.
+**Worst case**: A role with 5 evolver-generated skills (observed in `.workgraph/identity/evolver-skills/`, each 5-7KB) adds **~35KB** to every prompt using that role. With URL-fetched skills pointing to external docs, there is **no upper bound**.
 
 ---
 
@@ -259,9 +259,9 @@ struct Artifact {
 
 ### 6.1 Identity Prompt Structure
 
-**Source**: `src/agency.rs:245-283`
+**Source**: `src/identity.rs:245-283`
 
-When a task has an `identity` (role + motivation), the rendered prompt block is:
+When a task has an `identity` (role + objective), the rendered prompt block is:
 
 ```markdown
 ## Agent Identity
@@ -290,7 +290,7 @@ When a task has an `identity` (role + motivation), the rendered prompt block is:
 
 ### 6.2 Skill Resolution
 
-**Source**: `src/agency.rs:163-236`
+**Source**: `src/identity.rs:163-236`
 
 | Skill Type | Resolution | Size Risk |
 |---|---|---|
@@ -299,13 +299,13 @@ When a task has an `identity` (role + motivation), the rendered prompt block is:
 | `Url(string)` | HTTP GET, full body | **Unbounded** |
 | `Inline(string)` | Returns embedded content | User-controlled |
 
-**URL skills** (`src/agency.rs:201-220`): No size limit, no timeout override, no caching, no truncation. Failed resolution prints warning but doesn't abort.
+**URL skills** (`src/identity.rs:201-220`): No size limit, no timeout override, no caching, no truncation. Failed resolution prints warning but doesn't abort.
 
 ### 6.3 Context Bloat from Skills
 
-Observed in `.workgraph/agency/evolver-skills/`:
+Observed in `.workgraph/identity/evolver-skills/`:
 - `gap-analysis.md`: 6.7KB
-- `motivation-tuning.md`: 7.2KB
+- `objective-tuning.md`: 7.2KB
 - `retirement.md`: 5.6KB
 - `role-crossover.md`: 5.9KB
 - `role-mutation.md`: 5.6KB
@@ -315,7 +315,7 @@ The evolver system creates roles programmatically and can reference these skills
 
 ### 6.4 Auto-Assignment Ignores Size
 
-**Source**: `src/commands/assign.rs:109-164`, `src/agency.rs:699-843`
+**Source**: `src/commands/assign.rs:109-164`, `src/identity.rs:699-843`
 
 Role matching scores by keyword overlap (30%), skill overlap (40%), tag matching (10%), and historical performance (20%). **No consideration of resulting prompt size**.
 
@@ -337,8 +337,8 @@ Role matching scores by keyword overlap (30%), skill overlap (40%), tag matching
 
 | Bloat Source | Location | Impact |
 |---|---|---|
-| **Full skill content for all role skills** | agency.rs:245-283 | 5-35KB of potentially generic guidance |
-| **All trade-offs/constraints listed** | agency.rs:268-280 | May not be relevant to specific task |
+| **Full skill content for all role skills** | identity.rs:245-283 | 5-35KB of potentially generic guidance |
+| **All trade-offs/constraints listed** | identity.rs:268-280 | May not be relevant to specific task |
 | **Fixed workflow instructions** | executor.rs:460-497 | Same boilerplate on every task (~500 chars) |
 | **All dependency artifacts** | spawn.rs:84-108 | No filtering by task's declared inputs |
 
@@ -400,15 +400,15 @@ Role matching scores by keyword overlap (30%), skill overlap (40%), tag matching
 | Alt Claude prompt | `src/service/claude.rs` | 18-40 |
 | Context command | `src/commands/context.rs` | 30-125 |
 | Shell env vars | `src/service/shell.rs` | 16-30, 163-169 |
-| Identity rendering | `src/agency.rs` | 245-283 |
-| Skill resolution | `src/agency.rs` | 163-236 |
-| URL skill fetch | `src/agency.rs` | 201-220 |
-| Role matching | `src/agency.rs` | 699-843 |
+| Identity rendering | `src/identity.rs` | 245-283 |
+| Skill resolution | `src/identity.rs` | 163-236 |
+| URL skill fetch | `src/identity.rs` | 201-220 |
+| Role matching | `src/identity.rs` | 699-843 |
 | Trajectory planning | `src/commands/trajectory.rs` | 50-135 |
 | Trajectory scoring | `src/commands/trajectory.rs` | 218-252 |
 | Artifact management | `src/commands/artifact.rs` | 7-108 |
 | Task struct | `src/graph.rs` | 40-109 |
 | Actor context_limit | `src/graph.rs` | 170-173 |
 | Next task scoring | `src/commands/next.rs` | 68-110 |
-| Agency config | `src/config.rs` | 58-123 |
+| Identity config | `src/config.rs` | 58-123 |
 | Identity assignment | `src/commands/assign.rs` | 109-164 |

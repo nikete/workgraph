@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::Path;
-use workgraph::agency;
+use workgraph::identity;
 use workgraph::graph::Status;
 use workgraph::query::ready_tasks;
 
@@ -37,9 +37,9 @@ pub fn run(dir: &Path, json: bool) -> Result<()> {
     // Build agent workload map
     let mut agent_workloads: HashMap<String, AgentWorkload> = HashMap::new();
 
-    // Initialize with known agents from the agency directory
-    let agents_dir = dir.join("agency").join("agents");
-    if let Ok(agents) = agency::load_all_agents(&agents_dir) {
+    // Initialize with known agents from the identity directory
+    let agents_dir = dir.join("identity").join("agents");
+    if let Ok(agents) = identity::load_all_agents(&agents_dir) {
         for agent in agents {
             agent_workloads.insert(
                 agent.id.clone(),
@@ -152,7 +152,7 @@ fn print_human_readable(
         println!("  No agents defined.");
     } else {
         for agent in agents {
-            println!("  {} ({})", agent.name, agency::short_hash(&agent.id));
+            println!("  {} ({})", agent.name, identity::short_hash(&agent.id));
 
             // Assigned tasks and hours
             let hours_str = format!("{:.0}h estimated", agent.assigned_hours);
@@ -208,7 +208,7 @@ fn print_human_readable(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use workgraph::agency::{Agent, Lineage, PerformanceRecord};
+    use workgraph::identity::{Agent, Lineage, RewardHistory};
     use workgraph::graph::{Estimate, Node, Task, TrustLevel, WorkGraph};
 
     fn make_task(id: &str, title: &str) -> Task {
@@ -223,12 +223,12 @@ mod tests {
         Agent {
             id: id.to_string(),
             role_id: String::new(),
-            motivation_id: String::new(),
+            objective_id: String::new(),
             name: name.to_string(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
             capabilities: vec![],

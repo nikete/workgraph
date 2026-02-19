@@ -20,7 +20,7 @@ Five pillars:
 
 4. **Information flow control** — The workflow graph structure itself controls what data leaves your node. Interfaces between tasks define the boundary between public and private work.
 
-5. **Latent payoff** — Some workflow sub-units have potentially latent payoffs — results that take time to evaluate (e.g., portfolio performance over weeks).
+5. **Latent payoff** — Some workflow sub-units have potentially latent payoffs — results that take time to reward (e.g., portfolio performance over weeks).
 
 This document examines what workgraph already provides, what's missing, and how a veracity exchange system would interact with the existing architecture.
 
@@ -28,7 +28,7 @@ This document examines what workgraph already provides, what's missing, and how 
 
 ## 2. What the Provenance/Logging System Already Supports
 
-The provenance system (designed in `docs/design/provenance-system.md`, core implementation in `src/provenance.rs`) and the agency system (`src/agency.rs`, documented in `docs/AGENCY.md`) together provide substantial infrastructure that a veracity exchange could build on.
+The provenance system (designed in `docs/design/provenance-system.md`, core implementation in `src/provenance.rs`) and the identity system (`src/identity.rs`, documented in `docs/IDENTITY.md`) together provide substantial infrastructure that a veracity exchange could build on.
 
 ### 2.1 Operation Log — Full History
 
@@ -59,13 +59,13 @@ When `wg artifact add` is called, the provenance system records the artifact's p
 
 **Relevance:** This is exactly the _data lineage_ a veracity exchange needs. You can trace: task A produced artifact X (hash `abc123`) → task B consumed artifact X → task B produced artifact Y (hash `def456`). This chain of custody is the basis for attributing outcomes to specific work units.
 
-### 2.4 Evaluation System — Existing Scoring
+### 2.4 Reward System — Existing Scoring
 
-The agency system already implements multi-dimensional evaluation of agent work:
+The identity system already implements multi-dimensional reward of agent work:
 
 ```
-Evaluation {
-    id, task_id, agent_id, role_id, motivation_id,
+Reward {
+    id, task_id, agent_id, role_id, objective_id,
     score: f64,            // overall score 0.0–1.0
     dimensions: {          // correctness, completeness, efficiency, style_adherence
         "correctness": 0.9,
@@ -78,19 +78,19 @@ Evaluation {
 }
 ```
 
-Evaluations propagate to three levels: the agent's `PerformanceRecord`, the role's record (with motivation as context), and the motivation's record (with role as context). The evolution system (`wg evolve`) uses this data to improve the agency over time.
+Rewards propagate to three levels: the agent's `RewardHistory`, the role's record (with objective as context), and the objective's record (with role as context). The evolution system (`wg evolve`) uses this data to improve the identity over time.
 
-**Relevance:** This is a _proto-veracity score_. The evaluation dimensions (correctness, completeness, efficiency, style_adherence) are internal quality metrics. A veracity exchange extends this by connecting internal scores to _external outcome measures_ — the real-world results that the work was supposed to produce.
+**Relevance:** This is a _proto-veracity score_. The reward dimensions (correctness, completeness, efficiency, style_adherence) are internal quality metrics. A veracity exchange extends this by connecting internal scores to _external outcome measures_ — the real-world results that the work was supposed to produce.
 
 ### 2.5 Content-Hash Identity
 
-Every role, motivation, and agent is identified by a SHA-256 content hash of its identity-defining fields. The same content always produces the same ID.
+Every role, objective, and agent is identified by a SHA-256 content hash of its identity-defining fields. The same content always produces the same ID.
 
 **Relevance:** Content-hash IDs are a natural fit for a trust network. An agent's identity is verifiable and immutable — you can prove that agent `a3f7c21d` has specific capabilities and a specific performance track record, and that record can't be retroactively modified (the hash would change).
 
 ### 2.6 Lineage and Evolution
 
-The lineage system tracks evolutionary history: parent IDs, generation number, creation source. The evolution system creates new roles/motivations from existing ones based on performance data.
+The lineage system tracks evolutionary history: parent IDs, generation number, creation source. The evolution system creates new roles/objectives from existing ones based on performance data.
 
 **Relevance:** Lineage provides _provenance of capabilities_. If agent `a3f7c21d` descended from agent `b4e8d92f` via mutation, and `b4e8d92f` has a strong track record, that ancestry is verifiable evidence of quality.
 
@@ -100,13 +100,13 @@ The lineage system tracks evolutionary history: parent IDs, generation number, c
 
 ### 3.1 Outcome Scoring
 
-**Gap:** The evaluation system scores based on _internal quality_ (does the output match the spec?). It doesn't connect to _external outcomes_ (did the code actually work in production? did the portfolio strategy actually make money?).
+**Gap:** The reward system scores based on _internal quality_ (does the output match the spec?). It doesn't connect to _external outcomes_ (did the code actually work in production? did the portfolio strategy actually make money?).
 
 **What's needed:**
 
 - **Outcome definition on tasks.** A way to specify what real-world metric a task is measured against. The `deliverables` field on `Task` is close but only lists expected paths, not measurement criteria.
-- **Outcome recording.** A way to record measured outcomes, possibly long after the task completes. Current evaluations happen at task completion time; outcome scores may arrive days or weeks later (latent payoff — pillar 5).
-- **Outcome-to-evaluation bridge.** Connect recorded outcomes back to the agent/role/motivation that produced the work, updating their performance records.
+- **Outcome recording.** A way to record measured outcomes, possibly long after the task completes. Current rewards happen at task completion time; outcome scores may arrive days or weeks later (latent payoff — pillar 5).
+- **Outcome-to-reward bridge.** Connect recorded outcomes back to the agent/role/objective that produced the work, updating their performance records.
 
 **Data model sketch:**
 
@@ -151,16 +151,16 @@ The `build_task_context()` function in `spawn.rs` aggregates dependency artifact
 **What's needed:**
 
 - **Publishing.** Export a task's public-facing data (redacted prompt, outcome spec, outcome result) to an exchange format. This is an _export_ problem, not a core workgraph change.
-- **Suggestion intake.** Accept suggested improvements from external parties, attribute them, and evaluate their quality. This could work through workgraph's existing task model: a suggestion is a task with a reference back to the original.
-- **Exchange identity.** How a workgraph node identifies itself on the exchange. The content-hash agent identity system is a strong foundation, but needs a way to present a public profile without revealing internal role/motivation details.
+- **Suggestion intake.** Accept suggested improvements from external parties, attribute them, and reward their quality. This could work through workgraph's existing task model: a suggestion is a task with a reference back to the original.
+- **Exchange identity.** How a workgraph node identifies itself on the exchange. The content-hash agent identity system is a strong foundation, but needs a way to present a public profile without revealing internal role/objective details.
 
 ### 3.4 Credibility Tracking
 
-**Gap:** The agency system tracks internal agent performance but has no concept of cross-node credibility.
+**Gap:** The identity system tracks internal agent performance but has no concept of cross-node credibility.
 
 **What's needed:**
 
-- **Peer performance records.** Track how well suggestions from external peers have performed. Similar to the existing `PerformanceRecord` but scoped to peer identity rather than role/motivation.
+- **Peer performance records.** Track how well suggestions from external peers have performed. Similar to the existing `RewardHistory` but scoped to peer identity rather than role/objective.
 - **Trust decay.** Credibility should decrease without recent positive evidence. The evolution system's retirement heuristics (`retention_heuristics` in config) are analogous but only apply to internal agents.
 - **Trust transitivity.** If peer A trusts peer B, and peer B trusts peer C, should peer A have partial trust in C? This is a network property that goes beyond the current per-entity performance tracking.
 
@@ -211,7 +211,7 @@ wg done task-x
     │     │     publish outcome to exchange
     │     │
     │     └── if task has pending suggestions:
-    │           evaluate suggestion quality
+    │           reward suggestion quality
 ```
 
 **Implementation:** Add a hook system to workgraph that fires on task state transitions. The provenance system already records these transitions — hooks would be a "side-effect" triggered by the same events. Hooks could be configured in `config.toml`:
@@ -233,16 +233,16 @@ on_outcome = ["wg-exchange-hook record {{task_id}}"]
 
 ### 4.3 Option C: Native Integration
 
-The exchange is a first-class workgraph feature, like the agency system.
+The exchange is a first-class workgraph feature, like the identity system.
 
-**Implementation:** New module (`src/exchange.rs`) alongside `src/agency.rs`. Exchange identity, credibility tracking, and outcome scoring are core workgraph types. The exchange protocol is part of the workgraph daemon.
+**Implementation:** New module (`src/exchange.rs`) alongside `src/identity.rs`. Exchange identity, credibility tracking, and outcome scoring are core workgraph types. The exchange protocol is part of the workgraph daemon.
 
 **Pros:**
 - Tightest integration. Outcome scoring and credibility tracking work with zero configuration.
-- Can leverage internal workgraph state directly (graph structure, evaluation history, agent identities).
+- Can leverage internal workgraph state directly (graph structure, reward history, agent identities).
 
 **Cons:**
-- Massively increases scope. The agency system is ~2,346 lines; an exchange module would be comparable or larger.
+- Massively increases scope. The identity system is ~2,346 lines; an exchange module would be comparable or larger.
 - Couples workgraph to a specific exchange protocol.
 - Forces all workgraph users to install exchange dependencies even if they don't use the feature.
 
@@ -267,7 +267,7 @@ These changes affect fundamental data structures and must happen in the main cod
 | Outcome spec on tasks | New `outcome_spec` field on `Task` | `src/graph.rs` | Small — one new optional field, serde support |
 | Visibility field | New `visibility` enum on `Task` | `src/graph.rs` | Small — one new field with default `Private` |
 | Outcome recording command | `wg outcome record` | `src/commands/outcome.rs` | Medium — new command, outcome storage, performance update |
-| Outcome-aware evaluation | Connect outcomes to agent performance | `src/agency.rs` | Medium — extend `record_evaluation()` to accept outcome data |
+| Outcome-aware reward | Connect outcomes to agent performance | `src/identity.rs` | Medium — extend `record_reward()` to accept outcome data |
 | Provenance: outcome events | Record outcome events in operation log | Existing `provenance.rs` | Small — one new op type |
 
 **Total core changes: ~300-400 lines.** Comparable to adding one new command (e.g., `wg assign` was ~200 lines).
@@ -280,7 +280,7 @@ These can be built as separate tools/scripts that use workgraph's existing CLI a
 |-----------|------|-------------------|
 | Exchange client | Publish outcomes, receive suggestions | Network protocol is exchange-specific |
 | Redaction layer | Strip private data from exports | Read-only operation on existing data |
-| Peer credibility DB | Track peer performance | Separate trust model from internal agency |
+| Peer credibility DB | Track peer performance | Separate trust model from internal identity |
 | Suggestion-to-task converter | Create tasks from external suggestions | Uses `wg add` CLI |
 | Exchange identity manager | Manage public keys and profiles | Separate identity from internal agent hashes |
 
@@ -296,13 +296,13 @@ Some features start as extensions but may later warrant core integration:
 
 ---
 
-## 6. Relationship to Agency Evaluation/Evolution
+## 6. Relationship to Identity Reward/Evolution
 
-The agency system's evaluate → evolve loop is the closest existing analog to veracity exchange. Here's how they connect:
+The identity system's reward → evolve loop is the closest existing analog to veracity exchange. Here's how they connect:
 
-### 6.1 Evaluation as Internal Veracity
+### 6.1 Reward as Internal Veracity
 
-The current evaluation system measures whether an agent did what it was asked to do. This is _internal veracity_ — did the agent meet the spec?
+The current reward system measures whether an agent did what it was asked to do. This is _internal veracity_ — did the agent meet the spec?
 
 A veracity exchange adds _external veracity_ — did the spec itself lead to good real-world outcomes? The two form a chain:
 
@@ -310,7 +310,7 @@ A veracity exchange adds _external veracity_ — did the spec itself lead to goo
 Agent Performance          Task Outcome            Veracity Score
 (did agent follow spec?)  (did spec work?)        (combined measure)
        │                       │                        │
-  evaluation.score        outcome.value            veracity_score
+  reward.score        outcome.value            veracity_score
   (0.0–1.0)              (domain metric)           (normalized)
        │                       │                        │
        └───────────┬───────────┘                        │
@@ -318,26 +318,26 @@ Agent Performance          Task Outcome            Veracity Score
           composite veracity ────────────────────────────┘
 ```
 
-An agent might score 0.95 on internal evaluation (it perfectly implemented the spec) but the task might score 0.3 on outcome (the spec was wrong). The composite veracity distinguishes agents that execute well from agents that also produce good outcomes.
+An agent might score 0.95 on internal reward (it perfectly implemented the spec) but the task might score 0.3 on outcome (the spec was wrong). The composite veracity distinguishes agents that execute well from agents that also produce good outcomes.
 
 ### 6.2 Evolution with Outcome Data
 
-The evolution system (`wg evolve`) currently uses evaluation scores to improve roles and motivations. With outcome scoring, it could also evolve based on real-world results:
+The evolution system (`wg evolve`) currently uses reward scores to improve roles and objectives. With outcome scoring, it could also evolve based on real-world results:
 
-- **Outcome-weighted evolution.** Roles whose tasks have high outcome scores should be favored. A role that produces correct-but-useless code (high evaluation, low outcome) should be deprioritized vs. one that produces imperfect-but-effective code (moderate evaluation, high outcome).
-- **Outcome-informed gap analysis.** The `gap-analysis` evolution strategy identifies unmet needs. With outcome data, it can identify gaps between _evaluated quality_ and _real-world impact_ — a much more valuable signal.
-- **Latent payoff patience.** The evolution system currently runs on available evaluation data. With latent payoffs (pillar 5), some tasks won't have outcome scores yet. The evolver needs to handle incomplete outcome data gracefully — probably by weighting available outcome data more heavily as it arrives, rather than blocking on it.
+- **Outcome-weighted evolution.** Roles whose tasks have high outcome scores should be favored. A role that produces correct-but-useless code (high reward, low outcome) should be deprioritized vs. one that produces imperfect-but-effective code (moderate reward, high outcome).
+- **Outcome-informed gap analysis.** The `gap-analysis` evolution strategy identifies unmet needs. With outcome data, it can identify gaps between _rewardd quality_ and _real-world impact_ — a much more valuable signal.
+- **Latent payoff patience.** The evolution system currently runs on available reward data. With latent payoffs (pillar 5), some tasks won't have outcome scores yet. The evolver needs to handle incomplete outcome data gracefully — probably by weighting available outcome data more heavily as it arrives, rather than blocking on it.
 
 ### 6.3 Credibility as Extended Performance
 
-The agency system tracks performance per agent, per role, and per motivation, with cross-references (`context_id`). Credibility tracking in a veracity exchange is structurally identical but scoped to _external peers_ instead of internal agent identities:
+The identity system tracks performance per agent, per role, and per objective, with cross-references (`context_id`). Credibility tracking in a veracity exchange is structurally identical but scoped to _external peers_ instead of internal agent identities:
 
 ```rust
 // Existing (internal)
-PerformanceRecord {
+RewardHistory {
     task_count: u32,
-    avg_score: Option<f64>,
-    evaluations: Vec<EvaluationRef>,  // context_id = motivation_id or role_id
+    mean_reward: Option<f64>,
+    rewards: Vec<RewardRef>,  // context_id = objective_id or role_id
 }
 
 // New (external, same shape)
@@ -348,7 +348,7 @@ PeerCredibility {
 }
 ```
 
-The synergy matrix (`wg agency stats`) that shows how roles perform with different motivations could be extended to show how peers perform across different task domains.
+The synergy matrix (`wg identity stats`) that shows how roles perform with different objectives could be extended to show how peers perform across different task domains.
 
 ### 6.4 Trust Levels and the Trust Market
 
@@ -383,7 +383,7 @@ Designate certain tasks as "boundary tasks" — the interface between private an
 The DAG naturally supports this: everything upstream of a boundary task is private (internal computation), and the boundary task's output is what gets shared.
 
 ```
-[private: data-prep] ──► [private: model-train] ──► [boundary: publish-predictions] ──► [public: evaluate-accuracy]
+[private: data-prep] ──► [private: model-train] ──► [boundary: publish-predictions] ──► [public: reward-accuracy]
 ```
 
 ### 7.2 Graph Slicing for Export
@@ -396,7 +396,7 @@ This is a read-only operation on the existing graph structure. No core changes n
 
 ## 8. Latent Payoff Handling
 
-Some task outcomes can't be measured immediately. A portfolio strategy takes weeks to evaluate. A prediction's accuracy depends on future events. This requires:
+Some task outcomes can't be measured immediately. A portfolio strategy takes weeks to reward. A prediction's accuracy depends on future events. This requires:
 
 ### 8.1 Deferred Outcome Recording
 
@@ -414,7 +414,7 @@ A task's veracity score should have a status:
 - **Provisional** — early outcome data available but measurement window hasn't elapsed
 - **Final** — measurement window elapsed, outcome score is definitive
 
-This maps to the evaluation system's existing pattern of recording evaluations with timestamps. Provisional and final scores are just evaluations at different points in time. The `PerformanceRecord` already stores evaluation history, so an agent's track record naturally incorporates the progression from provisional to final scores.
+This maps to the reward system's existing pattern of recording rewards with timestamps. Provisional and final scores are just rewards at different points in time. The `RewardHistory` already stores reward history, so an agent's track record naturally incorporates the progression from provisional to final scores.
 
 ### 8.3 Discount Rate
 
@@ -442,7 +442,7 @@ These features are useful independently of any exchange.
 
 3. **Visibility field on Task** — Add `visibility: Visibility` with `{Private, PublicPrompt, Public}`. Default `Private`. Small change to `graph.rs`.
 
-4. **Outcome-aware performance updates** — Extend `record_evaluation()` to optionally incorporate outcome data when available.
+4. **Outcome-aware performance updates** — Extend `record_reward()` to optionally incorporate outcome data when available.
 
 ### Phase 2: Exchange Primitives (Light External Coupling)
 
@@ -450,7 +450,7 @@ These features are useful independently of any exchange.
 
 6. **Suggestion intake** — `wg exchange import-suggestion` that creates a task from an external suggestion with attribution metadata.
 
-7. **Peer credibility tracking** — Local DB of peer performance based on suggestion outcomes. Similar shape to `PerformanceRecord`.
+7. **Peer credibility tracking** — Local DB of peer performance based on suggestion outcomes. Similar shape to `RewardHistory`.
 
 ### Phase 3: Exchange Integration (Requires Protocol)
 
@@ -470,9 +470,9 @@ These features are useful independently of any exchange.
 
 3. **Privacy of outcome data.** Outcome scores themselves may be sensitive (revealing portfolio P&L, for example). The visibility system needs to handle outcome privacy separately from prompt/output privacy.
 
-4. **Scale of trust network.** The agency system's performance tracking works well for tens of agents. A trust network might have thousands of peers. The `PerformanceRecord` structure may need indexing or summarization for large peer sets.
+4. **Scale of trust network.** The identity system's performance tracking works well for tens of agents. A trust network might have thousands of peers. The `RewardHistory` structure may need indexing or summarization for large peer sets.
 
-5. **Bootstrapping the trust market.** The trust market requires an initial set of public tasks with measurable outcomes. Workgraph's existing evaluation system could bootstrap this: tasks with high evaluation scores and public visibility become the initial "proven work" that attracts suggestions.
+5. **Bootstrapping the trust market.** The trust market requires an initial set of public tasks with measurable outcomes. Workgraph's existing reward system could bootstrap this: tasks with high reward scores and public visibility become the initial "proven work" that attracts suggestions.
 
 6. **Incentive alignment.** Why would someone post good suggestions publicly? The answer is credibility → access to private paid tasks. But this only works if there are enough private paid tasks to make credibility valuable. Bootstrapping both sides of this market is a classic chicken-and-egg problem.
 
@@ -483,7 +483,7 @@ These features are useful independently of any exchange.
 - **Provenance system design:** `docs/design/provenance-system.md` — operation log, artifact archival, agent capture, replay capability
 - **Logging gaps research:** `docs/research/logging-gaps.md` — comprehensive audit of what is/isn't captured
 - **Nikete's replay system review:** `docs/research/nikete-logging-review.md` — trace/distill/replay pipeline, canon concept
-- **Agency system documentation:** `docs/AGENCY.md` — roles, motivations, agents, evaluation, evolution
-- **Agency implementation:** `src/agency.rs` — evaluation recording, performance tracking, content-hash identity
+- **Identity system documentation:** `docs/IDENTITY.md` — roles, objectives, agents, reward, evolution
+- **Identity implementation:** `src/identity.rs` — reward recording, performance tracking, content-hash identity
 - **Provenance implementation:** `src/provenance.rs` — append-only operation log with zstd rotation
 - **Amplifier integration proposal:** `docs/research/amplifier-integration-proposal.md.typ` — executor model, prompt template system

@@ -6,7 +6,7 @@ use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use workgraph::agency::{load_all_evaluations_or_warn, Evaluation};
+use workgraph::identity::{load_all_rewards_or_warn, Reward};
 use workgraph::config::Config;
 use workgraph::graph::{Status, Task};
 use workgraph::parser::save_graph;
@@ -16,7 +16,7 @@ use workgraph::runs::{self, RunMeta};
 pub struct ReplayOptions {
     pub model: Option<String>,
     pub failed_only: bool,
-    pub below_score: Option<f64>,
+    pub below_reward: Option<f64>,
     pub tasks: Vec<String>,
     pub keep_done: Option<f64>,
     pub plan_only: bool,
@@ -40,16 +40,16 @@ pub fn run(dir: &Path, opts: &ReplayOptions, json: bool) -> Result<()> {
     // Determine keep_done threshold
     let keep_done_threshold = opts.keep_done.unwrap_or(config.replay.keep_done_threshold);
 
-    // Load evaluations for --below-score and --keep-done filtering
-    let agency_dir = dir.join("agency");
-    let evaluations = if opts.below_score.is_some() || keep_done_threshold < 1.0 {
-        load_all_evaluations_or_warn(&agency_dir)
+    // Load rewards for --below-reward and --keep-done filtering
+    let identity_dir = dir.join("identity");
+    let rewards = if opts.below_reward.is_some() || keep_done_threshold < 1.0 {
+        load_all_rewards_or_warn(&identity_dir)
     } else {
         Vec::new()
     };
 
-    // Build a map of task_id -> best evaluation score
-    let score_map = build_score_map(&evaluations);
+    // Build a map of task_id -> best reward value
+    let value_map = build_value_map(&rewards);
 
     // Collect tasks in subgraph if --subgraph is specified
     let subgraph_ids: Option<HashSet<String>> = if let Some(root) = &opts.subgraph {
@@ -84,14 +84,14 @@ pub fn run(dir: &Path, opts: &ReplayOptions, json: bool) -> Result<()> {
             continue;
         }
 
-        if let Some(threshold) = opts.below_score {
-            let score = score_map.get(&task.id).copied();
-            if let Some(s) = score {
+        if let Some(threshold) = opts.below_reward {
+            let value = value_map.get(&task.id).copied();
+            if let Some(s) = value {
                 if s < threshold {
                     seeds.insert(task.id.clone());
                 }
             } else if task.status.is_terminal() {
-                // No eval score — reset if terminal (no evidence of quality)
+                // No eval value — reset if terminal (no evidence of quality)
                 seeds.insert(task.id.clone());
             }
             continue;
@@ -110,14 +110,14 @@ pub fn run(dir: &Path, opts: &ReplayOptions, json: bool) -> Result<()> {
         super::collect_transitive_dependents(&reverse_index, seed, &mut all_to_reset);
     }
 
-    // Phase 3: Apply --keep-done — remove Done tasks with score above threshold
+    // Phase 3: Apply --keep-done — remove Done tasks with value above threshold
     if keep_done_threshold < 1.0 {
         let mut to_keep = Vec::new();
         for task_id in &all_to_reset {
             if let Some(task) = graph.get_task(task_id) {
                 if task.status == Status::Done {
-                    if let Some(&score) = score_map.get(task_id) {
-                        if score >= keep_done_threshold {
+                    if let Some(&value) = value_map.get(task_id) {
+                        if value >= keep_done_threshold {
                             to_keep.push(task_id.clone());
                         }
                     }
@@ -161,11 +161,11 @@ pub fn run(dir: &Path, opts: &ReplayOptions, json: bool) -> Result<()> {
                     .get_task(id)
                     .map(|t| t.status.to_string())
                     .unwrap_or_default();
-                let score = score_map
+                let value = value_map
                     .get(id)
-                    .map(|s| format!(" (score: {:.2})", s))
+                    .map(|s| format!(" (reward: {:.2})", s))
                     .unwrap_or_default();
-                println!("    {} [{}]{}", id, status, score);
+                println!("    {} [{}]{}", id, status, value);
             }
             println!("  Tasks preserved ({}):", preserved_ids.len());
             for id in &preserved_ids {
@@ -294,13 +294,13 @@ fn build_reverse_index(
     index
 }
 
-/// Build a map of task_id -> best evaluation score.
-fn build_score_map(evaluations: &[Evaluation]) -> HashMap<String, f64> {
+/// Build a map of task_id -> best reward value.
+fn build_value_map(rewards: &[Reward]) -> HashMap<String, f64> {
     let mut map: HashMap<String, f64> = HashMap::new();
-    for eval in evaluations {
+    for eval in rewards {
         let entry = map.entry(eval.task_id.clone()).or_insert(0.0);
-        if eval.score > *entry {
-            *entry = eval.score;
+        if eval.value > *entry {
+            *entry = eval.value;
         }
     }
     map
@@ -336,8 +336,8 @@ fn build_filter_desc(opts: &ReplayOptions) -> String {
     if opts.failed_only {
         parts.push("--failed-only".to_string());
     }
-    if let Some(t) = opts.below_score {
-        parts.push(format!("--below-score {}", t));
+    if let Some(t) = opts.below_reward {
+        parts.push(format!("--below-reward {}", t));
     }
     if !opts.tasks.is_empty() {
         parts.push(format!("--tasks {}", opts.tasks.join(",")));
@@ -383,7 +383,7 @@ mod tests {
         let opts = ReplayOptions {
             model: None,
             failed_only: true,
-            below_score: None,
+            below_reward: None,
             tasks: vec![],
             keep_done: None,
             plan_only: false,
@@ -418,7 +418,7 @@ mod tests {
         let opts = ReplayOptions {
             model: Some("sonnet".to_string()),
             failed_only: false,
-            below_score: None,
+            below_reward: None,
             tasks: vec!["t1".to_string()],
             keep_done: None,
             plan_only: false,
@@ -445,7 +445,7 @@ mod tests {
         let opts = ReplayOptions {
             model: None,
             failed_only: true,
-            below_score: None,
+            below_reward: None,
             tasks: vec![],
             keep_done: None,
             plan_only: true,
@@ -476,7 +476,7 @@ mod tests {
         let opts = ReplayOptions {
             model: None,
             failed_only: true,
-            below_score: None,
+            below_reward: None,
             tasks: vec![],
             keep_done: None,
             plan_only: false,
@@ -531,7 +531,7 @@ mod tests {
         let opts = ReplayOptions {
             model: None,
             failed_only: true,
-            below_score: None,
+            below_reward: None,
             tasks: vec![],
             keep_done: None,
             plan_only: false,
@@ -558,7 +558,7 @@ mod tests {
         let opts = ReplayOptions {
             model: Some("haiku".to_string()),
             failed_only: false,
-            below_score: None,
+            below_reward: None,
             tasks: vec![],
             keep_done: Some(1.0), // don't keep any done tasks (threshold unreachable)
             plan_only: false,

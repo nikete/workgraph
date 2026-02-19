@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::agency;
+use crate::identity;
 use crate::graph::Task;
 
 /// Template variables that can be used in executor configurations.
@@ -29,7 +29,7 @@ impl TemplateVars {
     /// Create template variables from a task, optional context, and optional workgraph directory.
     ///
     /// If the task has an agent set and `workgraph_dir` is provided, the Agent is loaded
-    /// by hash and its role and motivation are resolved from agency storage and rendered
+    /// by hash and its role and objective are resolved from identity storage and rendered
     /// into an identity prompt. If resolution fails or no agent is set, `task_identity`
     /// is empty (backward compatible).
     pub fn from_task(task: &Task, context: Option<&str>, workgraph_dir: Option<&Path>) -> Self {
@@ -59,7 +59,7 @@ impl TemplateVars {
     }
 
     /// Resolve the identity prompt for a task by looking up its Agent, then the
-    /// Agent's role and motivation.
+    /// Agent's role and objective.
     fn resolve_identity(task: &Task, workgraph_dir: Option<&Path>) -> String {
         let agent_hash = match &task.agent {
             Some(h) => h,
@@ -71,13 +71,13 @@ impl TemplateVars {
             None => return String::new(),
         };
 
-        let agency_dir = wg_dir.join("agency");
-        let agents_dir = agency_dir.join("agents");
-        let roles_dir = agency_dir.join("roles");
-        let motivations_dir = agency_dir.join("motivations");
+        let identity_dir = wg_dir.join("identity");
+        let agents_dir = identity_dir.join("agents");
+        let roles_dir = identity_dir.join("roles");
+        let objectives_dir = identity_dir.join("objectives");
 
         // Look up the Agent entity by hash
-        let agent = match agency::find_agent_by_prefix(&agents_dir, agent_hash) {
+        let agent = match identity::find_agent_by_prefix(&agents_dir, agent_hash) {
             Ok(a) => a,
             Err(e) => {
                 eprintln!("Warning: could not resolve agent '{}': {}", agent_hash, e);
@@ -85,7 +85,7 @@ impl TemplateVars {
             }
         };
 
-        let role = match agency::find_role_by_prefix(&roles_dir, &agent.role_id) {
+        let role = match identity::find_role_by_prefix(&roles_dir, &agent.role_id) {
             Ok(r) => r,
             Err(e) => {
                 eprintln!(
@@ -96,13 +96,13 @@ impl TemplateVars {
             }
         };
 
-        let motivation =
-            match agency::find_motivation_by_prefix(&motivations_dir, &agent.motivation_id) {
+        let objective =
+            match identity::find_objective_by_prefix(&objectives_dir, &agent.objective_id) {
                 Ok(m) => m,
                 Err(e) => {
                     eprintln!(
-                        "Warning: could not resolve motivation '{}' for agent '{}': {}",
-                        agent.motivation_id, agent_hash, e
+                        "Warning: could not resolve objective '{}' for agent '{}': {}",
+                        agent.objective_id, agent_hash, e
                     );
                     return String::new();
                 }
@@ -110,9 +110,9 @@ impl TemplateVars {
 
         // Resolve skills from the role, using the project root (parent of .workgraph/)
         let workgraph_root = wg_dir.parent().unwrap_or(wg_dir);
-        let resolved_skills = agency::resolve_all_skills(&role, workgraph_root);
+        let resolved_skills = identity::resolve_all_skills(&role, workgraph_root);
 
-        agency::render_identity_prompt(&role, &motivation, &resolved_skills)
+        identity::render_identity_prompt(&role, &objective, &resolved_skills)
     }
 
     /// Read skills preamble from project-level `.claude/skills/` directory.
@@ -698,44 +698,44 @@ template = "Work on {{task_id}}"
     }
 
     #[test]
-    fn test_template_vars_identity_resolved_from_agency() {
+    fn test_template_vars_identity_resolved_from_identity() {
         let temp_dir = TempDir::new().unwrap();
         let wg_dir = temp_dir.path().join(".workgraph");
-        let roles_dir = wg_dir.join("agency").join("roles");
-        let motivations_dir = wg_dir.join("agency").join("motivations");
-        let agents_dir = wg_dir.join("agency").join("agents");
+        let roles_dir = wg_dir.join("identity").join("roles");
+        let objectives_dir = wg_dir.join("identity").join("objectives");
+        let agents_dir = wg_dir.join("identity").join("agents");
         fs::create_dir_all(&roles_dir).unwrap();
-        fs::create_dir_all(&motivations_dir).unwrap();
+        fs::create_dir_all(&objectives_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
         // Create a role using content-hash ID builder
-        let role = agency::build_role("Implementer", "Implements features", vec![], "Working code");
+        let role = identity::build_role("Implementer", "Implements features", vec![], "Working code");
         let role_id = role.id.clone();
-        agency::save_role(&role, &roles_dir).unwrap();
+        identity::save_role(&role, &roles_dir).unwrap();
 
-        // Create a motivation using content-hash ID builder
-        let motivation = agency::build_motivation(
+        // Create a objective using content-hash ID builder
+        let objective = identity::build_objective(
             "Quality First",
             "Prioritize quality",
             vec!["Spend more time".to_string()],
             vec!["Skip tests".to_string()],
         );
-        let motivation_id = motivation.id.clone();
-        agency::save_motivation(&motivation, &motivations_dir).unwrap();
+        let objective_id = objective.id.clone();
+        identity::save_objective(&objective, &objectives_dir).unwrap();
 
-        // Create an Agent entity pairing the role and motivation
-        let agent_id = agency::content_hash_agent(&role_id, &motivation_id);
-        let agent = agency::Agent {
+        // Create an Agent entity pairing the role and objective
+        let agent_id = identity::content_hash_agent(&role_id, &objective_id);
+        let agent = identity::Agent {
             id: agent_id.clone(),
             role_id: role_id.clone(),
-            motivation_id: motivation_id.clone(),
+            objective_id: objective_id.clone(),
             name: "Test Agent".to_string(),
-            performance: agency::PerformanceRecord {
+            performance: identity::RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
-            lineage: agency::Lineage::default(),
+            lineage: identity::Lineage::default(),
             capabilities: Vec::new(),
             rate: None,
             capacity: None,
@@ -743,7 +743,7 @@ template = "Work on {{task_id}}"
             contact: None,
             executor: "claude".to_string(),
         };
-        agency::save_agent(&agent, &agents_dir).unwrap();
+        identity::save_agent(&agent, &agents_dir).unwrap();
 
         // Create a task with agent reference
         let mut task = make_test_task("task-1", "Test Task");
@@ -761,7 +761,7 @@ template = "Work on {{task_id}}"
     fn test_template_vars_identity_missing_agent_fallback() {
         let temp_dir = TempDir::new().unwrap();
         let wg_dir = temp_dir.path().join(".workgraph");
-        let agents_dir = wg_dir.join("agency").join("agents");
+        let agents_dir = wg_dir.join("identity").join("agents");
         fs::create_dir_all(&agents_dir).unwrap();
 
         let mut task = make_test_task("task-1", "Test Task");
@@ -1179,25 +1179,25 @@ args = ["--custom-flag"]
     fn test_identity_agent_exists_but_role_missing() {
         let temp_dir = TempDir::new().unwrap();
         let wg_dir = temp_dir.path().join(".workgraph");
-        let roles_dir = wg_dir.join("agency").join("roles");
-        let motivations_dir = wg_dir.join("agency").join("motivations");
-        let agents_dir = wg_dir.join("agency").join("agents");
+        let roles_dir = wg_dir.join("identity").join("roles");
+        let objectives_dir = wg_dir.join("identity").join("objectives");
+        let agents_dir = wg_dir.join("identity").join("agents");
         fs::create_dir_all(&roles_dir).unwrap();
-        fs::create_dir_all(&motivations_dir).unwrap();
+        fs::create_dir_all(&objectives_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
         // Create an agent that references a non-existent role
-        let agent = agency::Agent {
+        let agent = identity::Agent {
             id: "test-agent-id".to_string(),
             role_id: "nonexistent-role".to_string(),
-            motivation_id: "nonexistent-motivation".to_string(),
+            objective_id: "nonexistent-objective".to_string(),
             name: "Broken Agent".to_string(),
-            performance: agency::PerformanceRecord {
+            performance: identity::RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
-            lineage: agency::Lineage::default(),
+            lineage: identity::Lineage::default(),
             capabilities: Vec::new(),
             rate: None,
             capacity: None,
@@ -1205,7 +1205,7 @@ args = ["--custom-flag"]
             contact: None,
             executor: "claude".to_string(),
         };
-        agency::save_agent(&agent, &agents_dir).unwrap();
+        identity::save_agent(&agent, &agents_dir).unwrap();
 
         let mut task = make_test_task("task-1", "Test");
         task.agent = Some("test-agent-id".to_string());

@@ -13,7 +13,7 @@
 ### How Feature Flags Are Used
 
 - **`matrix`**: Guards `src/matrix/` module, Matrix-related imports in `src/lib.rs`, and notification paths in `src/commands/notify.rs`, `src/commands/claim.rs`, `src/commands/matrix.rs`.
-- **`matrix-lite`**: Guards `src/matrix_lite/` module, its re-exports in `src/lib.rs`, and a notification call in `src/agency.rs:220`.
+- **`matrix-lite`**: Guards `src/matrix_lite/` module, its re-exports in `src/lib.rs`, and a notification call in `src/identity.rs:220`.
 - **`llm-tests`**: Guards two test functions — one in `tests/integration_auto_assignment.rs:894` and one in `tests/integration_service_coordinator.rs:980`. Run with `cargo test --features llm-tests`.
 
 ### Assessment
@@ -32,14 +32,14 @@ The feature flag structure is **clean and well-motivated**:
 | `serde` + `serde_json` | 1.0 | Everywhere | Serialization (YAML configs, JSON stats, graph format) |
 | `clap` (derive) | 4.4 | `src/main.rs` | CLI argument parsing |
 | `petgraph` | 0.6 | **Not imported in any `.rs` file** | Graph algorithms |
-| `thiserror` | 2.0 | `src/parser.rs`, `src/agency.rs` | Error type derivation |
+| `thiserror` | 2.0 | `src/parser.rs`, `src/identity.rs` | Error type derivation |
 | `anyhow` | 1.0 | Everywhere | Error propagation |
 | `chrono` (serde) | 0.4 | Task timestamps, usage logging | Date/time handling |
 | `toml` | 0.8 | `src/config.rs` | Config file parsing |
-| `serde_yaml` | 0.9 | Agency YAML files | YAML serialization for agency system |
+| `serde_yaml` | 0.9 | Identity YAML files | YAML serialization for identity system |
 | `libc` | 0.2 | `src/commands/service.rs`, `src/parser.rs`, etc. | Unix process management (kill, signal, PID) |
-| `dirs` | 5.0 | `src/config.rs`, `src/agency.rs` | XDG config directory resolution |
-| `sha2` | 0.10 | `src/agency.rs` | Content-hash agent identities |
+| `dirs` | 5.0 | `src/config.rs`, `src/identity.rs` | XDG config directory resolution |
+| `sha2` | 0.10 | `src/identity.rs` | Content-hash agent identities |
 | `tokio` | 1 (rt-multi-thread, macros, sync, time) | `src/commands/notify.rs`, `src/commands/matrix.rs`, `src/matrix/` | Async runtime for Matrix integration |
 | `ratatui` | 0.29 | `src/tui/mod.rs` | Terminal UI framework |
 | `crossterm` | 0.28 | `src/tui/mod.rs` | Terminal backend for ratatui |
@@ -124,13 +124,13 @@ The `build` job runs `cargo test --lib`, which includes the two failing `config:
 #### P1: Only 1 of 9 Integration Test Files Is Run in CI
 
 The `integration` job only runs `integration_service`. The other 8 test files are never run in CI:
-- `integration_agency.rs`
-- `integration_agency_edge_cases.rs`
-- `integration_agency_lineage.rs`
+- `integration_identity.rs`
+- `integration_identity_edge_cases.rs`
+- `integration_identity_lineage.rs`
 - `integration_auto_assignment.rs`
 - `integration_review_workflow.rs`
 - `integration_service_coordinator.rs`
-- `evaluation_recording.rs`
+- `reward_recording.rs`
 - `skill_resolution.rs`
 
 This is a significant coverage gap. These tests should be added to CI (possibly as a separate job with `--test-threads=1` since they likely share state).
@@ -187,17 +187,17 @@ A shell-based daemon wrapper for the `wg agent` command. Features:
 /target
 .workgraph/
 USER_FEEDBACK.md
-agency_session_id.txt
+identity_session_id.txt
 ```
 
-Clean and appropriate. The `.workgraph/` exclusion prevents accidentally committing project state. `USER_FEEDBACK.md` and `agency_session_id.txt` are ephemeral session files.
+Clean and appropriate. The `.workgraph/` exclusion prevents accidentally committing project state. `USER_FEEDBACK.md` and `identity_session_id.txt` are ephemeral session files.
 
 ## 6. Configuration System (`src/config.rs` + `src/commands/config_cmd.rs`)
 
 ### Architecture
 
 Two config files with separate concerns:
-- **`.workgraph/config.toml`** (per-project): Agent, coordinator, project, help, and agency settings.
+- **`.workgraph/config.toml`** (per-project): Agent, coordinator, project, help, and identity settings.
 - **`~/.config/workgraph/matrix.toml`** (per-user, global): Matrix credentials. Correctly separated to avoid committing secrets.
 
 ### Config Sections
@@ -208,7 +208,7 @@ Two config files with separate concerns:
 | `[coordinator]` | max_agents, interval, poll_interval, executor, model | Service daemon settings |
 | `[project]` | name, description, default_skills | Project metadata |
 | `[help]` | ordering | Help command display ("usage", "alphabetical", "curated") |
-| `[agency]` | auto_evaluate, auto_assign, assigner/evaluator/evolver agents & models, retention_heuristics | Evolutionary identity system |
+| `[identity]` | auto_reward, auto_assign, assigner/evaluator/evolver agents & models, retention_heuristics | Evolutionary identity system |
 
 ### Assessment
 

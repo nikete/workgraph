@@ -32,7 +32,7 @@ Real workflows need cycles: review-revise loops, CI retry pipelines, monitor-ale
 
 ### Concept
 
-A new edge type, `loops_to`, represents a conditional back-edge. It says: "when this task completes, evaluate a condition — if true and iterations remain, re-open the target task."
+A new edge type, `loops_to`, represents a conditional back-edge. It says: "when this task completes, reward a condition — if true and iterations remain, re-open the target task."
 
 Loop edges are **not** blocking edges. They are ignored by `ready_tasks()`, topological sort, and critical path. They only fire on task completion.
 
@@ -91,7 +91,7 @@ pub struct Task {
 When a task with `loops_to` edges transitions to Done:
 
 1. For each `LoopEdge`:
-   a. Evaluate the guard condition against the current graph state.
+   a. Reward the guard condition against the current graph state.
    b. If guard is true (or absent, meaning "always") **and** `target.loop_iteration < max_iterations`:
       - Set target task status to `Open`.
       - Clear target's `started_at` and `completed_at` timestamps.
@@ -107,7 +107,7 @@ When a task with `loops_to` edges transitions to Done:
 This is the critical design choice. `loops_to` edges:
 - Are **not** in `blocked_by`. They don't prevent execution.
 - Are **not** traversed by `ready_tasks()`. They don't affect scheduling.
-- Are **only** evaluated when the source task completes.
+- Are **only** rewardd when the source task completes.
 - Are **rendered** distinctly (magenta upward arrows, as `dag_layout.rs` already does for back-edges).
 
 This means we don't need to modify `ready_tasks()` or `wg done`'s blocker check at all. The cycle is expressed as a forward chain of `blocked_by` edges (which are acyclic) plus a backward `loops_to` edge (which is separate).
@@ -158,7 +158,7 @@ Actually, `review-draft` doesn't need explicit re-opening — `ready_tasks()` al
 |----------|--------|-----|
 | `graph.rs` Task struct | Add `loops_to: Vec<LoopEdge>` and `loop_iteration: u32` | Core data model |
 | `parser.rs` | Parse `loops_to` and `loop_iteration` fields | Read/write new fields |
-| `commands/done.rs` | After marking Done, evaluate loop edges | Trigger re-activation |
+| `commands/done.rs` | After marking Done, reward loop edges | Trigger re-activation |
 | `check.rs` `check_cycles` | Distinguish `blocked_by` cycles (problematic) from `loops_to` cycles (intentional) | Currently all cycles are detected via `blocked_by`; `loops_to` edges should be validated separately |
 | `commands/loops.rs` | Show `loops_to` edges in cycle analysis | User visibility |
 
@@ -200,7 +200,7 @@ Loop re-activation happens in `wg done` (or `wg submit`), which the agent calls 
 
 1. Agent completes work, calls `wg done fix-bug`.
 2. `done.rs` marks `fix-bug` as Done.
-3. **New:** `done.rs` evaluates `fix-bug.loops_to` edges.
+3. **New:** `done.rs` rewards `fix-bug.loops_to` edges.
 4. If a loop fires: target task (e.g., `investigate-bug`) is set to Open, iteration incremented.
 5. Next coordinator tick: `ready_tasks()` finds `investigate-bug` is Open with all blockers Done → dispatches a new agent.
 
@@ -219,7 +219,7 @@ If multiple loop edges fire simultaneously (e.g., a task has `loops_to` edges po
 
 ---
 
-## 5. Interaction with Agency/Evolution
+## 5. Interaction with Identity/Evolution
 
 ### Agent Assignment per Iteration
 
@@ -230,12 +230,12 @@ Each loop iteration goes through the normal agent assignment flow:
 
 ### Evolution Across Iterations
 
-Loop iterations provide natural evaluation points. If `auto_evaluate` is on:
-- Each iteration that completes triggers evaluation.
-- Evaluation results accumulate, giving the evolution system data on how the agent/task pattern is performing.
+Loop iterations provide natural reward points. If `auto_reward` is on:
+- Each iteration that completes triggers reward.
+- Reward results accumulate, giving the evolution system data on how the agent/task pattern is performing.
 - A consistently-failing loop (e.g., iterations 1-3 all fail review) signals that the agent type needs adjustment.
 
-No special changes to the evolution system are needed — it already evaluates tasks on completion, and a re-activated task simply gets evaluated again each time.
+No special changes to the evolution system are needed — it already rewards tasks on completion, and a re-activated task simply gets rewardd again each time.
 
 ---
 
@@ -295,7 +295,7 @@ wg edit write-draft --loop-iteration 0
 |------|--------|
 | `src/graph.rs` | Add `LoopEdge` struct, `LoopGuard` enum. Add `loops_to: Vec<LoopEdge>` and `loop_iteration: u32` to `Task`. |
 | `src/parser.rs` | Serialize/deserialize new fields in graph.jsonl. |
-| `src/commands/done.rs` | After marking task Done, call new `evaluate_loop_edges()` function. Re-open target tasks, increment iteration, log. |
+| `src/commands/done.rs` | After marking task Done, call new `reward_loop_edges()` function. Re-open target tasks, increment iteration, log. |
 | `src/commands/add.rs` | Parse `--loops-to`, `--loop-guard`, `--loop-max` flags. |
 | `src/commands/edit.rs` | Parse `--add-loops-to`, `--loop-iteration` flags. |
 | `src/commands/show.rs` | Display loop edges and iteration count. |
@@ -399,10 +399,10 @@ Unconditional loop (no guard) — always loops back to monitoring after verifica
 
 | Risk | Mitigation |
 |------|------------|
-| Infinite loops from guard logic errors | `max_iterations` is mandatory and cannot be disabled. Runtime enforcement in the loop evaluation code. |
+| Infinite loops from guard logic errors | `max_iterations` is mandatory and cannot be disabled. Runtime enforcement in the loop reward code. |
 | Task log bloat from many iterations | Each re-activation adds one log entry. Log is already append-only. Consider a `--compact-log` flag in the future if this becomes an issue. |
 | Agent confusion from re-activated tasks | Each iteration's agent gets full task log including "Re-activated by loop (iteration N/M)" — clear signal that this is a repeat run. |
-| Concurrent loop edge evaluation | `wg done` holds a file lock on graph.jsonl during write. Only one task can complete at a time. No race conditions. |
+| Concurrent loop edge reward | `wg done` holds a file lock on graph.jsonl during write. Only one task can complete at a time. No race conditions. |
 | Backward compatibility | New fields use `serde(default)` — old graph files without `loops_to` parse fine (empty Vec). Old `wg` binaries ignore unknown fields in jsonl. |
 
 ---
@@ -415,5 +415,5 @@ Unconditional loop (no guard) — always loops back to monitoring after verifica
 | Guard conditions are optional | Unconditional loops (loop N times then stop) are a valid pattern (monitoring loops, warm-up iterations). | Required guards — rejected because it prevents simple "repeat N times" patterns. |
 | `max_iterations` is mandatory | Defense against infinite loops. There is no valid use case for an unbounded loop in a task graph. | Optional with high default — rejected because defaults get forgotten and infinite loops are hard to debug. |
 | No new Status enum values | The existing states (Open, InProgress, Done, Failed) fully describe a task's current execution state. "Recurring" is a property of the graph topology, not the task state. | `Status::Recurring` — rejected because it conflates lifecycle with execution state. |
-| Re-activation is synchronous in `wg done` | Simplest implementation. The agent calls `wg done`, loop evaluation happens, graph is updated atomically. | Async event via service daemon — more complex, needed only when external triggers (webhooks, schedules) are added later. |
+| Re-activation is synchronous in `wg done` | Simplest implementation. The agent calls `wg done`, loop reward happens, graph is updated atomically. | Async event via service daemon — more complex, needed only when external triggers (webhooks, schedules) are added later. |
 | Phase 4 (forecast bug fix) is separate | It's a pre-existing bug unrelated to this feature, but flagged by the survey. | Fix it in Phase 1 — rejected because it's unrelated scope. |

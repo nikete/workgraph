@@ -10,20 +10,20 @@ Workgraph originally had two overlapping identity systems:
 
 1. **Actor** (graph.rs) — a node in the work graph representing a human or AI that can perform work. Had capabilities, rate, capacity, trust levels, heartbeats, and a Matrix binding. Stored in `graph.jsonl` as `kind: "actor"`.
 
-2. **Agent** (agency.rs) — a content-addressed pairing of a Role (what it does) and a Motivation (why/how it acts). Had performance tracking, lineage, and prompt rendering. Stored as YAML in `.workgraph/agency/agents/`.
+2. **Agent** (identity.rs) — a content-addressed pairing of a Role (what it does) and a Objective (why/how it acts). Had performance tracking, lineage, and prompt rendering. Stored as YAML in `.workgraph/identity/agents/`.
 
 The two systems overlapped in confusing ways:
 - Both claimed to represent "an agent"
-- Tasks had two identity pointers: `assigned` (actor) and `agent` (agency)
+- Tasks had two identity pointers: `assigned` (actor) and `agent` (identity)
 - Skills existed in both as `Actor.capabilities` (flat tags) and `Role.skills` (rich definitions)
-- `Actor.role` (free-text job title) collided with the agency `Role` struct
-- Three separate "agent registries" existed: actor nodes, agency agents, and service process entries
+- `Actor.role` (free-text job title) collided with the identity `Role` struct
+- Three separate "agent registries" existed: actor nodes, identity agents, and service process entries
 
 See the original analysis below for the full overlap mapping.
 
 ## Decision
 
-**Collapse Actor into Agent.** The Actor struct and all `wg actor` commands have been removed. The Agent struct in the agency system now carries the operational fields that Actor previously owned:
+**Collapse Actor into Agent.** The Actor struct and all `wg actor` commands have been removed. The Agent struct in the identity system now carries the operational fields that Actor previously owned:
 
 | Old Actor field | New home |
 |---|---|
@@ -33,7 +33,7 @@ See the original analysis below for the full overlap mapping.
 | `trust_level` | `Agent.trust_level` |
 | `matrix_user_id` | `Agent.contact` (generalized) |
 | `actor_type` (Human/Agent) | `Agent.executor` — human executors (matrix, email, shell) vs AI executors (claude) |
-| `role` (free-text) | Removed — the agency Role struct serves this purpose |
+| `role` (free-text) | Removed — the identity Role struct serves this purpose |
 | `context_limit` | Removed — model-specific, not agent-specific |
 | `response_times` | Removed — not used in practice |
 | `last_seen` | Handled by service registry heartbeats |
@@ -43,11 +43,11 @@ See the original analysis below for the full overlap mapping.
 An Agent is a **unified identity** that can represent a human or an AI:
 
 ```
-Agent = Role (what) + Motivation (why) + Operational fields (how)
+Agent = Role (what) + Objective (why) + Operational fields (how)
 ```
 
-- **AI agents** require a role and motivation (which drive prompt injection)
-- **Human agents** can optionally have a role and motivation, but primarily need `--contact` and a human executor (`matrix`, `email`, `shell`)
+- **AI agents** require a role and objective (which drive prompt injection)
+- **Human agents** can optionally have a role and objective, but primarily need `--contact` and a human executor (`matrix`, `email`, `shell`)
 - All agents can have capabilities (for task matching), rate (for cost forecasting), capacity (for workload planning), and a trust level (for permission gating)
 
 ### CLI changes
@@ -55,15 +55,15 @@ Agent = Role (what) + Motivation (why) + Operational fields (how)
 | Before | After |
 |---|---|
 | `wg actor add erik --role engineer -c rust` | `wg agent create "Erik" --executor matrix --contact "@erik:server" --capabilities rust` |
-| `wg actor add claude --role agent -c coding` | `wg agent create "Claude Coder" --role <hash> --motivation <hash> --capabilities coding` |
+| `wg actor add claude --role agent -c coding` | `wg agent create "Claude Coder" --role <hash> --objective <hash> --capabilities coding` |
 | `wg actor list` | `wg agent list` |
 | `wg claim <task> --actor erik` | `wg claim <task> --actor erik` (log field, not identity system) |
 | `wg next --actor claude` | `wg next --actor claude` (session identifier) |
 
 ### ID generation
 
-- **AI agents**: `SHA-256(role_id + motivation_id)` — same content-addressed scheme as before
-- **Human agents** (no role/motivation): `SHA-256(name + executor)` — deterministic from name and executor
+- **AI agents**: `SHA-256(role_id + objective_id)` — same content-addressed scheme as before
+- **Human agents** (no role/objective): `SHA-256(name + executor)` — deterministic from name and executor
 
 ## Rationale
 
@@ -75,7 +75,7 @@ The original ADR recommended keeping Actor and Agent separate ("clearly separate
 
 3. **Human vs AI is an executor distinction, not a type distinction.** The `actor_type: Human | Agent` field was really saying "how does this entity receive work?" That's what the executor field already answers.
 
-4. **One fewer concept to learn.** New users now learn: tasks, agents, roles, motivations. Not: tasks, actors, agents, roles, motivations.
+4. **One fewer concept to learn.** New users now learn: tasks, agents, roles, objectives. Not: tasks, actors, agents, roles, objectives.
 
 ## Consequences
 
@@ -107,17 +107,17 @@ The following sections document the state of both systems before the merge, pres
 
 An Actor was a node in the work graph stored in `graph.jsonl` alongside tasks and resources, representing a human or AI that can perform work. It tracked operational identity (capabilities, rate, capacity), availability (heartbeat, response times), trust levels, and human integration (Matrix binding).
 
-### System 2: Agent (agency.rs)
+### System 2: Agent (identity.rs)
 
-An Agent in the agency system is a persistent, named pairing of a Role (what the agent does) and a Motivation (why and under what constraints). This system remains and now carries the unified identity.
+An Agent in the identity system is a persistent, named pairing of a Role (what the agent does) and a Objective (why and under what constraints). This system remains and now carries the unified identity.
 
 ### Where they overlapped
 
 - Both claimed to represent "an agent"
 - Tasks had `assigned` (actor ID) and `agent` (agent content-hash) — two identity pointers
 - `Actor.capabilities` and `Role.skills` both tracked "what this agent can do"
-- `Actor.role` (free-text) collided with the agency `Role` struct
-- Three registries: actor nodes, agency agents, service process entries
+- `Actor.role` (free-text) collided with the identity `Role` struct
+- Three registries: actor nodes, identity agents, service process entries
 
 ### Resolution
 

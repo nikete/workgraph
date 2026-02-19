@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use workgraph::agency::{self, Evaluation, Lineage, Motivation, PerformanceRecord, Role, SkillRef};
+use workgraph::identity::{self, Reward, Lineage, Objective, RewardHistory, Role, SkillRef};
 use workgraph::config::Config;
 use workgraph::graph::{Node, Status, Task};
 use workgraph::{load_graph, save_graph};
@@ -18,7 +18,7 @@ pub enum Strategy {
     Crossover,
     GapAnalysis,
     Retirement,
-    MotivationTuning,
+    ObjectiveTuning,
     All,
 }
 
@@ -29,10 +29,10 @@ impl Strategy {
             "crossover" => Ok(Self::Crossover),
             "gap-analysis" => Ok(Self::GapAnalysis),
             "retirement" => Ok(Self::Retirement),
-            "motivation-tuning" => Ok(Self::MotivationTuning),
+            "objective-tuning" => Ok(Self::ObjectiveTuning),
             "all" => Ok(Self::All),
             other => bail!(
-                "Unknown strategy '{}'. Valid: mutation, crossover, gap-analysis, retirement, motivation-tuning, all",
+                "Unknown strategy '{}'. Valid: mutation, crossover, gap-analysis, retirement, objective-tuning, all",
                 other
             ),
         }
@@ -44,7 +44,7 @@ impl Strategy {
             Self::Crossover => "crossover",
             Self::GapAnalysis => "gap-analysis",
             Self::Retirement => "retirement",
-            Self::MotivationTuning => "motivation-tuning",
+            Self::ObjectiveTuning => "objective-tuning",
             Self::All => "all",
         }
     }
@@ -53,8 +53,8 @@ impl Strategy {
 /// A single evolution operation returned by the evolver agent.
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct EvolverOperation {
-    /// Operation type: create_role, modify_role, create_motivation, modify_motivation,
-    /// retire_role, retire_motivation
+    /// Operation type: create_role, modify_role, create_objective, modify_objective,
+    /// retire_role, retire_objective
     pub op: String,
     /// For modify/retire: the ID of the existing entity to act on.
     #[serde(default)]
@@ -74,10 +74,10 @@ pub struct EvolverOperation {
     /// Desired outcome (for roles).
     #[serde(default)]
     pub desired_outcome: Option<String>,
-    /// Acceptable trade-offs (for motivations).
+    /// Acceptable trade-offs (for objectives).
     #[serde(default)]
     pub acceptable_tradeoffs: Option<Vec<String>>,
-    /// Unacceptable trade-offs (for motivations).
+    /// Unacceptable trade-offs (for objectives).
     #[serde(default)]
     pub unacceptable_tradeoffs: Option<Vec<String>>,
     /// Rationale for this operation.
@@ -98,7 +98,7 @@ pub struct EvolverOutput {
     pub summary: Option<String>,
 }
 
-/// Run `wg evolve` — trigger an evolution cycle on agency roles and motivations.
+/// Run `wg evolve` — trigger an evolution cycle on identity roles and objectives.
 pub fn run(
     dir: &Path,
     dry_run: bool,
@@ -107,15 +107,15 @@ pub fn run(
     model: Option<&str>,
     json: bool,
 ) -> Result<()> {
-    let agency_dir = dir.join("agency");
-    let roles_dir = agency_dir.join("roles");
-    let motivations_dir = agency_dir.join("motivations");
-    let evals_dir = agency_dir.join("evaluations");
-    let skills_dir = agency_dir.join("evolver-skills");
+    let identity_dir = dir.join("identity");
+    let roles_dir = identity_dir.join("roles");
+    let objectives_dir = identity_dir.join("objectives");
+    let evals_dir = identity_dir.join("rewards");
+    let skills_dir = identity_dir.join("evolver-skills");
 
-    // Validate agency exists
-    if !roles_dir.exists() || !motivations_dir.exists() {
-        bail!("Agency not initialized. Run `wg agency init` first.");
+    // Validate identity exists
+    if !roles_dir.exists() || !objectives_dir.exists() {
+        bail!("Identity not initialized. Run `wg identity init` first.");
     }
 
     // Pre-flight: check that claude CLI is available
@@ -138,30 +138,30 @@ pub fn run(
         None => Strategy::All,
     };
 
-    // Load all agency data
-    let mut roles = agency::load_all_roles(&roles_dir).context("Failed to load roles")?;
-    let mut motivations =
-        agency::load_all_motivations(&motivations_dir).context("Failed to load motivations")?;
-    let all_evaluations =
-        agency::load_all_evaluations(&evals_dir).context("Failed to load evaluations")?;
+    // Load all identity data
+    let mut roles = identity::load_all_roles(&roles_dir).context("Failed to load roles")?;
+    let mut objectives =
+        identity::load_all_objectives(&objectives_dir).context("Failed to load objectives")?;
+    let all_rewards =
+        identity::load_all_rewards(&evals_dir).context("Failed to load rewards")?;
 
-    // Filter out evaluations from human agents — their work quality isn't a
-    // reflection of a role+motivation prompt, so including them would pollute
+    // Filter out rewards from human agents — their work quality isn't a
+    // reflection of a role+objective prompt, so including them would pollute
     // the evolution signal.
-    let agents_dir = agency_dir.join("agents");
-    let agents = agency::load_all_agents_or_warn(&agents_dir);
+    let agents_dir = identity_dir.join("agents");
+    let agents = identity::load_all_agents_or_warn(&agents_dir);
     let human_agent_ids: HashSet<&str> = agents
         .iter()
         .filter(|a| a.is_human())
         .map(|a| a.id.as_str())
         .collect();
-    let evaluations: Vec<Evaluation> = all_evaluations
+    let rewards: Vec<Reward> = all_rewards
         .into_iter()
         .filter(|e| e.agent_id.is_empty() || !human_agent_ids.contains(e.agent_id.as_str()))
         .collect();
 
-    if roles.is_empty() && motivations.is_empty() {
-        bail!("No roles or motivations found. Run `wg agency init` to seed starters.");
+    if roles.is_empty() && objectives.is_empty() {
+        bail!("No roles or objectives found. Run `wg identity init` to seed starters.");
     }
 
     // Load evolver skill documents
@@ -170,14 +170,14 @@ pub fn run(
     // Load config for evolver identity and model
     let config = Config::load_or_default(dir);
 
-    // Determine model: CLI flag > agency.evolver_model > agent.model
+    // Determine model: CLI flag > identity.evolver_model > agent.model
     let model = model
         .map(std::string::ToString::to_string)
-        .or(config.agency.evolver_model.clone())
+        .or(config.identity.evolver_model.clone())
         .unwrap_or_else(|| config.agent.model.clone());
 
     // Build performance summary
-    let perf_summary = build_performance_summary(&roles, &motivations, &evaluations);
+    let perf_summary = build_performance_summary(&roles, &objectives, &rewards);
 
     // Build the evolver prompt
     let prompt = build_evolver_prompt(
@@ -187,8 +187,8 @@ pub fn run(
         budget,
         &config,
         &roles,
-        &motivations,
-        &agency_dir,
+        &objectives,
+        &identity_dir,
     );
 
     // Generate a run ID
@@ -203,8 +203,8 @@ pub fn run(
                 "model": model,
                 "run_id": run_id,
                 "roles": roles.len(),
-                "motivations": motivations.len(),
-                "evaluations": evaluations.len(),
+                "objectives": objectives.len(),
+                "rewards": rewards.len(),
                 "skill_documents": skill_docs.len(),
                 "prompt_length": prompt.len(),
             });
@@ -221,11 +221,11 @@ pub fn run(
             println!("Model:           {}", model);
             println!("Run ID:          {}", run_id);
             println!("Roles:           {}", roles.len());
-            println!("Motivations:     {}", motivations.len());
-            println!("Evaluations:     {}", evaluations.len());
+            println!("Objectives:     {}", objectives.len());
+            println!("Rewards:     {}", rewards.len());
             println!("Skill docs:      {}", skill_docs.len());
             println!("Prompt length:   {} chars", prompt.len());
-            if let Some(ref agent) = config.agency.evolver_agent {
+            if let Some(ref agent) = config.identity.evolver_agent {
                 println!("Evolver agent:   {}", agent);
             }
             println!("\n--- Evolver Prompt ---\n");
@@ -302,16 +302,16 @@ pub fn run(
         return Ok(());
     }
 
-    // Determine evolver's own role/motivation IDs for self-mutation detection
+    // Determine evolver's own role/objective IDs for self-mutation detection
     let evolver_entity_ids: HashSet<String> = {
         let mut ids = HashSet::new();
-        if let Some(ref agent_hash) = config.agency.evolver_agent {
-            let agent_path = agency_dir
+        if let Some(ref agent_hash) = config.identity.evolver_agent {
+            let agent_path = identity_dir
                 .join("agents")
                 .join(format!("{}.yaml", agent_hash));
-            if let Ok(agent) = agency::load_agent(&agent_path) {
+            if let Ok(agent) = identity::load_agent(&agent_path) {
                 ids.insert(agent.role_id.clone());
-                ids.insert(agent.motivation_id);
+                ids.insert(agent.objective_id);
             }
         }
         ids
@@ -324,7 +324,7 @@ pub fn run(
 
     for op in &operations {
         // Self-mutation safety: operations targeting the evolver's own
-        // role or motivation are deferred to a verified workgraph task
+        // role or objective are deferred to a verified workgraph task
         // that requires human approval.
         if !evolver_entity_ids.is_empty()
             && let Some(ref target) = op.target_id
@@ -372,10 +372,10 @@ pub fn run(
         match apply_operation(
             op,
             &roles,
-            &motivations,
+            &objectives,
             actual_run_id,
             &roles_dir,
-            &motivations_dir,
+            &objectives_dir,
         ) {
             Ok(result) => {
                 applied += 1;
@@ -384,22 +384,22 @@ pub fn run(
                 }
                 results.push(result);
 
-                // Reload roles/motivations so subsequent operations see newly
+                // Reload roles/objectives so subsequent operations see newly
                 // created entities (e.g. a modify_role targeting a role that
                 // was just created in the same batch).
                 if matches!(
                     op.op.as_str(),
                     "create_role" | "modify_role" | "retire_role"
-                ) && let Ok(updated) = agency::load_all_roles(&roles_dir)
+                ) && let Ok(updated) = identity::load_all_roles(&roles_dir)
                 {
                     roles = updated;
                 }
                 if matches!(
                     op.op.as_str(),
-                    "create_motivation" | "modify_motivation" | "retire_motivation"
-                ) && let Ok(updated) = agency::load_all_motivations(&motivations_dir)
+                    "create_objective" | "modify_objective" | "retire_objective"
+                ) && let Ok(updated) = identity::load_all_objectives(&objectives_dir)
                 {
-                    motivations = updated;
+                    objectives = updated;
                 }
             }
             Err(e) => {
@@ -422,8 +422,8 @@ pub fn run(
         "budget": budget,
         "input": {
             "roles": roles.len(),
-            "motivations": motivations.len(),
-            "evaluations": evaluations.len(),
+            "objectives": objectives.len(),
+            "rewards": rewards.len(),
             "skill_documents": skill_docs.len(),
         },
         "operations_proposed": operations.len(),
@@ -434,7 +434,7 @@ pub fn run(
         "raw_output": raw_output.as_ref(),
     });
 
-    let runs_dir = agency_dir.join("evolution_runs");
+    let runs_dir = identity_dir.join("evolution_runs");
     fs::create_dir_all(&runs_dir)?;
     let report_path = runs_dir.join(format!("{}.json", actual_run_id));
     fs::write(&report_path, serde_json::to_string_pretty(&report)?)?;
@@ -468,19 +468,19 @@ pub fn run(
 
 fn build_performance_summary(
     roles: &[Role],
-    motivations: &[Motivation],
-    evaluations: &[Evaluation],
+    objectives: &[Objective],
+    rewards: &[Reward],
 ) -> String {
     let mut out = String::new();
 
     out.push_str("## Performance Summary\n\n");
 
     // Overview
-    let total_evals = evaluations.len();
+    let total_evals = rewards.len();
     let overall_avg = if total_evals > 0 {
-        let valid: Vec<f64> = evaluations
+        let valid: Vec<f64> = rewards
             .iter()
-            .map(|e| e.score)
+            .map(|e| e.value)
             .filter(|s| s.is_finite())
             .collect();
         if valid.is_empty() {
@@ -492,10 +492,10 @@ fn build_performance_summary(
         None
     };
     out.push_str(&format!("Total roles: {}\n", roles.len()));
-    out.push_str(&format!("Total motivations: {}\n", motivations.len()));
-    out.push_str(&format!("Total evaluations: {}\n", total_evals));
+    out.push_str(&format!("Total objectives: {}\n", objectives.len()));
+    out.push_str(&format!("Total rewards: {}\n", total_evals));
     if let Some(avg) = overall_avg {
-        out.push_str(&format!("Overall avg score: {:.3}\n", avg));
+        out.push_str(&format!("Overall avg reward: {:.3}\n", avg));
     }
     out.push('\n');
 
@@ -503,12 +503,12 @@ fn build_performance_summary(
     out.push_str("### Role Performance\n\n");
     for role in roles {
         out.push_str(&format!(
-            "- **{}** (id: `{}`): {} evals, avg_score: {}, gen: {}\n",
+            "- **{}** (id: `{}`): {} evals, mean_reward: {}, gen: {}\n",
             role.name,
             role.id,
             role.performance.task_count,
             role.performance
-                .avg_score
+                .mean_reward
                 .map(|s| format!("{:.3}", s))
                 .unwrap_or_else(|| "-".to_string()),
             role.lineage.generation,
@@ -526,8 +526,8 @@ fn build_performance_summary(
             ));
         }
 
-        // Dimension averages from evaluations
-        let role_evals: Vec<&Evaluation> = evaluations
+        // Dimension averages from rewards
+        let role_evals: Vec<&Reward> = rewards
             .iter()
             .filter(|e| e.role_id == role.id)
             .collect();
@@ -544,38 +544,38 @@ fn build_performance_summary(
         out.push('\n');
     }
 
-    // Motivation performance
-    out.push_str("### Motivation Performance\n\n");
-    for motivation in motivations {
+    // Objective performance
+    out.push_str("### Objective Performance\n\n");
+    for objective in objectives {
         out.push_str(&format!(
-            "- **{}** (id: `{}`): {} evals, avg_score: {}, gen: {}\n",
-            motivation.name,
-            motivation.id,
-            motivation.performance.task_count,
-            motivation
+            "- **{}** (id: `{}`): {} evals, mean_reward: {}, gen: {}\n",
+            objective.name,
+            objective.id,
+            objective.performance.task_count,
+            objective
                 .performance
-                .avg_score
+                .mean_reward
                 .map(|s| format!("{:.3}", s))
                 .unwrap_or_else(|| "-".to_string()),
-            motivation.lineage.generation,
+            objective.lineage.generation,
         ));
-        out.push_str(&format!("  description: {}\n", motivation.description));
-        if !motivation.acceptable_tradeoffs.is_empty() {
+        out.push_str(&format!("  description: {}\n", objective.description));
+        if !objective.acceptable_tradeoffs.is_empty() {
             out.push_str(&format!(
                 "  acceptable_tradeoffs: {}\n",
-                motivation.acceptable_tradeoffs.join("; ")
+                objective.acceptable_tradeoffs.join("; ")
             ));
         }
-        if !motivation.unacceptable_tradeoffs.is_empty() {
+        if !objective.unacceptable_tradeoffs.is_empty() {
             out.push_str(&format!(
                 "  unacceptable_tradeoffs: {}\n",
-                motivation.unacceptable_tradeoffs.join("; ")
+                objective.unacceptable_tradeoffs.join("; ")
             ));
         }
-        if !motivation.lineage.parent_ids.is_empty() {
+        if !objective.lineage.parent_ids.is_empty() {
             out.push_str(&format!(
                 "  parents: {}\n",
-                motivation.lineage.parent_ids.join(", ")
+                objective.lineage.parent_ids.join(", ")
             ));
         }
         out.push('\n');
@@ -583,14 +583,14 @@ fn build_performance_summary(
 
     // Synergy matrix
     let mut synergy: HashMap<(String, String), Vec<f64>> = HashMap::new();
-    for eval in evaluations {
+    for eval in rewards {
         synergy
-            .entry((eval.role_id.clone(), eval.motivation_id.clone()))
+            .entry((eval.role_id.clone(), eval.objective_id.clone()))
             .or_default()
-            .push(eval.score);
+            .push(eval.value);
     }
     if !synergy.is_empty() {
-        out.push_str("### Synergy Matrix (Role x Motivation)\n\n");
+        out.push_str("### Synergy Matrix (Role x Objective)\n\n");
         let mut pairs: Vec<_> = synergy.iter().collect();
         pairs.sort_by(|a, b| {
             let avg_a = a.1.iter().sum::<f64>() / a.1.len() as f64;
@@ -599,14 +599,14 @@ fn build_performance_summary(
                 .partial_cmp(&avg_a)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-        for ((role_id, mot_id), scores) in &pairs {
-            let avg = scores.iter().sum::<f64>() / scores.len() as f64;
+        for ((role_id, mot_id), values) in &pairs {
+            let avg = values.iter().sum::<f64>() / values.len() as f64;
             out.push_str(&format!(
                 "- ({}, {}): avg={:.3}, count={}\n",
                 role_id,
                 mot_id,
                 avg,
-                scores.len()
+                values.len()
             ));
         }
         out.push('\n');
@@ -615,12 +615,12 @@ fn build_performance_summary(
     out
 }
 
-fn aggregate_dimensions(evals: &[&Evaluation]) -> Vec<(String, f64)> {
+fn aggregate_dimensions(evals: &[&Reward]) -> Vec<(String, f64)> {
     let mut dim_sums: HashMap<String, (f64, usize)> = HashMap::new();
     for eval in evals {
-        for (dim, score) in &eval.dimensions {
+        for (dim, value) in &eval.dimensions {
             let entry = dim_sums.entry(dim.clone()).or_insert((0.0, 0));
-            entry.0 += score;
+            entry.0 += value;
             entry.1 += 1;
         }
     }
@@ -652,11 +652,11 @@ fn load_evolver_skills(skills_dir: &Path, strategy: Strategy) -> Result<Vec<(Str
         Strategy::Crossover => vec!["role-crossover.md"],
         Strategy::GapAnalysis => vec!["gap-analysis.md"],
         Strategy::Retirement => vec!["retirement.md"],
-        Strategy::MotivationTuning => vec!["motivation-tuning.md"],
+        Strategy::ObjectiveTuning => vec!["objective-tuning.md"],
         Strategy::All => vec![
             "role-mutation.md",
             "role-crossover.md",
-            "motivation-tuning.md",
+            "objective-tuning.md",
             "gap-analysis.md",
             "retirement.md",
         ],
@@ -692,23 +692,23 @@ fn build_evolver_prompt(
     budget: Option<u32>,
     config: &Config,
     roles: &[Role],
-    motivations: &[Motivation],
-    agency_dir: &Path,
+    objectives: &[Objective],
+    identity_dir: &Path,
 ) -> String {
     let mut out = String::new();
 
     // System instructions
     out.push_str("# Evolver Agent Instructions\n\n");
     out.push_str(
-        "You are the evolver agent for a workgraph agency system. Your job is to improve \
-         the agency's performance by evolving roles and motivations based on performance data.\n\n",
+        "You are the evolver agent for a workgraph identity system. Your job is to improve \
+         the identity's performance by evolving roles and objectives based on performance data.\n\n",
     );
 
     // Evolver's own identity (if configured via evolver_agent hash)
-    if let Some(ref agent_hash) = config.agency.evolver_agent {
-        let agents_dir = agency_dir.join("agents");
+    if let Some(ref agent_hash) = config.identity.evolver_agent {
+        let agents_dir = identity_dir.join("agents");
         let agent_path = agents_dir.join(format!("{}.yaml", agent_hash));
-        if let Ok(agent) = agency::load_agent(&agent_path) {
+        if let Ok(agent) = identity::load_agent(&agent_path) {
             if let Some(role) = roles.iter().find(|r| r.id == agent.role_id) {
                 out.push_str("## Your Identity\n\n");
                 out.push_str(&format!("**Role:** {} — {}\n", role.name, role.description));
@@ -717,20 +717,20 @@ fn build_evolver_prompt(
                     role.desired_outcome
                 ));
             }
-            if let Some(motivation) = motivations.iter().find(|m| m.id == agent.motivation_id) {
+            if let Some(objective) = objectives.iter().find(|m| m.id == agent.objective_id) {
                 out.push_str(&format!(
-                    "**Motivation:** {} — {}\n",
-                    motivation.name, motivation.description
+                    "**Objective:** {} — {}\n",
+                    objective.name, objective.description
                 ));
-                if !motivation.acceptable_tradeoffs.is_empty() {
+                if !objective.acceptable_tradeoffs.is_empty() {
                     out.push_str("**Acceptable trade-offs:**\n");
-                    for t in &motivation.acceptable_tradeoffs {
+                    for t in &objective.acceptable_tradeoffs {
                         out.push_str(&format!("- {}\n", t));
                     }
                 }
-                if !motivation.unacceptable_tradeoffs.is_empty() {
+                if !objective.unacceptable_tradeoffs.is_empty() {
                     out.push_str("**Non-negotiable constraints:**\n");
-                    for c in &motivation.unacceptable_tradeoffs {
+                    for c in &objective.unacceptable_tradeoffs {
                         out.push_str(&format!("- {}\n", c));
                     }
                 }
@@ -741,11 +741,11 @@ fn build_evolver_prompt(
 
     // Meta-agent assignments (assigner, evaluator, evolver)
     {
-        let agents_dir = agency_dir.join("agents");
+        let agents_dir = identity_dir.join("agents");
         let meta_agents: Vec<(&str, &Option<String>)> = vec![
-            ("Assigner", &config.agency.assigner_agent),
-            ("Evaluator", &config.agency.evaluator_agent),
-            ("Evolver", &config.agency.evolver_agent),
+            ("Assigner", &config.identity.assigner_agent),
+            ("Evaluator", &config.identity.evaluator_agent),
+            ("Evolver", &config.identity.evolver_agent),
         ];
         let mut has_any = false;
         for (label, agent_hash) in &meta_agents {
@@ -754,26 +754,26 @@ fn build_evolver_prompt(
                     out.push_str("## Meta-Agent Assignments\n\n");
                     out.push_str(
                         "These agents fill coordination roles (assigner, evaluator, evolver). \
-                         Their underlying roles and motivations are valid mutation targets. \
-                         **Evolving the evolver's own role or motivation requires human approval.**\n\n",
+                         Their underlying roles and objectives are valid mutation targets. \
+                         **Evolving the evolver's own role or objective requires human approval.**\n\n",
                     );
                     has_any = true;
                 }
                 let agent_path = agents_dir.join(format!("{}.yaml", hash));
-                if let Ok(agent) = agency::load_agent(&agent_path) {
+                if let Ok(agent) = identity::load_agent(&agent_path) {
                     let role_name = roles
                         .iter()
                         .find(|r| r.id == agent.role_id)
                         .map(|r| r.name.as_str())
                         .unwrap_or("unknown");
-                    let mot_name = motivations
+                    let mot_name = objectives
                         .iter()
-                        .find(|m| m.id == agent.motivation_id)
+                        .find(|m| m.id == agent.objective_id)
                         .map(|m| m.name.as_str())
                         .unwrap_or("unknown");
                     out.push_str(&format!(
-                        "- **{}**: agent `{}`, role `{}` ({}), motivation `{}` ({})\n",
-                        label, hash, agent.role_id, role_name, agent.motivation_id, mot_name,
+                        "- **{}**: agent `{}`, role `{}` ({}), objective `{}` ({})\n",
+                        label, hash, agent.role_id, role_name, agent.objective_id, mot_name,
                     ));
                 } else {
                     out.push_str(&format!(
@@ -794,7 +794,7 @@ fn build_evolver_prompt(
         Strategy::All => {
             out.push_str(
                 "Use ALL strategies as appropriate: mutation, crossover, gap-analysis, \
-                 motivation-tuning, and retirement. Analyze the performance data and choose \
+                 objective-tuning, and retirement. Analyze the performance data and choose \
                  the most impactful operations.\n\n",
             );
         }
@@ -815,7 +815,7 @@ fn build_evolver_prompt(
     }
 
     // Retention heuristics (prose policy from config)
-    if let Some(ref heuristics) = config.agency.retention_heuristics {
+    if let Some(ref heuristics) = config.identity.retention_heuristics {
         out.push_str("## Retention Policy\n\n");
         out.push_str(heuristics);
         out.push_str("\n\n");
@@ -847,7 +847,7 @@ fn build_evolver_prompt(
            \"run_id\": \"<a short unique id for this evolution run>\",\n  \
            \"operations\": [\n    \
              {\n      \
-               \"op\": \"<create_role|modify_role|create_motivation|modify_motivation|retire_role|retire_motivation>\",\n      \
+               \"op\": \"<create_role|modify_role|create_objective|modify_objective|retire_role|retire_objective>\",\n      \
                \"target_id\": \"<existing entity ID, for modify/retire ops>\",\n      \
                \"new_id\": \"<new entity ID>\",\n      \
                \"name\": \"<human-readable name>\",\n      \
@@ -867,11 +867,11 @@ fn build_evolver_prompt(
     out.push_str("### Operation Types\n\n");
     out.push_str("- **create_role**: Creates a brand new role (from gap-analysis). Requires: new_id, name, description, skills, desired_outcome.\n");
     out.push_str("- **modify_role**: Mutates or crosses over an existing role. Requires: target_id (parent), new_id, name, description, skills, desired_outcome.\n");
-    out.push_str("- **create_motivation**: Creates a new motivation (from gap-analysis). Requires: new_id, name, description, acceptable_tradeoffs, unacceptable_tradeoffs.\n");
-    out.push_str("- **modify_motivation**: Tunes an existing motivation. Requires: target_id (parent), new_id, name, description, acceptable_tradeoffs, unacceptable_tradeoffs.\n");
+    out.push_str("- **create_objective**: Creates a new objective (from gap-analysis). Requires: new_id, name, description, acceptable_tradeoffs, unacceptable_tradeoffs.\n");
+    out.push_str("- **modify_objective**: Tunes an existing objective. Requires: target_id (parent), new_id, name, description, acceptable_tradeoffs, unacceptable_tradeoffs.\n");
     out.push_str("- **retire_role**: Retires a poor-performing role. Requires: target_id.\n");
     out.push_str(
-        "- **retire_motivation**: Retires a poor-performing motivation. Requires: target_id.\n\n",
+        "- **retire_objective**: Retires a poor-performing objective. Requires: target_id.\n\n",
     );
 
     out.push_str("For modify operations involving crossover (two parents), set target_id to a comma-separated pair like \"parent-a,parent-b\".\n\n");
@@ -965,7 +965,7 @@ fn defer_self_mutation(op: &EvolverOperation, dir: &Path, run_id: &str) -> Resul
          ```json\n{op_json}\n```\n\n\
          ## Instructions\n\n\
          Review the proposed change. If acceptable, apply it manually with \
-         `wg evolve` or by editing the role/motivation YAML directly, then \
+         `wg evolve` or by editing the role/objective YAML directly, then \
          `wg approve {task_id}`.",
     );
 
@@ -983,7 +983,7 @@ fn defer_self_mutation(op: &EvolverOperation, dir: &Path, run_id: &str) -> Resul
         blocks: vec![],
         blocked_by: vec![],
         requires: vec![],
-        tags: vec!["evolution".to_string(), "agency".to_string()],
+        tags: vec!["evolution".to_string(), "identity".to_string()],
         skills: vec![],
         inputs: vec![],
         deliverables: vec![],
@@ -1021,20 +1021,20 @@ fn defer_self_mutation(op: &EvolverOperation, dir: &Path, run_id: &str) -> Resul
 fn apply_operation(
     op: &EvolverOperation,
     existing_roles: &[Role],
-    existing_motivations: &[Motivation],
+    existing_objectives: &[Objective],
     run_id: &str,
     roles_dir: &Path,
-    motivations_dir: &Path,
+    objectives_dir: &Path,
 ) -> Result<serde_json::Value> {
     match op.op.as_str() {
         "create_role" => apply_create_role(op, run_id, roles_dir),
         "modify_role" => apply_modify_role(op, existing_roles, run_id, roles_dir),
-        "create_motivation" => apply_create_motivation(op, run_id, motivations_dir),
-        "modify_motivation" => {
-            apply_modify_motivation(op, existing_motivations, run_id, motivations_dir)
+        "create_objective" => apply_create_objective(op, run_id, objectives_dir),
+        "modify_objective" => {
+            apply_modify_objective(op, existing_objectives, run_id, objectives_dir)
         }
         "retire_role" => apply_retire_role(op, existing_roles, roles_dir),
-        "retire_motivation" => apply_retire_motivation(op, existing_motivations, motivations_dir),
+        "retire_objective" => apply_retire_objective(op, existing_objectives, objectives_dir),
         other => bail!("Unknown operation type: '{}'", other),
     }
 }
@@ -1059,7 +1059,7 @@ fn apply_create_role(
 
     let description = op.description.clone().unwrap_or_default();
     let desired_outcome = op.desired_outcome.clone().unwrap_or_default();
-    let id = agency::content_hash_role(&skills, &desired_outcome, &description);
+    let id = identity::content_hash_role(&skills, &desired_outcome, &description);
 
     let role = Role {
         id: id.clone(),
@@ -1067,10 +1067,10 @@ fn apply_create_role(
         description,
         skills,
         desired_outcome,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage {
             parent_ids: vec![],
@@ -1080,7 +1080,7 @@ fn apply_create_role(
         },
     };
 
-    let path = agency::save_role(&role, roles_dir).context("Failed to save new role")?;
+    let path = identity::save_role(&role, roles_dir).context("Failed to save new role")?;
 
     Ok(serde_json::json!({
         "op": "create_role",
@@ -1145,7 +1145,7 @@ fn apply_modify_role(
 
     let description = op.description.clone().unwrap_or_default();
     let desired_outcome = op.desired_outcome.clone().unwrap_or_default();
-    let id = agency::content_hash_role(&skills, &desired_outcome, &description);
+    let id = identity::content_hash_role(&skills, &desired_outcome, &description);
 
     let role = Role {
         id: id.clone(),
@@ -1153,15 +1153,15 @@ fn apply_modify_role(
         description,
         skills,
         desired_outcome,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage,
     };
 
-    let path = agency::save_role(&role, roles_dir).context("Failed to save modified role")?;
+    let path = identity::save_role(&role, roles_dir).context("Failed to save modified role")?;
 
     Ok(serde_json::json!({
         "op": "modify_role",
@@ -1175,31 +1175,31 @@ fn apply_modify_role(
     }))
 }
 
-fn apply_create_motivation(
+fn apply_create_objective(
     op: &EvolverOperation,
     run_id: &str,
-    motivations_dir: &Path,
+    objectives_dir: &Path,
 ) -> Result<serde_json::Value> {
     let name = op
         .name
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("create_motivation requires name"))?;
+        .ok_or_else(|| anyhow::anyhow!("create_objective requires name"))?;
 
     let description = op.description.clone().unwrap_or_default();
     let acceptable = op.acceptable_tradeoffs.clone().unwrap_or_default();
     let unacceptable = op.unacceptable_tradeoffs.clone().unwrap_or_default();
-    let id = agency::content_hash_motivation(&acceptable, &unacceptable, &description);
+    let id = identity::content_hash_objective(&acceptable, &unacceptable, &description);
 
-    let motivation = Motivation {
+    let objective = Objective {
         id: id.clone(),
         name: name.to_string(),
         description,
         acceptable_tradeoffs: acceptable,
         unacceptable_tradeoffs: unacceptable,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage {
             parent_ids: vec![],
@@ -1209,11 +1209,11 @@ fn apply_create_motivation(
         },
     };
 
-    let path = agency::save_motivation(&motivation, motivations_dir)
-        .context("Failed to save new motivation")?;
+    let path = identity::save_objective(&objective, objectives_dir)
+        .context("Failed to save new objective")?;
 
     Ok(serde_json::json!({
-        "op": "create_motivation",
+        "op": "create_objective",
         "id": id,
         "name": name,
         "path": path.display().to_string(),
@@ -1221,16 +1221,16 @@ fn apply_create_motivation(
     }))
 }
 
-fn apply_modify_motivation(
+fn apply_modify_objective(
     op: &EvolverOperation,
-    existing_motivations: &[Motivation],
+    existing_objectives: &[Objective],
     run_id: &str,
-    motivations_dir: &Path,
+    objectives_dir: &Path,
 ) -> Result<serde_json::Value> {
     let target_id = op
         .target_id
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("modify_motivation requires target_id"))?;
+        .ok_or_else(|| anyhow::anyhow!("modify_objective requires target_id"))?;
 
     // Support crossover: target_id may be "parent-a,parent-b"
     let parent_ids: Vec<&str> = target_id
@@ -1240,24 +1240,24 @@ fn apply_modify_motivation(
         .collect();
 
     if parent_ids.is_empty() {
-        anyhow::bail!("modify_motivation target_id produced zero valid parent IDs after parsing");
+        anyhow::bail!("modify_objective target_id produced zero valid parent IDs after parsing");
     }
 
     let lineage = if parent_ids.len() == 1 {
-        let parent = existing_motivations
+        let parent = existing_objectives
             .iter()
             .find(|m| m.id == parent_ids[0])
-            .ok_or_else(|| anyhow::anyhow!("Parent motivation '{}' not found", parent_ids[0]))?;
+            .ok_or_else(|| anyhow::anyhow!("Parent objective '{}' not found", parent_ids[0]))?;
         Lineage::mutation(parent_ids[0], parent.lineage.generation, run_id)
     } else {
         for pid in &parent_ids {
-            if !existing_motivations.iter().any(|m| m.id == *pid) {
-                anyhow::bail!("Parent motivation '{}' not found for crossover", pid);
+            if !existing_objectives.iter().any(|m| m.id == *pid) {
+                anyhow::bail!("Parent objective '{}' not found for crossover", pid);
             }
         }
         let max_gen = parent_ids
             .iter()
-            .filter_map(|pid| existing_motivations.iter().find(|m| m.id == *pid))
+            .filter_map(|pid| existing_objectives.iter().find(|m| m.id == *pid))
             .map(|m| m.lineage.generation)
             .max()
             .unwrap_or(0);
@@ -1267,32 +1267,32 @@ fn apply_modify_motivation(
     let description = op.description.clone().unwrap_or_default();
     let acceptable = op.acceptable_tradeoffs.clone().unwrap_or_default();
     let unacceptable = op.unacceptable_tradeoffs.clone().unwrap_or_default();
-    let id = agency::content_hash_motivation(&acceptable, &unacceptable, &description);
+    let id = identity::content_hash_objective(&acceptable, &unacceptable, &description);
 
-    let motivation = Motivation {
+    let objective = Objective {
         id: id.clone(),
         name: op.name.clone().unwrap_or_else(|| id.clone()),
         description,
         acceptable_tradeoffs: acceptable,
         unacceptable_tradeoffs: unacceptable,
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage,
     };
 
-    let path = agency::save_motivation(&motivation, motivations_dir)
-        .context("Failed to save modified motivation")?;
+    let path = identity::save_objective(&objective, objectives_dir)
+        .context("Failed to save modified objective")?;
 
     Ok(serde_json::json!({
-        "op": "modify_motivation",
+        "op": "modify_objective",
         "target_id": target_id,
         "new_id": id,
-        "name": motivation.name,
-        "generation": motivation.lineage.generation,
-        "parent_ids": motivation.lineage.parent_ids,
+        "name": objective.name,
+        "generation": objective.lineage.generation,
+        "parent_ids": objective.lineage.parent_ids,
         "path": path.display().to_string(),
         "status": "applied",
     }))
@@ -1340,42 +1340,42 @@ fn apply_retire_role(
     }))
 }
 
-fn apply_retire_motivation(
+fn apply_retire_objective(
     op: &EvolverOperation,
-    existing_motivations: &[Motivation],
-    motivations_dir: &Path,
+    existing_objectives: &[Objective],
+    objectives_dir: &Path,
 ) -> Result<serde_json::Value> {
     let target_id = op
         .target_id
         .as_deref()
-        .ok_or_else(|| anyhow::anyhow!("retire_motivation requires target_id"))?;
+        .ok_or_else(|| anyhow::anyhow!("retire_objective requires target_id"))?;
 
-    // Verify the motivation exists
-    if !existing_motivations.iter().any(|m| m.id == target_id) {
-        bail!("Motivation '{}' not found", target_id);
+    // Verify the objective exists
+    if !existing_objectives.iter().any(|m| m.id == target_id) {
+        bail!("Objective '{}' not found", target_id);
     }
 
-    // Safety: never retire the last motivation
-    if existing_motivations.len() <= 1 {
+    // Safety: never retire the last objective
+    if existing_objectives.len() <= 1 {
         bail!(
-            "Cannot retire '{}': it is the only remaining motivation. Create a replacement first.",
+            "Cannot retire '{}': it is the only remaining objective. Create a replacement first.",
             target_id
         );
     }
 
     // Rename .yaml to .yaml.retired
-    let yaml_path = motivations_dir.join(format!("{}.yaml", target_id));
-    let retired_path = motivations_dir.join(format!("{}.yaml.retired", target_id));
+    let yaml_path = objectives_dir.join(format!("{}.yaml", target_id));
+    let retired_path = objectives_dir.join(format!("{}.yaml.retired", target_id));
 
     if yaml_path.exists() {
         fs::rename(&yaml_path, &retired_path)
-            .with_context(|| format!("Failed to retire motivation '{}'", target_id))?;
+            .with_context(|| format!("Failed to retire objective '{}'", target_id))?;
     } else {
-        bail!("Motivation file not found: {}", yaml_path.display());
+        bail!("Objective file not found: {}", yaml_path.display());
     }
 
     Ok(serde_json::json!({
-        "op": "retire_motivation",
+        "op": "retire_objective",
         "target_id": target_id,
         "retired_path": retired_path.display().to_string(),
         "status": "applied",
@@ -1408,17 +1408,17 @@ fn print_operation_result(op: &EvolverOperation, result: &serde_json::Value) {
                 result["generation"].as_u64().unwrap_or(0),
             );
         }
-        "create_motivation" => {
+        "create_objective" => {
             println!(
-                "  [{}] Created motivation: {} ({})",
+                "  [{}] Created objective: {} ({})",
                 symbol,
                 op.name.as_deref().unwrap_or("?"),
                 op.new_id.as_deref().unwrap_or("?"),
             );
         }
-        "modify_motivation" => {
+        "modify_objective" => {
             println!(
-                "  [{}] Modified motivation: {} -> {} (gen {})",
+                "  [{}] Modified objective: {} -> {} (gen {})",
                 symbol,
                 op.target_id.as_deref().unwrap_or("?"),
                 op.new_id.as_deref().unwrap_or("?"),
@@ -1432,9 +1432,9 @@ fn print_operation_result(op: &EvolverOperation, result: &serde_json::Value) {
                 op.target_id.as_deref().unwrap_or("?"),
             );
         }
-        "retire_motivation" => {
+        "retire_objective" => {
             println!(
-                "  [{}] Retired motivation: {}",
+                "  [{}] Retired objective: {}",
                 symbol,
                 op.target_id.as_deref().unwrap_or("?"),
             );
@@ -1473,8 +1473,8 @@ mod tests {
             Strategy::Retirement
         );
         assert_eq!(
-            Strategy::from_str("motivation-tuning").unwrap(),
-            Strategy::MotivationTuning
+            Strategy::from_str("objective-tuning").unwrap(),
+            Strategy::ObjectiveTuning
         );
         assert_eq!(Strategy::from_str("all").unwrap(), Strategy::All);
         assert!(Strategy::from_str("invalid").is_err());
@@ -1538,7 +1538,7 @@ mod tests {
                 {
                     "op": "retire_role",
                     "target_id": "bad-role",
-                    "rationale": "Consistently low scores"
+                    "rationale": "Consistently low values"
                 }
             ]
         }"#;
@@ -1553,7 +1553,7 @@ mod tests {
     fn test_build_performance_summary_empty() {
         let summary = build_performance_summary(&[], &[], &[]);
         assert!(summary.contains("Total roles: 0"));
-        assert!(summary.contains("Total evaluations: 0"));
+        assert!(summary.contains("Total rewards: 0"));
     }
 
     #[test]
@@ -1564,28 +1564,28 @@ mod tests {
             description: "Test role".into(),
             skills: vec![],
             desired_outcome: "Test".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 2,
-                avg_score: Some(0.75),
-                evaluations: vec![],
+                mean_reward: Some(0.75),
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         }];
-        let motivations = vec![Motivation {
+        let objectives = vec![Objective {
             id: "m1".into(),
             name: "Mot 1".into(),
-            description: "Test motivation".into(),
+            description: "Test objective".into(),
             acceptable_tradeoffs: vec![],
             unacceptable_tradeoffs: vec![],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 1,
-                avg_score: Some(0.60),
-                evaluations: vec![],
+                mean_reward: Some(0.60),
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         }];
 
-        let summary = build_performance_summary(&roles, &motivations, &[]);
+        let summary = build_performance_summary(&roles, &objectives, &[]);
         assert!(summary.contains("Role 1"));
         assert!(summary.contains("Mot 1"));
         assert!(summary.contains("0.750"));
@@ -1622,7 +1622,7 @@ mod tests {
         let role_path = roles_dir.join(format!("{}.yaml", id));
         assert!(role_path.exists());
 
-        let role = agency::load_role(&role_path).unwrap();
+        let role = identity::load_role(&role_path).unwrap();
         assert_eq!(role.id, id);
         assert_eq!(role.name, "New Role");
         assert_eq!(role.skills.len(), 2);
@@ -1642,10 +1642,10 @@ mod tests {
             description: "Original".into(),
             skills: vec![SkillRef::Name("coding".into())],
             desired_outcome: "Code well".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 5,
-                avg_score: Some(0.55),
-                evaluations: vec![],
+                mean_reward: Some(0.55),
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
@@ -1660,7 +1660,7 @@ mod tests {
             desired_outcome: Some("Code and test well".into()),
             acceptable_tradeoffs: None,
             unacceptable_tradeoffs: None,
-            rationale: Some("Low completeness scores".into()),
+            rationale: Some("Low completeness values".into()),
         };
 
         let result = apply_modify_role(&op, &[parent], "test-run", &roles_dir).unwrap();
@@ -1672,7 +1672,7 @@ mod tests {
         assert!(new_id.len() == 64, "ID should be a full SHA-256 hex hash");
         assert_ne!(new_id, "parent-role-m1");
 
-        let role = agency::load_role(&roles_dir.join(format!("{}.yaml", new_id))).unwrap();
+        let role = identity::load_role(&roles_dir.join(format!("{}.yaml", new_id))).unwrap();
         assert_eq!(role.lineage.parent_ids, vec!["parent-role"]);
         assert_eq!(role.lineage.generation, 1);
     }
@@ -1690,10 +1690,10 @@ mod tests {
             description: "".into(),
             skills: vec![],
             desired_outcome: "".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
@@ -1703,16 +1703,16 @@ mod tests {
             description: "".into(),
             skills: vec![],
             desired_outcome: "".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
 
-        agency::save_role(&role_a, &roles_dir).unwrap();
-        agency::save_role(&role_b, &roles_dir).unwrap();
+        identity::save_role(&role_a, &roles_dir).unwrap();
+        identity::save_role(&role_b, &roles_dir).unwrap();
 
         let op = EvolverOperation {
             op: "retire_role".into(),
@@ -1747,14 +1747,14 @@ mod tests {
             description: "".into(),
             skills: vec![],
             desired_outcome: "".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
-        agency::save_role(&role, &roles_dir).unwrap();
+        identity::save_role(&role, &roles_dir).unwrap();
 
         let op = EvolverOperation {
             op: "retire_role".into(),
@@ -1805,7 +1805,7 @@ mod tests {
                     "description": "Improved developer with testing focus",
                     "skills": ["coding", "testing", "debugging"],
                     "desired_outcome": "Well-tested code",
-                    "rationale": "Low test coverage scores"
+                    "rationale": "Low test coverage values"
                 },
                 {
                     "op": "retire_role",
@@ -1813,31 +1813,31 @@ mod tests {
                     "rationale": "Consistently underperforming"
                 },
                 {
-                    "op": "create_motivation",
+                    "op": "create_objective",
                     "new_id": "security-first",
                     "name": "Security First",
                     "description": "Prioritizes security above all else",
                     "acceptable_tradeoffs": ["Slower delivery", "More verbose code"],
                     "unacceptable_tradeoffs": ["Known vulnerabilities", "Skipping auth checks"],
-                    "rationale": "Need security-oriented motivation"
+                    "rationale": "Need security-oriented objective"
                 },
                 {
-                    "op": "modify_motivation",
+                    "op": "modify_objective",
                     "target_id": "existing-mot",
                     "new_id": "existing-mot-v2",
                     "name": "Tuned Careful",
                     "description": "Relaxed speed constraints",
                     "acceptable_tradeoffs": ["Moderate slowness"],
                     "unacceptable_tradeoffs": ["Untested code"],
-                    "rationale": "Motivation was too conservative"
+                    "rationale": "Objective was too conservative"
                 },
                 {
-                    "op": "retire_motivation",
+                    "op": "retire_objective",
                     "target_id": "bad-mot",
                     "rationale": "Produced poor outcomes"
                 }
             ],
-            "summary": "Comprehensive evolution: added security role/motivation, improved dev, retired underperformers"
+            "summary": "Comprehensive evolution: added security role/objective, improved dev, retired underperformers"
         }"#;
 
         let output = parse_evolver_output(raw).unwrap();
@@ -1845,16 +1845,16 @@ mod tests {
         assert_eq!(output.operations.len(), 6);
         assert_eq!(
             output.summary,
-            Some("Comprehensive evolution: added security role/motivation, improved dev, retired underperformers".to_string())
+            Some("Comprehensive evolution: added security role/objective, improved dev, retired underperformers".to_string())
         );
 
         // Verify operation types in order
         assert_eq!(output.operations[0].op, "create_role");
         assert_eq!(output.operations[1].op, "modify_role");
         assert_eq!(output.operations[2].op, "retire_role");
-        assert_eq!(output.operations[3].op, "create_motivation");
-        assert_eq!(output.operations[4].op, "modify_motivation");
-        assert_eq!(output.operations[5].op, "retire_motivation");
+        assert_eq!(output.operations[3].op, "create_objective");
+        assert_eq!(output.operations[4].op, "modify_objective");
+        assert_eq!(output.operations[5].op, "retire_objective");
 
         // Verify fields on the create_role operation
         let create_role = &output.operations[0];
@@ -1872,7 +1872,7 @@ mod tests {
             Some("Comprehensive security report with remediation steps".to_string())
         );
 
-        // Verify fields on the create_motivation operation
+        // Verify fields on the create_objective operation
         let create_mot = &output.operations[3];
         assert_eq!(
             create_mot.acceptable_tradeoffs,
@@ -1949,17 +1949,17 @@ Let me know if you'd like me to adjust anything."#;
     }
 
     // =======================================================================
-    // apply_operations: create/modify/retire motivations with lineage
+    // apply_operations: create/modify/retire objectives with lineage
     // =======================================================================
 
     #[test]
-    fn test_apply_create_motivation() {
+    fn test_apply_create_objective() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
         let op = EvolverOperation {
-            op: "create_motivation".into(),
+            op: "create_objective".into(),
             target_id: None,
             new_id: Some("new-mot".into()),
             name: Some("Security First".into()),
@@ -1971,9 +1971,9 @@ Let me know if you'd like me to adjust anything."#;
             rationale: Some("Gap analysis".into()),
         };
 
-        let result = apply_create_motivation(&op, "test-run", &motivations_dir).unwrap();
+        let result = apply_create_objective(&op, "test-run", &objectives_dir).unwrap();
         assert_eq!(result["status"], "applied");
-        assert_eq!(result["op"], "create_motivation");
+        assert_eq!(result["op"], "create_objective");
 
         // ID should be a content hash, not the LLM-suggested new_id
         let id = result["id"].as_str().unwrap();
@@ -1981,34 +1981,34 @@ Let me know if you'd like me to adjust anything."#;
         assert_ne!(id, "new-mot");
 
         // Verify the file was created and can be loaded
-        let mot_path = motivations_dir.join(format!("{}.yaml", id));
+        let mot_path = objectives_dir.join(format!("{}.yaml", id));
         assert!(mot_path.exists());
 
-        let motivation = agency::load_motivation(&mot_path).unwrap();
-        assert_eq!(motivation.id, id);
-        assert_eq!(motivation.name, "Security First");
-        assert_eq!(motivation.description, "Prioritizes security");
+        let objective = identity::load_objective(&mot_path).unwrap();
+        assert_eq!(objective.id, id);
+        assert_eq!(objective.name, "Security First");
+        assert_eq!(objective.description, "Prioritizes security");
         assert_eq!(
-            motivation.acceptable_tradeoffs,
+            objective.acceptable_tradeoffs,
             vec!["Slower delivery", "More verbose code"]
         );
         assert_eq!(
-            motivation.unacceptable_tradeoffs,
+            objective.unacceptable_tradeoffs,
             vec!["Known vulnerabilities"]
         );
-        assert_eq!(motivation.lineage.generation, 0);
-        assert!(motivation.lineage.created_by.contains("test-run"));
-        assert!(motivation.lineage.parent_ids.is_empty());
+        assert_eq!(objective.lineage.generation, 0);
+        assert!(objective.lineage.created_by.contains("test-run"));
+        assert!(objective.lineage.parent_ids.is_empty());
     }
 
     #[test]
-    fn test_apply_create_motivation_missing_name_fails() {
+    fn test_apply_create_objective_missing_name_fails() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
         let op = EvolverOperation {
-            op: "create_motivation".into(),
+            op: "create_objective".into(),
             target_id: None,
             new_id: None,
             name: None, // missing!
@@ -2020,27 +2020,27 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result = apply_create_motivation(&op, "test-run", &motivations_dir);
+        let result = apply_create_objective(&op, "test-run", &objectives_dir);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("requires name"));
     }
 
     #[test]
-    fn test_apply_modify_motivation() {
+    fn test_apply_modify_objective() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
-        let parent = Motivation {
+        let parent = Objective {
             id: "parent-mot".into(),
             name: "Careful".into(),
             description: "Prioritizes reliability".into(),
             acceptable_tradeoffs: vec!["Slow".into()],
             unacceptable_tradeoffs: vec!["Untested code".into()],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 3,
-                avg_score: Some(0.65),
-                evaluations: vec![],
+                mean_reward: Some(0.65),
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec![],
@@ -2051,7 +2051,7 @@ Let me know if you'd like me to adjust anything."#;
         };
 
         let op = EvolverOperation {
-            op: "modify_motivation".into(),
+            op: "modify_objective".into(),
             target_id: Some("parent-mot".into()),
             new_id: Some("parent-mot-v2".into()),
             name: Some("Carefully Fast".into()),
@@ -2060,12 +2060,12 @@ Let me know if you'd like me to adjust anything."#;
             desired_outcome: None,
             acceptable_tradeoffs: Some(vec!["Moderate slowness".into()]),
             unacceptable_tradeoffs: Some(vec!["Untested code".into(), "Known bugs".into()]),
-            rationale: Some("Motivation was too conservative".into()),
+            rationale: Some("Objective was too conservative".into()),
         };
 
-        let result = apply_modify_motivation(&op, &[parent], "test-run", &motivations_dir).unwrap();
+        let result = apply_modify_objective(&op, &[parent], "test-run", &objectives_dir).unwrap();
         assert_eq!(result["status"], "applied");
-        assert_eq!(result["op"], "modify_motivation");
+        assert_eq!(result["op"], "modify_objective");
         assert_eq!(result["target_id"], "parent-mot");
         assert_eq!(result["generation"], 1);
 
@@ -2084,7 +2084,7 @@ Let me know if you'd like me to adjust anything."#;
 
         // Load and verify
         let mot =
-            agency::load_motivation(&motivations_dir.join(format!("{}.yaml", new_id))).unwrap();
+            identity::load_objective(&objectives_dir.join(format!("{}.yaml", new_id))).unwrap();
         assert_eq!(mot.name, "Carefully Fast");
         assert_eq!(mot.lineage.generation, 1);
         assert_eq!(mot.lineage.parent_ids, vec!["parent-mot"]);
@@ -2092,13 +2092,13 @@ Let me know if you'd like me to adjust anything."#;
     }
 
     #[test]
-    fn test_apply_modify_motivation_missing_target_fails() {
+    fn test_apply_modify_objective_missing_target_fails() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
         let op = EvolverOperation {
-            op: "modify_motivation".into(),
+            op: "modify_objective".into(),
             target_id: None, // missing!
             new_id: None,
             name: Some("X".into()),
@@ -2110,7 +2110,7 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result = apply_modify_motivation(&op, &[], "test-run", &motivations_dir);
+        let result = apply_modify_objective(&op, &[], "test-run", &objectives_dir);
         assert!(result.is_err());
         assert!(
             result
@@ -2121,13 +2121,13 @@ Let me know if you'd like me to adjust anything."#;
     }
 
     #[test]
-    fn test_apply_modify_motivation_parent_not_found_fails() {
+    fn test_apply_modify_objective_parent_not_found_fails() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
         let op = EvolverOperation {
-            op: "modify_motivation".into(),
+            op: "modify_objective".into(),
             target_id: Some("nonexistent".into()),
             new_id: None,
             name: None,
@@ -2139,27 +2139,27 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result = apply_modify_motivation(&op, &[], "test-run", &motivations_dir);
+        let result = apply_modify_objective(&op, &[], "test-run", &objectives_dir);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
 
     #[test]
-    fn test_apply_modify_motivation_crossover() {
+    fn test_apply_modify_objective_crossover() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
-        let parent_a = Motivation {
+        let parent_a = Objective {
             id: "mot-careful".into(),
             name: "Careful".into(),
             description: "Prioritizes reliability".into(),
             acceptable_tradeoffs: vec!["Slow".into()],
             unacceptable_tradeoffs: vec!["Untested".into()],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 5,
-                avg_score: Some(0.7),
-                evaluations: vec![],
+                mean_reward: Some(0.7),
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec![],
@@ -2169,16 +2169,16 @@ Let me know if you'd like me to adjust anything."#;
             },
         };
 
-        let parent_b = Motivation {
+        let parent_b = Objective {
             id: "mot-fast".into(),
             name: "Fast".into(),
             description: "Prioritizes speed".into(),
             acceptable_tradeoffs: vec!["Verbose".into()],
             unacceptable_tradeoffs: vec!["Unreliable".into()],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 3,
-                avg_score: Some(0.8),
-                evaluations: vec![],
+                mean_reward: Some(0.8),
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec![],
@@ -2189,7 +2189,7 @@ Let me know if you'd like me to adjust anything."#;
         };
 
         let op = EvolverOperation {
-            op: "modify_motivation".into(),
+            op: "modify_objective".into(),
             target_id: Some("mot-careful,mot-fast".into()),
             new_id: None,
             name: Some("Balanced".into()),
@@ -2202,7 +2202,7 @@ Let me know if you'd like me to adjust anything."#;
         };
 
         let result =
-            apply_modify_motivation(&op, &[parent_a, parent_b], "test-run", &motivations_dir)
+            apply_modify_objective(&op, &[parent_a, parent_b], "test-run", &objectives_dir)
                 .unwrap();
         assert_eq!(result["status"], "applied");
 
@@ -2224,34 +2224,34 @@ Let me know if you'd like me to adjust anything."#;
 
         // Load and verify
         let mot =
-            agency::load_motivation(&motivations_dir.join(format!("{}.yaml", new_id))).unwrap();
+            identity::load_objective(&objectives_dir.join(format!("{}.yaml", new_id))).unwrap();
         assert_eq!(mot.name, "Balanced");
         assert_eq!(mot.lineage.generation, 3);
         assert_eq!(mot.lineage.parent_ids, vec!["mot-careful", "mot-fast"]);
     }
 
     #[test]
-    fn test_apply_modify_motivation_crossover_missing_parent_fails() {
+    fn test_apply_modify_objective_crossover_missing_parent_fails() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
-        let parent_a = Motivation {
+        let parent_a = Objective {
             id: "mot-a".into(),
             name: "A".into(),
             description: "".into(),
             acceptable_tradeoffs: vec![],
             unacceptable_tradeoffs: vec![],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
 
         let op = EvolverOperation {
-            op: "modify_motivation".into(),
+            op: "modify_objective".into(),
             target_id: Some("mot-a,nonexistent".into()),
             new_id: None,
             name: None,
@@ -2263,7 +2263,7 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result = apply_modify_motivation(&op, &[parent_a], "test-run", &motivations_dir);
+        let result = apply_modify_objective(&op, &[parent_a], "test-run", &objectives_dir);
         assert!(result.is_err());
         assert!(
             result
@@ -2274,43 +2274,43 @@ Let me know if you'd like me to adjust anything."#;
     }
 
     #[test]
-    fn test_apply_retire_motivation() {
+    fn test_apply_retire_objective() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
-        let mot_a = Motivation {
+        let mot_a = Objective {
             id: "mot-a".into(),
             name: "A".into(),
             description: "".into(),
             acceptable_tradeoffs: vec![],
             unacceptable_tradeoffs: vec![],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
-        let mot_b = Motivation {
+        let mot_b = Objective {
             id: "mot-b".into(),
             name: "B".into(),
             description: "".into(),
             acceptable_tradeoffs: vec![],
             unacceptable_tradeoffs: vec![],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
 
-        agency::save_motivation(&mot_a, &motivations_dir).unwrap();
-        agency::save_motivation(&mot_b, &motivations_dir).unwrap();
+        identity::save_objective(&mot_a, &objectives_dir).unwrap();
+        identity::save_objective(&mot_b, &objectives_dir).unwrap();
 
         let op = EvolverOperation {
-            op: "retire_motivation".into(),
+            op: "retire_objective".into(),
             target_id: Some("mot-a".into()),
             new_id: None,
             name: None,
@@ -2322,38 +2322,38 @@ Let me know if you'd like me to adjust anything."#;
             rationale: Some("Poor outcomes".into()),
         };
 
-        let result = apply_retire_motivation(&op, &[mot_a, mot_b], &motivations_dir).unwrap();
+        let result = apply_retire_objective(&op, &[mot_a, mot_b], &objectives_dir).unwrap();
         assert_eq!(result["status"], "applied");
-        assert_eq!(result["op"], "retire_motivation");
+        assert_eq!(result["op"], "retire_objective");
 
         // .yaml should be gone, .yaml.retired should exist
-        assert!(!motivations_dir.join("mot-a.yaml").exists());
-        assert!(motivations_dir.join("mot-a.yaml.retired").exists());
+        assert!(!objectives_dir.join("mot-a.yaml").exists());
+        assert!(objectives_dir.join("mot-a.yaml.retired").exists());
     }
 
     #[test]
-    fn test_retire_last_motivation_fails() {
+    fn test_retire_last_objective_fails() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
-        let mot = Motivation {
+        let mot = Objective {
             id: "only-mot".into(),
             name: "Only".into(),
             description: "".into(),
             acceptable_tradeoffs: vec![],
             unacceptable_tradeoffs: vec![],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
-        agency::save_motivation(&mot, &motivations_dir).unwrap();
+        identity::save_objective(&mot, &objectives_dir).unwrap();
 
         let op = EvolverOperation {
-            op: "retire_motivation".into(),
+            op: "retire_objective".into(),
             target_id: Some("only-mot".into()),
             new_id: None,
             name: None,
@@ -2365,38 +2365,38 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result = apply_retire_motivation(&op, &[mot], &motivations_dir);
+        let result = apply_retire_objective(&op, &[mot], &objectives_dir);
         assert!(result.is_err());
         assert!(
             result
                 .unwrap_err()
                 .to_string()
-                .contains("only remaining motivation")
+                .contains("only remaining objective")
         );
     }
 
     #[test]
-    fn test_retire_motivation_not_found_fails() {
+    fn test_retire_objective_not_found_fails() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
-        let mot = Motivation {
+        let mot = Objective {
             id: "mot-x".into(),
             name: "X".into(),
             description: "".into(),
             acceptable_tradeoffs: vec![],
             unacceptable_tradeoffs: vec![],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         };
 
         let op = EvolverOperation {
-            op: "retire_motivation".into(),
+            op: "retire_objective".into(),
             target_id: Some("nonexistent".into()),
             new_id: None,
             name: None,
@@ -2408,7 +2408,7 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result = apply_retire_motivation(&op, &[mot], &motivations_dir);
+        let result = apply_retire_objective(&op, &[mot], &objectives_dir);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
     }
@@ -2429,10 +2429,10 @@ Let me know if you'd like me to adjust anything."#;
             description: "Writes code".into(),
             skills: vec![SkillRef::Name("coding".into())],
             desired_outcome: "Working code".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 10,
-                avg_score: Some(0.7),
-                evaluations: vec![],
+                mean_reward: Some(0.7),
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec![],
@@ -2448,10 +2448,10 @@ Let me know if you'd like me to adjust anything."#;
             description: "Tests code".into(),
             skills: vec![SkillRef::Name("testing".into())],
             desired_outcome: "Well-tested code".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 8,
-                avg_score: Some(0.8),
-                evaluations: vec![],
+                mean_reward: Some(0.8),
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec![],
@@ -2494,7 +2494,7 @@ Let me know if you'd like me to adjust anything."#;
         assert_eq!(new_id.len(), 64);
 
         // Load and verify
-        let role = agency::load_role(&roles_dir.join(format!("{}.yaml", new_id))).unwrap();
+        let role = identity::load_role(&roles_dir.join(format!("{}.yaml", new_id))).unwrap();
         assert_eq!(role.name, "Dev-Tester Hybrid");
         assert_eq!(role.skills.len(), 3);
         assert_eq!(role.lineage.generation, 3);
@@ -2563,9 +2563,9 @@ Let me know if you'd like me to adjust anything."#;
     fn test_apply_operation_dispatches_create_role() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let roles_dir = temp_dir.path().join("roles");
-        let motivations_dir = temp_dir.path().join("motivations");
+        let objectives_dir = temp_dir.path().join("objectives");
         fs::create_dir_all(&roles_dir).unwrap();
-        fs::create_dir_all(&motivations_dir).unwrap();
+        fs::create_dir_all(&objectives_dir).unwrap();
 
         let op = EvolverOperation {
             op: "create_role".into(),
@@ -2581,7 +2581,7 @@ Let me know if you'd like me to adjust anything."#;
         };
 
         let result =
-            apply_operation(&op, &[], &[], "run-dispatch", &roles_dir, &motivations_dir).unwrap();
+            apply_operation(&op, &[], &[], "run-dispatch", &roles_dir, &objectives_dir).unwrap();
         assert_eq!(result["status"], "applied");
         assert_eq!(result["op"], "create_role");
     }
@@ -2590,9 +2590,9 @@ Let me know if you'd like me to adjust anything."#;
     fn test_apply_operation_unknown_op_fails() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let roles_dir = temp_dir.path().join("roles");
-        let motivations_dir = temp_dir.path().join("motivations");
+        let objectives_dir = temp_dir.path().join("objectives");
         fs::create_dir_all(&roles_dir).unwrap();
-        fs::create_dir_all(&motivations_dir).unwrap();
+        fs::create_dir_all(&objectives_dir).unwrap();
 
         let op = EvolverOperation {
             op: "delete_everything".into(),
@@ -2607,7 +2607,7 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result = apply_operation(&op, &[], &[], "run-bad", &roles_dir, &motivations_dir);
+        let result = apply_operation(&op, &[], &[], "run-bad", &roles_dir, &objectives_dir);
         assert!(result.is_err());
         assert!(
             result
@@ -2648,13 +2648,13 @@ Let me know if you'd like me to adjust anything."#;
     }
 
     #[test]
-    fn test_create_motivation_deterministic_id() {
+    fn test_create_objective_deterministic_id() {
         let temp_dir = tempfile::TempDir::new().unwrap();
-        let motivations_dir = temp_dir.path().join("motivations");
-        fs::create_dir_all(&motivations_dir).unwrap();
+        let objectives_dir = temp_dir.path().join("objectives");
+        fs::create_dir_all(&objectives_dir).unwrap();
 
         let op = EvolverOperation {
-            op: "create_motivation".into(),
+            op: "create_objective".into(),
             target_id: None,
             new_id: None,
             name: Some("Deterministic".into()),
@@ -2666,8 +2666,8 @@ Let me know if you'd like me to adjust anything."#;
             rationale: None,
         };
 
-        let result1 = apply_create_motivation(&op, "run-1", &motivations_dir).unwrap();
-        let result2 = apply_create_motivation(&op, "run-2", &motivations_dir).unwrap();
+        let result1 = apply_create_objective(&op, "run-1", &objectives_dir).unwrap();
+        let result2 = apply_create_objective(&op, "run-2", &objectives_dir).unwrap();
 
         assert_eq!(result1["id"], result2["id"]);
     }
@@ -2683,26 +2683,26 @@ Let me know if you'd like me to adjust anything."#;
             description: "A test role".into(),
             skills: vec![SkillRef::Name("testing".into())],
             desired_outcome: "Pass tests".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 5,
-                avg_score: Some(0.75),
-                evaluations: vec![],
+                mean_reward: Some(0.75),
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         }]
     }
 
-    fn make_test_motivations() -> Vec<Motivation> {
-        vec![Motivation {
+    fn make_test_objectives() -> Vec<Objective> {
+        vec![Objective {
             id: "test-mot".into(),
-            name: "Test Motivation".into(),
-            description: "A test motivation".into(),
+            name: "Test Objective".into(),
+            description: "A test objective".into(),
             acceptable_tradeoffs: vec!["Slow".into()],
             unacceptable_tradeoffs: vec!["Broken".into()],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 3,
-                avg_score: Some(0.60),
-                evaluations: vec![],
+                mean_reward: Some(0.60),
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         }]
@@ -2711,8 +2711,8 @@ Let me know if you'd like me to adjust anything."#;
     #[test]
     fn test_build_prompt_mutation_strategy() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let config = Config::default();
 
         let prompt = build_evolver_prompt(
@@ -2722,7 +2722,7 @@ Let me know if you'd like me to adjust anything."#;
             None,
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
@@ -2731,7 +2731,7 @@ Let me know if you'd like me to adjust anything."#;
         assert!(prompt.contains("Focus on the **mutation** strategy"));
         assert!(prompt.contains("Performance Summary"));
         assert!(prompt.contains("Test Role"));
-        assert!(prompt.contains("Test Motivation"));
+        assert!(prompt.contains("Test Objective"));
         assert!(prompt.contains("Required Output Format"));
         assert!(prompt.contains("create_role"));
         assert!(prompt.contains("modify_role"));
@@ -2740,8 +2740,8 @@ Let me know if you'd like me to adjust anything."#;
     #[test]
     fn test_build_prompt_crossover_strategy() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let config = Config::default();
 
         let prompt = build_evolver_prompt(
@@ -2751,7 +2751,7 @@ Let me know if you'd like me to adjust anything."#;
             Some(3),
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
@@ -2762,8 +2762,8 @@ Let me know if you'd like me to adjust anything."#;
     #[test]
     fn test_build_prompt_gap_analysis_strategy() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let config = Config::default();
 
         let prompt = build_evolver_prompt(
@@ -2773,7 +2773,7 @@ Let me know if you'd like me to adjust anything."#;
             None,
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
@@ -2783,8 +2783,8 @@ Let me know if you'd like me to adjust anything."#;
     #[test]
     fn test_build_prompt_retirement_strategy() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let config = Config::default();
 
         let prompt = build_evolver_prompt(
@@ -2794,7 +2794,7 @@ Let me know if you'd like me to adjust anything."#;
             None,
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
@@ -2802,31 +2802,31 @@ Let me know if you'd like me to adjust anything."#;
     }
 
     #[test]
-    fn test_build_prompt_motivation_tuning_strategy() {
+    fn test_build_prompt_objective_tuning_strategy() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let config = Config::default();
 
         let prompt = build_evolver_prompt(
             &perf,
             &[],
-            Strategy::MotivationTuning,
+            Strategy::ObjectiveTuning,
             None,
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
-        assert!(prompt.contains("Focus on the **motivation-tuning** strategy"));
+        assert!(prompt.contains("Focus on the **objective-tuning** strategy"));
     }
 
     #[test]
     fn test_build_prompt_all_strategy() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let config = Config::default();
 
         let prompt = build_evolver_prompt(
@@ -2836,7 +2836,7 @@ Let me know if you'd like me to adjust anything."#;
             None,
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
@@ -2848,8 +2848,8 @@ Let me know if you'd like me to adjust anything."#;
     #[test]
     fn test_build_prompt_includes_skill_docs() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let config = Config::default();
 
         let skill_docs = vec![
@@ -2870,7 +2870,7 @@ Let me know if you'd like me to adjust anything."#;
             None,
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
@@ -2884,11 +2884,11 @@ Let me know if you'd like me to adjust anything."#;
     #[test]
     fn test_build_prompt_includes_retention_heuristics() {
         let roles = make_test_roles();
-        let motivations = make_test_motivations();
-        let perf = build_performance_summary(&roles, &motivations, &[]);
+        let objectives = make_test_objectives();
+        let perf = build_performance_summary(&roles, &objectives, &[]);
         let mut config = Config::default();
-        config.agency.retention_heuristics =
-            Some("Retire roles scoring below 0.3 after 10 evaluations".to_string());
+        config.identity.retention_heuristics =
+            Some("Retire roles scoring below 0.3 after 10 rewards".to_string());
 
         let prompt = build_evolver_prompt(
             &perf,
@@ -2897,20 +2897,20 @@ Let me know if you'd like me to adjust anything."#;
             None,
             &config,
             &roles,
-            &motivations,
+            &objectives,
             Path::new("/tmp/fake"),
         );
 
         assert!(prompt.contains("Retention Policy"));
-        assert!(prompt.contains("Retire roles scoring below 0.3 after 10 evaluations"));
+        assert!(prompt.contains("Retire roles scoring below 0.3 after 10 rewards"));
     }
 
     // =======================================================================
-    // Performance summary: evaluations with dimensions
+    // Performance summary: rewards with dimensions
     // =======================================================================
 
     #[test]
-    fn test_build_performance_summary_with_evaluations_and_synergy() {
+    fn test_build_performance_summary_with_rewards_and_synergy() {
         let roles = vec![
             Role {
                 id: "r1".into(),
@@ -2918,10 +2918,10 @@ Let me know if you'd like me to adjust anything."#;
                 description: "Developer".into(),
                 skills: vec![SkillRef::Name("coding".into())],
                 desired_outcome: "Code".into(),
-                performance: PerformanceRecord {
+                performance: RewardHistory {
                     task_count: 2,
-                    avg_score: Some(0.75),
-                    evaluations: vec![],
+                    mean_reward: Some(0.75),
+                    rewards: vec![],
                 },
                 lineage: Lineage::default(),
             },
@@ -2931,24 +2931,24 @@ Let me know if you'd like me to adjust anything."#;
                 description: "Tester".into(),
                 skills: vec![SkillRef::Name("testing".into())],
                 desired_outcome: "Tests".into(),
-                performance: PerformanceRecord {
+                performance: RewardHistory {
                     task_count: 1,
-                    avg_score: Some(0.90),
-                    evaluations: vec![],
+                    mean_reward: Some(0.90),
+                    rewards: vec![],
                 },
                 lineage: Lineage::default(),
             },
         ];
-        let motivations = vec![Motivation {
+        let objectives = vec![Objective {
             id: "m1".into(),
             name: "Careful".into(),
             description: "Be careful".into(),
             acceptable_tradeoffs: vec!["Slow".into()],
             unacceptable_tradeoffs: vec!["Broken".into()],
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 3,
-                avg_score: Some(0.80),
-                evaluations: vec![],
+                mean_reward: Some(0.80),
+                rewards: vec![],
             },
             lineage: Lineage::default(),
         }];
@@ -2956,55 +2956,55 @@ Let me know if you'd like me to adjust anything."#;
         dims.insert("correctness".to_string(), 0.9);
         dims.insert("completeness".to_string(), 0.6);
 
-        let evaluations = vec![
-            Evaluation {
+        let rewards = vec![
+            Reward {
                 id: "e1".into(),
                 task_id: "t1".into(),
                 agent_id: "".into(),
                 role_id: "r1".into(),
-                motivation_id: "m1".into(),
-                score: 0.8,
+                objective_id: "m1".into(),
+                value: 0.8,
                 dimensions: dims.clone(),
                 notes: "Good".into(),
                 evaluator: "human".into(),
                 timestamp: "2025-01-01T00:00:00Z".into(),
-                model: None,
+                model: None, source: "llm".to_string(),
             },
-            Evaluation {
+            Reward {
                 id: "e2".into(),
                 task_id: "t2".into(),
                 agent_id: "".into(),
                 role_id: "r1".into(),
-                motivation_id: "m1".into(),
-                score: 0.7,
+                objective_id: "m1".into(),
+                value: 0.7,
                 dimensions: HashMap::new(),
                 notes: "OK".into(),
                 evaluator: "human".into(),
                 timestamp: "2025-01-02T00:00:00Z".into(),
-                model: None,
+                model: None, source: "llm".to_string(),
             },
-            Evaluation {
+            Reward {
                 id: "e3".into(),
                 task_id: "t3".into(),
                 agent_id: "".into(),
                 role_id: "r2".into(),
-                motivation_id: "m1".into(),
-                score: 0.9,
+                objective_id: "m1".into(),
+                value: 0.9,
                 dimensions: HashMap::new(),
                 notes: "Great".into(),
                 evaluator: "human".into(),
                 timestamp: "2025-01-03T00:00:00Z".into(),
-                model: None,
+                model: None, source: "llm".to_string(),
             },
         ];
 
-        let summary = build_performance_summary(&roles, &motivations, &evaluations);
+        let summary = build_performance_summary(&roles, &objectives, &rewards);
 
         // Overall stats
         assert!(summary.contains("Total roles: 2"));
-        assert!(summary.contains("Total motivations: 1"));
-        assert!(summary.contains("Total evaluations: 3"));
-        assert!(summary.contains("Overall avg score: 0.800"));
+        assert!(summary.contains("Total objectives: 1"));
+        assert!(summary.contains("Total rewards: 3"));
+        assert!(summary.contains("Overall avg reward: 0.800"));
 
         // Per-role
         assert!(summary.contains("Dev"));
@@ -3038,10 +3038,10 @@ Let me know if you'd like me to adjust anything."#;
             description: "Fifth gen".into(),
             skills: vec![],
             desired_outcome: "Evolve".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec!["gen4-parent".into()],
@@ -3088,10 +3088,10 @@ Let me know if you'd like me to adjust anything."#;
             description: "".into(),
             skills: vec![],
             desired_outcome: "".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec![],
@@ -3106,10 +3106,10 @@ Let me know if you'd like me to adjust anything."#;
             description: "".into(),
             skills: vec![],
             desired_outcome: "".into(),
-            performance: PerformanceRecord {
+            performance: RewardHistory {
                 task_count: 0,
-                avg_score: None,
-                evaluations: vec![],
+                mean_reward: None,
+                rewards: vec![],
             },
             lineage: Lineage {
                 parent_ids: vec![],

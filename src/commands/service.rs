@@ -30,9 +30,9 @@ use std::os::unix::net::{UnixListener, UnixStream};
 
 use chrono::Utc;
 
-use workgraph::agency;
+use workgraph::identity;
 use workgraph::config::Config;
-use workgraph::graph::{LogEntry, Node, Status, Task, evaluate_loop_edges};
+use workgraph::graph::{LogEntry, Node, Status, Task, reward_loop_edges};
 use workgraph::parser::{load_graph, save_graph};
 use workgraph::query::ready_tasks;
 use workgraph::service::registry::{AgentEntry, AgentRegistry, AgentStatus};
@@ -402,10 +402,10 @@ fn check_ready_or_return(
 
 /// Auto-assign: build assignment subgraph for unassigned ready tasks.
 ///
-/// Per the agency design (§4, §10), when auto_assign is enabled and a ready
+/// Per the identity design (§4, §10), when auto_assign is enabled and a ready
 /// task has no agent field, the coordinator creates a blocking assignment task
 /// `assign-{task-id}` BEFORE spawning any agents.  The assigner agent is then
-/// spawned on the assignment task, inspects the agency via wg CLI, and calls
+/// spawned on the assignment task, inspects the identity via wg CLI, and calls
 /// `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
 ///
 /// Returns `true` if the graph was modified.
@@ -439,9 +439,9 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
             continue;
         }
 
-        // Skip tasks tagged with assignment/evaluation/evolution to prevent
+        // Skip tasks tagged with assignment/reward/evolution to prevent
         // infinite regress (assign-assign-assign-...)
-        let dominated_tags = ["assignment", "evaluation", "evolution"];
+        let dominated_tags = ["assignment", "reward", "evolution"];
         if task_tags
             .iter()
             .any(|tag| dominated_tags.contains(&tag.as_str()))
@@ -475,9 +475,9 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
              ```\n\
              wg agent list --json\n\
              wg role list --json\n\
-             wg motivation list --json\n\
+             wg objective list --json\n\
              ```\n\n\
-             For agents with evaluation history, drill into performance details:\n\
+             For agents with reward history, drill into performance details:\n\
              ```\n\
              wg agent performance <agent-hash> --json\n\
              ```\n\n\
@@ -488,7 +488,7 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
              implementation tasks; a Reviewer (code-review, security-audit) fits review \
              tasks; an Architect (system-design, dependency-analysis) fits design tasks; \
              a Documenter (technical-writing) fits documentation tasks.\n\n\
-             2. **Motivation fit**: The agent's operational parameters should match the \
+             2. **Objective fit**: The agent's operational parameters should match the \
              task's nature. A Careful agent suits tasks where correctness is critical. \
              A Fast agent suits urgent, low-risk tasks. A Thorough agent suits complex \
              tasks requiring deep analysis.\n\n\
@@ -496,40 +496,40 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
              technology or domain tags that match the task (e.g., \"rust\", \"python\", \
              \"kubernetes\").\n\n\
              ### Step 3: Use Performance Data\n\n\
-             Each agent has a `performance` record with `task_count`, `avg_score` \
-             (0.0–1.0), and individual evaluation entries. Each evaluation has \
+             Each agent has a `performance` record with `task_count`, `mean_reward` \
+             (0.0–1.0), and individual reward entries. Each reward has \
              dimension scores: `correctness` (40% weight), `completeness` (30%), \
              `efficiency` (15%), `style_adherence` (15%).\n\n\
-             - **Prefer agents with higher avg_score** on similar tasks (check \
-             evaluation `task_id` and `context_id` to see what kinds of work they've \
+             - **Prefer agents with higher mean_reward** on similar tasks (check \
+             reward `task_id` and `context_id` to see what kinds of work they've \
              done before).\n\
-             - **Weight recent evaluations more** — an agent's latest scores are more \
+             - **Weight recent rewards more** — an agent's latest scores are more \
              predictive than older ones.\n\
              - **Consider dimension strengths**: If the task demands correctness above \
              all else, prefer agents who score highest on `correctness` even if their \
              overall average is slightly lower.\n\n\
              ### Step 4: Handle Cold Start\n\n\
-             When agents have 0 evaluations (new agency, or new agents), you cannot \
+             When agents have 0 rewards (new identity, or new agents), you cannot \
              rely on performance data. In this case:\n\n\
-             - **Match on role and motivation** — this is the primary signal. Pick the \
+             - **Match on role and objective** — this is the primary signal. Pick the \
              agent whose role skills best cover the task requirements.\n\
-             - **Spread work across untested agents** to build evaluation data. If \
-             multiple agents have 0 evaluations and similar role fit, prefer whichever \
-             has completed fewer tasks (lower `task_count`) so the agency gathers \
+             - **Spread work across untested agents** to build reward data. If \
+             multiple agents have 0 rewards and similar role fit, prefer whichever \
+             has completed fewer tasks (lower `task_count`) so the identity gathers \
              diverse signal.\n\
-             - **Default to Careful motivation** for high-stakes tasks and Fast \
-             motivation for routine work when there's no data to differentiate.\n\n\
+             - **Default to Careful objective** for high-stakes tasks and Fast \
+             objective for routine work when there's no data to differentiate.\n\n\
              ### Step 5: Balance Exploration vs Exploitation\n\n\
              - **Exploitation (default)**: Assign the highest-scoring agent whose \
              skills match. This maximizes expected quality.\n\
              - **Exploration**: Occasionally assign a less-proven agent to gather new \
              performance data. Do this when:\n\
-               - A newer agent (higher generation, or fewer evaluations) has relevant \
+               - A newer agent (higher generation, or fewer rewards) has relevant \
              skills but limited history.\n\
                - The top performer's score advantage is small (< 0.1 difference).\n\
                - The task is lower-risk (not blocking many other tasks, not tagged as \
              critical).\n\
-             - **Never explore with agents whose avg_score is below 0.4** — that \
+             - **Never explore with agents whose mean_reward is below 0.4** — that \
              signals consistent poor performance.\n\n\
              ### Step 6: Assign\n\n\
              Once you've chosen an agent, run:\n\
@@ -555,7 +555,7 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
             blocks: vec![task_id.clone()],
             blocked_by: vec![],
             requires: vec![],
-            tags: vec!["assignment".to_string(), "agency".to_string()],
+            tags: vec!["assignment".to_string(), "identity".to_string()],
             skills: vec![],
             inputs: vec![],
             deliverables: vec![],
@@ -569,9 +569,9 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
             retry_count: 0,
             max_retries: None,
             failure_reason: None,
-            model: config.agency.assigner_model.clone(),
+            model: config.identity.assigner_model.clone(),
             verify: None,
-            agent: config.agency.assigner_agent.clone(),
+            agent: config.identity.assigner_agent.clone(),
             loops_to: vec![],
             loop_iteration: 0,
             ready_after: None,
@@ -597,20 +597,20 @@ fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Con
     modified
 }
 
-/// Auto-evaluate: create evaluation tasks for completed/active tasks.
+/// Auto-reward: create reward tasks for completed/active tasks.
 ///
-/// Per the agency design (§4.3), when auto_evaluate is enabled the coordinator
-/// creates an evaluation task `evaluate-{task-id}` that is blocked by the
+/// Per the identity design (§4.3), when auto_reward is enabled the coordinator
+/// creates an reward task `reward-{task-id}` that is blocked by the
 /// original task.  When the original task completes (done or failed),
-/// the evaluation task becomes ready and the coordinator spawns an
+/// the reward task becomes ready and the coordinator spawns an
 /// evaluator agent on it.
 ///
-/// Tasks tagged "evaluation", "assignment", or "evolution" are NOT
-/// auto-evaluated to prevent infinite regress.  Abandoned tasks are also
+/// Tasks tagged "reward", "assignment", or "evolution" are NOT
+/// auto-rewardd to prevent infinite regress.  Abandoned tasks are also
 /// excluded.
 ///
 /// Returns `true` if the graph was modified.
-fn build_auto_evaluate_tasks(
+fn build_auto_reward_tasks(
     dir: &Path,
     graph: &mut workgraph::graph::WorkGraph,
     config: &Config,
@@ -618,9 +618,9 @@ fn build_auto_evaluate_tasks(
     let mut modified = false;
 
     // Load agents to identify human operators — their work quality isn't
-    // a reflection of a role+motivation prompt so we skip auto-evaluation.
-    let agents_dir = dir.join("agency").join("agents");
-    let all_agents = agency::load_all_agents_or_warn(&agents_dir);
+    // a reflection of a role+objective prompt so we skip auto-reward.
+    let agents_dir = dir.join("identity").join("agents");
+    let all_agents = identity::load_all_agents_or_warn(&agents_dir);
     let human_agent_ids: std::collections::HashSet<&str> = all_agents
         .iter()
         .filter(|a| a.is_human())
@@ -632,13 +632,13 @@ fn build_auto_evaluate_tasks(
     let tasks_needing_eval: Vec<_> = graph
         .tasks()
         .filter(|t| {
-            // Skip tasks that already have an evaluation task
-            let eval_id = format!("evaluate-{}", t.id);
+            // Skip tasks that already have an reward task
+            let eval_id = format!("reward-{}", t.id);
             if graph.get_task(&eval_id).is_some() {
                 return false;
             }
-            // Skip tasks tagged with evaluation/assignment/evolution
-            let dominated_tags = ["evaluation", "assignment", "evolution"];
+            // Skip tasks tagged with reward/assignment/evolution
+            let dominated_tags = ["reward", "assignment", "evolution"];
             if t.tags
                 .iter()
                 .any(|tag| dominated_tags.contains(&tag.as_str()))
@@ -659,7 +659,7 @@ fn build_auto_evaluate_tasks(
         .collect();
 
     for (task_id, task_title) in &tasks_needing_eval {
-        let eval_task_id = format!("evaluate-{}", task_id);
+        let eval_task_id = format!("reward-{}", task_id);
 
         // Double-check (the filter above already checks but graph may have changed)
         if graph.get_task(&eval_task_id).is_some() {
@@ -667,8 +667,8 @@ fn build_auto_evaluate_tasks(
         }
 
         let desc = format!(
-            "Evaluate the completed task '{}'.\n\n\
-             Run `wg evaluate {}` to produce a structured evaluation.\n\
+            "Reward the completed task '{}'.\n\n\
+             Run `wg reward {}` to produce a structured reward.\n\
              This reads the task output from `.workgraph/output/{}/` and \
              the task definition via `wg show {}`.",
             task_id, task_id, task_id, task_id,
@@ -676,7 +676,7 @@ fn build_auto_evaluate_tasks(
 
         let eval_task = Task {
             id: eval_task_id.clone(),
-            title: format!("Evaluate: {}", task_title),
+            title: format!("Reward: {}", task_title),
             description: Some(desc),
             status: Status::Open,
             assigned: None,
@@ -684,12 +684,12 @@ fn build_auto_evaluate_tasks(
             blocks: vec![],
             blocked_by: vec![task_id.clone()],
             requires: vec![],
-            tags: vec!["evaluation".to_string(), "agency".to_string()],
+            tags: vec!["reward".to_string(), "identity".to_string()],
             skills: vec![],
             inputs: vec![],
             deliverables: vec![],
             artifacts: vec![],
-            exec: Some(format!("wg evaluate {}", task_id)),
+            exec: Some(format!("wg reward {}", task_id)),
             not_before: None,
             created_at: Some(Utc::now().to_rfc3339()),
             started_at: None,
@@ -698,9 +698,9 @@ fn build_auto_evaluate_tasks(
             retry_count: 0,
             max_retries: None,
             failure_reason: None,
-            model: config.agency.evaluator_model.clone(),
+            model: config.identity.evaluator_model.clone(),
             verify: None,
-            agent: config.agency.evaluator_agent.clone(),
+            agent: config.identity.evaluator_agent.clone(),
             loops_to: vec![],
             loop_iteration: 0,
             ready_after: None,
@@ -710,19 +710,19 @@ fn build_auto_evaluate_tasks(
         graph.add_node(Node::Task(eval_task));
 
         eprintln!(
-            "[coordinator] Created evaluation task '{}' blocked by '{}'",
+            "[coordinator] Created reward task '{}' blocked by '{}'",
             eval_task_id, task_id,
         );
         modified = true;
     }
 
-    // Unblock evaluation tasks whose source task has Failed.
+    // Unblock reward tasks whose source task has Failed.
     // `ready_tasks()` only unblocks when the blocker is Done. For Failed
-    // tasks we still want evaluation to proceed (§4.3: "Failed tasks also
-    // get evaluated"), so we remove the blocker explicitly.
+    // tasks we still want reward to proceed (§4.3: "Failed tasks also
+    // get rewardd"), so we remove the blocker explicitly.
     let eval_fixups: Vec<(String, String)> = graph
         .tasks()
-        .filter(|t| t.id.starts_with("evaluate-") && t.status == Status::Open)
+        .filter(|t| t.id.starts_with("reward-") && t.status == Status::Open)
         .filter_map(|t| {
             // The eval task blocks on a single task: the original
             if t.blocked_by.len() == 1 {
@@ -742,7 +742,7 @@ fn build_auto_evaluate_tasks(
             t.blocked_by.retain(|b| b != source_id);
             modified = true;
             eprintln!(
-                "[coordinator] Unblocked evaluation task '{}' (source '{}' failed)",
+                "[coordinator] Unblocked reward task '{}' (source '{}' failed)",
                 eval_id, source_id,
             );
         }
@@ -761,7 +761,7 @@ fn spawn_agents_for_ready_tasks(
     slots_available: usize,
 ) -> usize {
     let final_ready = ready_tasks(graph);
-    let agents_dir = dir.join("agency").join("agents");
+    let agents_dir = dir.join("identity").join("agents");
     let mut spawned = 0;
 
     let to_spawn = final_ready.iter().take(slots_available);
@@ -772,14 +772,14 @@ fn spawn_agents_for_ready_tasks(
         }
 
         // Resolve executor: tasks with exec commands use shell executor directly
-        // (avoids nested Claude when evaluation tasks run `wg evaluate`),
+        // (avoids nested Claude when reward tasks run `wg reward`),
         // otherwise: agent.executor > config.coordinator.executor
         let effective_executor = if task.exec.is_some() {
             "shell".to_string()
         } else {
             task.agent
                 .as_ref()
-                .and_then(|agent_hash| agency::find_agent_by_prefix(&agents_dir, agent_hash).ok())
+                .and_then(|agent_hash| identity::find_agent_by_prefix(&agents_dir, agent_hash).ok())
                 .map(|agent| agent.executor)
                 .unwrap_or_else(|| executor.to_string())
         };
@@ -813,7 +813,7 @@ pub fn coordinator_tick(
 ) -> Result<TickResult> {
     let graph_path = graph_path(dir);
 
-    // Load config for agency settings
+    // Load config for identity settings
     let config = Config::load_or_default(dir);
 
     // Phase 1: Clean up dead agents and count alive ones
@@ -829,26 +829,26 @@ pub fn coordinator_tick(
 
     // Phase 3: Auto-assign unassigned ready tasks
     // NOTE: These must run BEFORE the early-return check, because they may
-    // create new ready tasks (e.g. evaluate-* tasks) that weren't there before.
+    // create new ready tasks (e.g. reward-* tasks) that weren't there before.
     let mut graph_modified = false;
-    if config.agency.auto_assign {
+    if config.identity.auto_assign {
         graph_modified |= build_auto_assign_tasks(&mut graph, &config);
     }
 
-    // Phase 4: Auto-evaluate tasks
-    if config.agency.auto_evaluate {
-        graph_modified |= build_auto_evaluate_tasks(dir, &mut graph, &config);
+    // Phase 4: Auto-reward tasks
+    if config.identity.auto_reward {
+        graph_modified |= build_auto_reward_tasks(dir, &mut graph, &config);
     }
 
-    // Save graph once if it was modified during auto-assign or auto-evaluate.
+    // Save graph once if it was modified during auto-assign or auto-reward.
     // Abort tick if save fails — continuing with unsaved state would spawn agents
     // on tasks that haven't been persisted.
     if graph_modified {
         save_graph(&graph, &graph_path)
-            .context("Failed to save graph after auto-assign/auto-evaluate; aborting tick")?;
+            .context("Failed to save graph after auto-assign/auto-reward; aborting tick")?;
     }
 
-    // Phase 5: Check for ready tasks (after agency phases may have created new ones)
+    // Phase 5: Check for ready tasks (after identity phases may have created new ones)
     if let Some(early_result) = check_ready_or_return(&graph, alive_count) {
         return Ok(early_result);
     }
@@ -940,7 +940,7 @@ fn cleanup_dead_agents(dir: &Path, graph_path: &Path) -> Result<Vec<String>> {
         if let Some(task) = graph.get_task_mut(task_id) {
             // Only unclaim if task is still in progress (agent didn't finish it properly)
             if task.status == Status::InProgress {
-                if config.agency.auto_triage {
+                if config.identity.auto_triage {
                     // Run synchronous triage to assess progress
                     match run_triage(&config, task, output_file) {
                         Ok(verdict) => {
@@ -993,9 +993,9 @@ fn cleanup_dead_agents(dir: &Path, graph_path: &Path) -> Result<Vec<String>> {
         }
     }
 
-    // Evaluate loop edges for tasks that were triaged as done
+    // Reward loop edges for tasks that were triaged as done
     for task_id in &tasks_completed_by_triage {
-        evaluate_loop_edges(&mut graph, task_id);
+        reward_loop_edges(&mut graph, task_id);
     }
 
     if tasks_modified {
@@ -1014,7 +1014,7 @@ fn cleanup_dead_agents(dir: &Path, graph_path: &Path) -> Result<Vec<String>> {
         {
             let output_dir = dir.join("output").join(task_id);
             if !output_dir.exists() {
-                if let Err(e) = agency::capture_task_output(dir, task) {
+                if let Err(e) = identity::capture_task_output(dir, task) {
                     eprintln!(
                         "[coordinator] Warning: output capture failed for '{}': {}",
                         task_id, e
@@ -1138,9 +1138,9 @@ Be conservative: only use "done" if the output clearly shows the task was finish
 
 /// Run the triage LLM call synchronously. Returns a parsed TriageVerdict.
 fn run_triage(config: &Config, task: &Task, output_file: &str) -> Result<TriageVerdict> {
-    let max_log_bytes = config.agency.triage_max_log_bytes.unwrap_or(50_000);
-    let timeout_secs = config.agency.triage_timeout.unwrap_or(30);
-    let model = config.agency.triage_model.as_deref().unwrap_or("haiku");
+    let max_log_bytes = config.identity.triage_max_log_bytes.unwrap_or(50_000);
+    let timeout_secs = config.identity.triage_timeout.unwrap_or(30);
+    let model = config.identity.triage_model.as_deref().unwrap_or("haiku");
 
     let log_content = read_truncated_log(output_file, max_log_bytes);
     let prompt = build_triage_prompt(task, &log_content);
@@ -1782,12 +1782,12 @@ pub fn run_start(
 
     let log_path_str = log_path.to_string_lossy().to_string();
 
-    // Warn if auto_assign is enabled but no agency agents are defined
+    // Warn if auto_assign is enabled but no identity agents are defined
     let no_agents_defined = {
-        let agents_dir = dir.join("agency").join("agents");
-        agency::load_all_agents_or_warn(&agents_dir).is_empty()
+        let agents_dir = dir.join("identity").join("agents");
+        identity::load_all_agents_or_warn(&agents_dir).is_empty()
     };
-    let warn_no_agents = config.agency.auto_assign && no_agents_defined;
+    let warn_no_agents = config.identity.auto_assign && no_agents_defined;
 
     if json {
         let mut output = serde_json::json!({
@@ -1804,7 +1804,7 @@ pub fn run_start(
         });
         if warn_no_agents {
             output["warning"] = serde_json::json!(
-                "auto_assign is enabled but no agents are defined. Run 'wg agency init' or 'wg agent create' to create agents."
+                "auto_assign is enabled but no agents are defined. Run 'wg identity init' or 'wg agent create' to create agents."
             );
         }
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -1820,7 +1820,7 @@ pub fn run_start(
         if warn_no_agents {
             println!();
             println!("Warning: auto_assign is enabled but no agents are defined.");
-            println!("  Run 'wg agency init' or 'wg agent create' to create agents.");
+            println!("  Run 'wg identity init' or 'wg agent create' to create agents.");
         }
     }
 
@@ -2605,9 +2605,9 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
     let alive_count = registry.active_count();
     let idle_count = registry.idle_count();
 
-    // Check if any agency agents are defined (YAML definitions, not runtime processes)
-    let agency_agents_dir = dir.join("agency").join("agents");
-    let agency_agents_defined = !agency::load_all_agents_or_warn(&agency_agents_dir).is_empty();
+    // Check if any identity agents are defined (YAML definitions, not runtime processes)
+    let identity_agents_dir = dir.join("identity").join("agents");
+    let identity_agents_defined = !identity::load_all_agents_or_warn(&identity_agents_dir).is_empty();
 
     // Calculate uptime
     let uptime = chrono::DateTime::parse_from_rfc3339(&state.started_at)
@@ -2639,7 +2639,7 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
                 "alive": alive_count,
                 "idle": idle_count,
                 "total": registry.agents.len(),
-                "agents_defined": agency_agents_defined,
+                "agents_defined": identity_agents_defined,
             },
             "coordinator": {
                 "enabled": coord.enabled,
@@ -2659,9 +2659,9 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
                 "exists": log_exists,
             }
         });
-        if !agency_agents_defined {
+        if !identity_agents_defined {
             output["warning"] =
-                serde_json::json!("No agents defined — run 'wg agency init' or 'wg agent create'");
+                serde_json::json!("No agents defined — run 'wg identity init' or 'wg agent create'");
         }
         if !recent_errors.is_empty() || !recent_fatals.is_empty() {
             let mut all_errors: Vec<String> = recent_fatals;
@@ -2673,8 +2673,8 @@ pub fn run_status(dir: &Path, json: bool) -> Result<()> {
         println!("Service: running (PID {})", state.pid);
         println!("Socket: {}", state.socket_path);
         println!("Uptime: {}", uptime);
-        if !agency_agents_defined {
-            println!("Agents: No agents defined — run 'wg agency init' or 'wg agent create'");
+        if !identity_agents_defined {
+            println!("Agents: No agents defined — run 'wg identity init' or 'wg agent create'");
         } else {
             println!(
                 "Agents: {} alive, {} idle, {} total",
@@ -3795,25 +3795,25 @@ poll_interval = 120
 
     #[test]
     fn test_no_agents_warning_when_auto_assign_enabled() {
-        // When auto_assign is enabled but no agency agents exist,
+        // When auto_assign is enabled but no identity agents exist,
         // the service start output should include a warning.
         let temp_dir = TempDir::new().unwrap();
         let wg_dir = temp_dir.path();
-        fs::create_dir_all(wg_dir.join("agency").join("agents")).unwrap();
+        fs::create_dir_all(wg_dir.join("identity").join("agents")).unwrap();
 
         // Enable auto_assign in config
         let mut config = Config::load_or_default(wg_dir);
-        config.agency.auto_assign = true;
+        config.identity.auto_assign = true;
         config.save(wg_dir).unwrap();
 
-        // Check: no agency agents defined
-        let agents_dir = wg_dir.join("agency").join("agents");
-        let agents = agency::load_all_agents_or_warn(&agents_dir);
+        // Check: no identity agents defined
+        let agents_dir = wg_dir.join("identity").join("agents");
+        let agents = identity::load_all_agents_or_warn(&agents_dir);
         assert!(agents.is_empty(), "Expected no agents defined");
 
         // The condition that triggers the warning
         let no_agents_defined = agents.is_empty();
-        let warn_no_agents = config.agency.auto_assign && no_agents_defined;
+        let warn_no_agents = config.identity.auto_assign && no_agents_defined;
         assert!(
             warn_no_agents,
             "Should warn: auto_assign enabled, no agents defined"
@@ -3822,42 +3822,42 @@ poll_interval = 120
 
     #[test]
     fn test_no_warning_when_agents_exist() {
-        // When agency agents exist, no warning should be shown.
+        // When identity agents exist, no warning should be shown.
         let temp_dir = TempDir::new().unwrap();
         let wg_dir = temp_dir.path();
 
-        // Use agency init to create roles, motivations, and a default agent
-        super::super::agency_init::run(wg_dir).unwrap();
+        // Use identity init to create roles, objectives, and a default agent
+        super::super::identity_init::run(wg_dir).unwrap();
 
         let mut config = Config::load_or_default(wg_dir);
-        config.agency.auto_assign = true;
+        config.identity.auto_assign = true;
         config.save(wg_dir).unwrap();
 
-        let agents_dir = wg_dir.join("agency").join("agents");
-        let agents = agency::load_all_agents_or_warn(&agents_dir);
+        let agents_dir = wg_dir.join("identity").join("agents");
+        let agents = identity::load_all_agents_or_warn(&agents_dir);
         assert!(!agents.is_empty(), "Expected at least one agent");
 
         let no_agents_defined = agents.is_empty();
-        let warn_no_agents = config.agency.auto_assign && no_agents_defined;
+        let warn_no_agents = config.identity.auto_assign && no_agents_defined;
         assert!(!warn_no_agents, "Should NOT warn when agents are defined");
     }
 
     #[test]
     fn test_status_distinguishes_no_agents_from_dead_agents() {
-        // When no agency agents are defined, status should say "No agents defined"
+        // When no identity agents are defined, status should say "No agents defined"
         // rather than just showing agents_alive=0.
         let temp_dir = TempDir::new().unwrap();
         let wg_dir = temp_dir.path();
-        fs::create_dir_all(wg_dir.join("agency").join("agents")).unwrap();
+        fs::create_dir_all(wg_dir.join("identity").join("agents")).unwrap();
 
-        let agents_dir = wg_dir.join("agency").join("agents");
-        let agency_agents_defined = !agency::load_all_agents_or_warn(&agents_dir).is_empty();
+        let agents_dir = wg_dir.join("identity").join("agents");
+        let identity_agents_defined = !identity::load_all_agents_or_warn(&agents_dir).is_empty();
 
         // No agents defined — should show the "No agents defined" message
-        assert!(!agency_agents_defined);
+        assert!(!identity_agents_defined);
 
-        let status_line = if !agency_agents_defined {
-            "Agents: No agents defined — run 'wg agency init' or 'wg agent create'".to_string()
+        let status_line = if !identity_agents_defined {
+            "Agents: No agents defined — run 'wg identity init' or 'wg agent create'".to_string()
         } else {
             format!("Agents: 0 alive, 0 idle, 0 total")
         };
@@ -3870,20 +3870,20 @@ poll_interval = 120
 
     #[test]
     fn test_status_shows_counts_when_agents_defined() {
-        // When agency agents exist but none are alive (process-wise),
+        // When identity agents exist but none are alive (process-wise),
         // status should show the alive/idle/total counts, NOT "No agents defined".
         let temp_dir = TempDir::new().unwrap();
         let wg_dir = temp_dir.path();
 
-        // Create an agent via agency init
-        super::super::agency_init::run(wg_dir).unwrap();
+        // Create an agent via identity init
+        super::super::identity_init::run(wg_dir).unwrap();
 
-        let agents_dir = wg_dir.join("agency").join("agents");
-        let agency_agents_defined = !agency::load_all_agents_or_warn(&agents_dir).is_empty();
-        assert!(agency_agents_defined);
+        let agents_dir = wg_dir.join("identity").join("agents");
+        let identity_agents_defined = !identity::load_all_agents_or_warn(&agents_dir).is_empty();
+        assert!(identity_agents_defined);
 
-        let status_line = if !agency_agents_defined {
-            "Agents: No agents defined — run 'wg agency init' or 'wg agent create'".to_string()
+        let status_line = if !identity_agents_defined {
+            "Agents: No agents defined — run 'wg identity init' or 'wg agent create'".to_string()
         } else {
             format!("Agents: 0 alive, 0 idle, 0 total")
         };

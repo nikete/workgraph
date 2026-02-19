@@ -247,25 +247,25 @@ wg service resume           # Resume dispatching
 | `wg dead-agents --cleanup` | Unclaim dead agents' tasks |
 | `wg dead-agents --remove` | Remove from registry |
 
-### Agency (roles, motivations, agents)
+### Identity (roles, objectives, agents)
 
 | Command | Purpose |
 |---------|---------|
-| `wg agency init` | Bootstrap agency with starter roles, motivations, and agents |
-| `wg agency stats` | Performance analytics |
-| `wg agency stats --by-model` | Per-model score breakdown |
+| `wg identity init` | Bootstrap identity with starter roles, objectives, and agents |
+| `wg identity stats` | Performance analytics |
+| `wg identity stats --by-model` | Per-model score breakdown |
 | `wg models` | List known models and usage stats |
 | `wg role add <id>` | Create a role |
 | `wg role list` | List roles |
 | `wg role show <id>` | Show role details |
 | `wg role edit <id>` | Edit a role |
 | `wg role rm <id>` | Remove a role |
-| `wg motivation add <id>` | Create a motivation |
-| `wg motivation list` | List motivations |
-| `wg motivation show <id>` | Show motivation details |
-| `wg motivation edit <id>` | Edit a motivation |
-| `wg motivation rm <id>` | Remove a motivation |
-| `wg agent create` | Create agent (role+motivation pairing) |
+| `wg objective add <id>` | Create a objective |
+| `wg objective list` | List objectives |
+| `wg objective show <id>` | Show objective details |
+| `wg objective edit <id>` | Edit a objective |
+| `wg objective rm <id>` | Remove a objective |
+| `wg agent create` | Create agent (role+objective pairing) |
 | `wg agent list` | List agents |
 | `wg agent show <hash>` | Show agent details |
 | `wg agent rm <hash>` | Remove an agent |
@@ -273,7 +273,7 @@ wg service resume           # Resume dispatching
 | `wg agent performance <hash>` | Show agent performance |
 | `wg assign <task> <agent-hash>` | Assign agent to task |
 | `wg assign <task> --clear` | Clear assignment |
-| `wg evaluate <task>` | Trigger task evaluation |
+| `wg reward <task>` | Trigger task reward |
 | `wg evolve` | Trigger evolution cycle |
 | `wg evolve --strategy mutation --budget 3` | Targeted evolution |
 
@@ -310,7 +310,7 @@ wg service resume           # Resume dispatching
 | `wg config --executor claude` | Set executor |
 | `wg config --model opus` | Set default model |
 | `wg config --max-agents 5` | Set agent limit |
-| `wg config --auto-evaluate true` | Enable auto-evaluation |
+| `wg config --auto-reward true` | Enable auto-reward |
 | `wg config --auto-assign true` | Enable auto-assignment |
 
 ### Output options

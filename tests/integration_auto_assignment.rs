@@ -4,7 +4,7 @@
 //! 1. Unit tests for assign subgraph construction logic in service.rs
 //!    (coordinator_tick creates assign-* tasks with correct relationships)
 //! 2. Assignment CLI: wg assign <task> <agent-hash>, wg assign --clear, prefix matching
-//! 3. Integration: create roles+motivations+agents, run assignment subgraph construction,
+//! 3. Integration: create roles+objectives+agents, run assignment subgraph construction,
 //!    verify assign-* task is created with correct description/context
 //! 4. Assigned agents appear in task.agent field and in rendered prompts
 //!
@@ -15,7 +15,7 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
-use workgraph::agency::{self, Agent, Lineage, PerformanceRecord, SkillRef};
+use workgraph::identity::{self, Agent, Lineage, RewardHistory, SkillRef};
 use workgraph::config::Config;
 use workgraph::graph::{Node, Status, Task, WorkGraph};
 use workgraph::parser::{load_graph, save_graph};
@@ -60,7 +60,7 @@ fn setup_workgraph(dir: &Path, tasks: Vec<Task>) {
 /// Write a config.toml with auto_assign enabled.
 fn write_config_auto_assign(dir: &Path, auto_assign: bool) {
     let content = format!(
-        r#"[agency]
+        r#"[identity]
 auto_assign = {}
 "#,
         auto_assign
@@ -68,39 +68,39 @@ auto_assign = {}
     fs::write(dir.join("config.toml"), content).unwrap();
 }
 
-/// Set up agency with a single role+motivation+agent, returning (agent_id, role_id, motivation_id).
-fn setup_agency(dir: &Path) -> (String, String, String) {
-    let agency_dir = dir.join("agency");
-    agency::init(&agency_dir).unwrap();
+/// Set up identity with a single role+objective+agent, returning (agent_id, role_id, objective_id).
+fn setup_identity(dir: &Path) -> (String, String, String) {
+    let identity_dir = dir.join("identity");
+    identity::init(&identity_dir).unwrap();
 
-    let role = agency::build_role(
+    let role = identity::build_role(
         "Implementer",
         "Writes production-quality Rust code",
         vec![SkillRef::Name("rust".to_string())],
         "Working, tested code",
     );
     let role_id = role.id.clone();
-    agency::save_role(&role, &agency_dir.join("roles")).unwrap();
+    identity::save_role(&role, &identity_dir.join("roles")).unwrap();
 
-    let motivation = agency::build_motivation(
+    let objective = identity::build_objective(
         "Quality First",
         "Prioritise correctness over speed",
         vec!["Slower delivery".to_string()],
         vec!["Skipping tests".to_string()],
     );
-    let mot_id = motivation.id.clone();
-    agency::save_motivation(&motivation, &agency_dir.join("motivations")).unwrap();
+    let mot_id = objective.id.clone();
+    identity::save_objective(&objective, &identity_dir.join("objectives")).unwrap();
 
-    let agent_id = agency::content_hash_agent(&role_id, &mot_id);
+    let agent_id = identity::content_hash_agent(&role_id, &mot_id);
     let agent = Agent {
         id: agent_id.clone(),
         role_id: role_id.clone(),
-        motivation_id: mot_id.clone(),
+        objective_id: mot_id.clone(),
         name: "impl-agent".to_string(),
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage::default(),
         capabilities: Vec::new(),
@@ -110,43 +110,43 @@ fn setup_agency(dir: &Path) -> (String, String, String) {
         contact: None,
         executor: "claude".to_string(),
     };
-    agency::save_agent(&agent, &agency_dir.join("agents")).unwrap();
+    identity::save_agent(&agent, &identity_dir.join("agents")).unwrap();
 
     (agent_id, role_id, mot_id)
 }
 
 /// Set up a second agent with a different role, returning its agent_id.
 fn setup_second_agent(dir: &Path) -> String {
-    let agency_dir = dir.join("agency");
+    let identity_dir = dir.join("identity");
 
-    let role = agency::build_role(
+    let role = identity::build_role(
         "Reviewer",
         "Reviews code for correctness",
         vec![SkillRef::Name("code-review".to_string())],
         "Reviewed, approved code",
     );
     let role_id = role.id.clone();
-    agency::save_role(&role, &agency_dir.join("roles")).unwrap();
+    identity::save_role(&role, &identity_dir.join("roles")).unwrap();
 
-    let motivation = agency::build_motivation(
+    let objective = identity::build_objective(
         "Thoroughness",
         "Leave no stone unturned",
         vec!["Takes longer".to_string()],
         vec!["Rubber-stamping".to_string()],
     );
-    let mot_id = motivation.id.clone();
-    agency::save_motivation(&motivation, &agency_dir.join("motivations")).unwrap();
+    let mot_id = objective.id.clone();
+    identity::save_objective(&objective, &identity_dir.join("objectives")).unwrap();
 
-    let agent_id = agency::content_hash_agent(&role_id, &mot_id);
+    let agent_id = identity::content_hash_agent(&role_id, &mot_id);
     let agent = Agent {
         id: agent_id.clone(),
         role_id: role_id.clone(),
-        motivation_id: mot_id.clone(),
+        objective_id: mot_id.clone(),
         name: "review-agent".to_string(),
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 0,
-            avg_score: None,
-            evaluations: vec![],
+            mean_reward: None,
+            rewards: vec![],
         },
         lineage: Lineage::default(),
         capabilities: Vec::new(),
@@ -156,7 +156,7 @@ fn setup_second_agent(dir: &Path) -> String {
         contact: None,
         executor: "claude".to_string(),
     };
-    agency::save_agent(&agent, &agency_dir.join("agents")).unwrap();
+    identity::save_agent(&agent, &identity_dir.join("agents")).unwrap();
 
     agent_id
 }
@@ -167,7 +167,7 @@ fn setup_second_agent(dir: &Path) -> String {
 /// (lines 340-438) so we can test it without starting a real daemon.
 fn build_assign_subgraph(dir: &Path) {
     let config = Config::load(dir).unwrap_or_default();
-    if !config.agency.auto_assign {
+    if !config.identity.auto_assign {
         return;
     }
 
@@ -201,7 +201,7 @@ fn build_assign_subgraph(dir: &Path) {
         }
         desc.push_str(&format!(
             "\n## Instructions\n\
-             Inspect the agency with `wg agent list`, `wg role list`, etc.\n\
+             Inspect the identity with `wg agent list`, `wg role list`, etc.\n\
              Choose the best agent for this task, then run:\n\
              ```\n\
              wg assign {} <agent-hash>\n\
@@ -220,7 +220,7 @@ fn build_assign_subgraph(dir: &Path) {
             blocks: vec![ready_task.id.clone()],
             blocked_by: vec![],
             requires: vec![],
-            tags: vec!["assignment".to_string(), "agency".to_string()],
+            tags: vec!["assignment".to_string(), "identity".to_string()],
             skills: vec![],
             inputs: vec![],
             deliverables: vec![],
@@ -282,7 +282,7 @@ fn test_assign_subgraph_created_for_ready_task() {
     let assign_task = assign_task.unwrap();
     assert_eq!(assign_task.status, Status::Open);
     assert!(assign_task.tags.contains(&"assignment".to_string()));
-    assert!(assign_task.tags.contains(&"agency".to_string()));
+    assert!(assign_task.tags.contains(&"identity".to_string()));
     assert!(
         assign_task.title.contains("Implement feature X"),
         "assign task title should reference original task title"
@@ -569,12 +569,12 @@ fn test_assign_sets_agent_field() {
     let dir = tmp.path();
 
     setup_workgraph(dir, vec![make_task("cli-1", "CLI test task")]);
-    let (agent_id, _, _) = setup_agency(dir);
+    let (agent_id, _, _) = setup_identity(dir);
 
     // Simulate what `wg assign cli-1 <agent-hash>` does:
     // find agent by prefix, then set task.agent
-    let agents_dir = dir.join("agency").join("agents");
-    let found = agency::find_agent_by_prefix(&agents_dir, &agent_id).unwrap();
+    let agents_dir = dir.join("identity").join("agents");
+    let found = identity::find_agent_by_prefix(&agents_dir, &agent_id).unwrap();
     assert_eq!(found.id, agent_id);
 
     let graph_path = dir.join("graph.jsonl");
@@ -614,17 +614,17 @@ fn test_assign_cli_prefix_matching() {
     let dir = tmp.path();
 
     setup_workgraph(dir, vec![make_task("cli-3", "Prefix match test")]);
-    let (agent_id, _, _) = setup_agency(dir);
+    let (agent_id, _, _) = setup_identity(dir);
 
-    // Prefix match via agency API (same logic as assign command)
-    let agents_dir = dir.join("agency").join("agents");
+    // Prefix match via identity API (same logic as assign command)
+    let agents_dir = dir.join("identity").join("agents");
     let prefix = &agent_id[..8];
-    let found = agency::find_agent_by_prefix(&agents_dir, prefix).unwrap();
+    let found = identity::find_agent_by_prefix(&agents_dir, prefix).unwrap();
     assert_eq!(found.id, agent_id);
 }
 
 // ===========================================================================
-// 3. Integration: full assignment pipeline with agency entities
+// 3. Integration: full assignment pipeline with identity entities
 // ===========================================================================
 
 #[test]
@@ -632,8 +632,8 @@ fn test_full_assignment_pipeline() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
 
-    // Set up agency
-    let (agent_id, _, _) = setup_agency(dir);
+    // Set up identity
+    let (agent_id, _, _) = setup_identity(dir);
     let _second_agent_id = setup_second_agent(dir);
 
     // Set up workgraph with a task that needs assignment
@@ -690,7 +690,7 @@ fn test_assignment_pipeline_with_mixed_tasks() {
     let tmp = TempDir::new().unwrap();
     let dir = tmp.path();
 
-    setup_agency(dir);
+    setup_identity(dir);
 
     // Mix of ready, blocked, and already-assigned tasks
     let mut assigned_task = make_task("already-assigned", "Already has agent");
@@ -733,38 +733,38 @@ fn test_assigned_agent_appears_in_rendered_prompt() {
     let wg_dir = tmp.path().join(".workgraph");
     fs::create_dir_all(&wg_dir).unwrap();
 
-    // Set up agency in .workgraph
-    let agency_dir = wg_dir.join("agency");
-    agency::init(&agency_dir).unwrap();
+    // Set up identity in .workgraph
+    let identity_dir = wg_dir.join("identity");
+    identity::init(&identity_dir).unwrap();
 
-    let role = agency::build_role(
+    let role = identity::build_role(
         "Implementer",
         "Writes Rust code",
         vec![SkillRef::Name("rust".to_string())],
         "Working code",
     );
     let role_id = role.id.clone();
-    agency::save_role(&role, &agency_dir.join("roles")).unwrap();
+    identity::save_role(&role, &identity_dir.join("roles")).unwrap();
 
-    let motivation = agency::build_motivation(
+    let objective = identity::build_objective(
         "Quality First",
         "Prioritise correctness",
         vec!["Slower delivery".to_string()],
         vec!["Skipping tests".to_string()],
     );
-    let mot_id = motivation.id.clone();
-    agency::save_motivation(&motivation, &agency_dir.join("motivations")).unwrap();
+    let mot_id = objective.id.clone();
+    identity::save_objective(&objective, &identity_dir.join("objectives")).unwrap();
 
-    let agent_id = agency::content_hash_agent(&role_id, &mot_id);
+    let agent_id = identity::content_hash_agent(&role_id, &mot_id);
     let agent = Agent {
         id: agent_id.clone(),
         role_id,
-        motivation_id: mot_id,
+        objective_id: mot_id,
         name: "prompt-test-agent".to_string(),
-        performance: PerformanceRecord {
+        performance: RewardHistory {
             task_count: 5,
-            avg_score: Some(0.85),
-            evaluations: vec![],
+            mean_reward: Some(0.85),
+            rewards: vec![],
         },
         lineage: Lineage::default(),
         capabilities: Vec::new(),
@@ -774,7 +774,7 @@ fn test_assigned_agent_appears_in_rendered_prompt() {
         contact: None,
         executor: "claude".to_string(),
     };
-    agency::save_agent(&agent, &agency_dir.join("agents")).unwrap();
+    identity::save_agent(&agent, &identity_dir.join("agents")).unwrap();
 
     // Create a task with the agent assigned
     let mut task = make_task("prompt-task", "Build the widget");
@@ -793,7 +793,7 @@ fn test_assigned_agent_appears_in_rendered_prompt() {
         vars.task_identity.contains("Implementer"),
         "identity should contain role name"
     );
-    // render_identity_prompt uses "Operational Parameters" section, not motivation name.
+    // render_identity_prompt uses "Operational Parameters" section, not objective name.
     // It renders acceptable/unacceptable tradeoffs directly.
     assert!(
         vars.task_identity.contains("Slower delivery"),
@@ -1072,8 +1072,8 @@ Begin working on the task now.
         let wg_dir = setup_llm_workgraph(tmp.path());
         let model = test_model();
 
-        // Set up agency with two agents with different skills
-        let (agent_id, _, _) = setup_agency(&wg_dir);
+        // Set up identity with two agents with different skills
+        let (agent_id, _, _) = setup_identity(&wg_dir);
         let second_agent_id = setup_second_agent(&wg_dir);
 
         // Create the target task that needs Rust skills
@@ -1115,7 +1115,7 @@ Begin working on the task now.
             blocks: vec!["rust-feature".to_string()],
             blocked_by: vec![],
             requires: vec![],
-            tags: vec!["assignment".to_string(), "agency".to_string()],
+            tags: vec!["assignment".to_string(), "identity".to_string()],
             skills: vec![],
             inputs: vec![],
             deliverables: vec![],
@@ -1228,22 +1228,22 @@ Begin working on the task now.
         );
     }
 
-    /// Test that `wg evaluate` can evaluate a completed task and record
-    /// an evaluation JSON file with scores and dimensions.
+    /// Test that `wg reward` can reward a completed task and record
+    /// an reward JSON file with values and dimensions.
     ///
     /// Flow:
-    /// 1. Set up agency with an agent, assign it to a task
+    /// 1. Set up identity with an agent, assign it to a task
     /// 2. Manually mark the task done (no need to spawn an LLM for that)
-    /// 3. Run `wg evaluate` which internally spawns its own Claude process
-    /// 4. Verify evaluation file was created with valid scores
+    /// 3. Run `wg reward` which internally spawns its own Claude process
+    /// 4. Verify reward file was created with valid values
     #[test]
-    fn test_llm_evaluation_recording() {
+    fn test_llm_reward_recording() {
         let tmp = TempDir::new().unwrap();
         let wg_dir = setup_llm_workgraph(tmp.path());
         let model = test_model();
 
-        // Set up agency with an agent
-        let (agent_id, _, _) = setup_agency(&wg_dir);
+        // Set up identity with an agent
+        let (agent_id, _, _) = setup_identity(&wg_dir);
 
         // Create a task, assign the agent, and mark it done
         let mut task = make_task_with_desc(
@@ -1262,61 +1262,61 @@ Begin working on the task now.
         }];
         setup_workgraph(&wg_dir, vec![task]);
 
-        // Write config so wg evaluate uses our test model
-        let config_content = format!("[agency]\nevaluator_model = \"{}\"\n", model);
+        // Write config so wg reward uses our test model
+        let config_content = format!("[identity]\nevaluator_model = \"{}\"\n", model);
         fs::write(wg_dir.join("config.toml"), &config_content).unwrap();
 
-        // Run wg evaluate directly (it spawns its own claude process internally)
+        // Run wg reward directly (it spawns its own claude process internally)
         let output = wg_cmd(
             &wg_dir,
-            &["evaluate", "eval-target", "--evaluator-model", &model],
+            &["reward", "eval-target", "--evaluator-model", &model],
         );
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
-            "wg evaluate failed.\nstdout: {}\nstderr: {}",
+            "wg reward failed.\nstdout: {}\nstderr: {}",
             stdout,
             stderr
         );
 
-        // Verify evaluation JSON was created
-        let evaluations_dir = wg_dir.join("agency").join("evaluations");
+        // Verify reward JSON was created
+        let rewards_dir = wg_dir.join("identity").join("rewards");
         assert!(
-            evaluations_dir.exists(),
-            "evaluations directory should exist after wg evaluate"
+            rewards_dir.exists(),
+            "rewards directory should exist after wg reward"
         );
 
-        let eval_files: Vec<_> = fs::read_dir(&evaluations_dir)
+        let eval_files: Vec<_> = fs::read_dir(&rewards_dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map_or(false, |ext| ext == "json"))
             .collect();
         assert!(
             !eval_files.is_empty(),
-            "At least one evaluation JSON should exist"
+            "At least one reward JSON should exist"
         );
 
-        // Parse the evaluation and check it has valid structure
+        // Parse the reward and check it has valid structure
         let eval_content = fs::read_to_string(eval_files[0].path()).unwrap();
         let eval: serde_json::Value =
-            serde_json::from_str(&eval_content).expect("Evaluation file should be valid JSON");
+            serde_json::from_str(&eval_content).expect("Reward file should be valid JSON");
 
         assert!(
-            eval["score"].is_f64() || eval["score"].is_i64(),
-            "Evaluation should have a numeric score. Got: {}",
+            eval["value"].is_f64() || eval["value"].is_i64(),
+            "Reward should have a numeric value. Got: {}",
             serde_json::to_string_pretty(&eval).unwrap()
         );
-        let score = eval["score"].as_f64().unwrap();
+        let value = eval["value"].as_f64().unwrap();
         assert!(
-            (0.0..=1.0).contains(&score),
-            "Score should be between 0 and 1, got: {}",
-            score
+            (0.0..=1.0).contains(&value),
+            "Value should be between 0 and 1, got: {}",
+            value
         );
 
         eprintln!(
-            "LLM evaluation test passed: score={:.2} (model: {})",
-            score, model
+            "LLM reward test passed: value={:.2} (model: {})",
+            value, model
         );
     }
 }

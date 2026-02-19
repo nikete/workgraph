@@ -8,25 +8,25 @@ const QUICKSTART_TEXT: &str = r#"
 GETTING STARTED
 ─────────────────────────────────────────
   wg init                     # Create a .workgraph directory
-  wg agency init              # Bootstrap roles, motivations, and a default agent
+  wg identity init              # Bootstrap roles, objectives, and a default agent
   wg service start            # Start the coordinator
   wg add "My first task"      # Add work — the service dispatches automatically
 
-AGENCY SETUP
+IDENTITY SETUP
 ─────────────────────────────────────────
-  'wg agency init' creates sensible defaults so the service can auto-assign
+  'wg identity init' creates sensible defaults so the service can auto-assign
   agents to tasks immediately. It sets up:
 
   • Roles     — what agents do (Programmer, Reviewer, Documenter, Architect)
-  • Motivations — constraints on how (Careful, Fast, Thorough, Balanced)
-  • Agent     — a role+motivation pairing (default: Careful Programmer)
-  • Config    — enables auto_assign and auto_evaluate
+  • Objectives — constraints on how (Careful, Fast, Thorough, Balanced)
+  • Agent     — a role+objective pairing (default: Careful Programmer)
+  • Config    — enables auto_assign and auto_reward
 
   You can also set up manually:
     wg role add "Name" --outcome "What it produces" --skill skill-name
-    wg motivation add "Name" --accept "Slow" --reject "Untested"
-    wg agent create "Name" --role <hash> --motivation <hash>
-    wg config --auto-assign true --auto-evaluate true
+    wg objective add "Name" --accept "Slow" --reject "Untested"
+    wg agent create "Name" --role <hash> --objective <hash>
+    wg config --auto-assign true --auto-reward true
 
 ⚠ COORDINATOR SERVICE REMINDER ⚠
 ─────────────────────────────────────────
@@ -131,23 +131,23 @@ fn json_output() -> serde_json::Value {
     serde_json::json!({
         "getting_started": [
             "wg init",
-            "wg agency init",
+            "wg identity init",
             "wg service start",
             "wg add \"My first task\""
         ],
-        "agency": {
-            "description": "Agency gives the service agents to assign to tasks.",
-            "quick_setup": "wg agency init",
+        "identity": {
+            "description": "Identity gives the service agents to assign to tasks.",
+            "quick_setup": "wg identity init",
             "concepts": {
                 "roles": "What agents do (skills + desired outcome)",
-                "motivations": "Constraints on how agents work (acceptable/unacceptable trade-offs)",
-                "agents": "A role + motivation pairing that gets assigned to tasks"
+                "objectives": "Constraints on how agents work (acceptable/unacceptable trade-offs)",
+                "agents": "A role + objective pairing that gets assigned to tasks"
             },
             "manual_setup": [
                 "wg role add \"Name\" --outcome \"...\" --skill name",
-                "wg motivation add \"Name\" --accept \"...\" --reject \"...\"",
-                "wg agent create \"Name\" --role <hash> --motivation <hash>",
-                "wg config --auto-assign true --auto-evaluate true"
+                "wg objective add \"Name\" --accept \"...\" --reject \"...\"",
+                "wg agent create \"Name\" --role <hash> --objective <hash>",
+                "wg config --auto-assign true --auto-reward true"
             ]
         },
         "modes": {
@@ -263,14 +263,14 @@ mod tests {
     #[test]
     fn test_quickstart_text_contains_getting_started() {
         assert!(QUICKSTART_TEXT.contains("GETTING STARTED"));
-        assert!(QUICKSTART_TEXT.contains("wg agency init"));
+        assert!(QUICKSTART_TEXT.contains("wg identity init"));
     }
 
     #[test]
-    fn test_quickstart_text_contains_agency_setup() {
-        assert!(QUICKSTART_TEXT.contains("AGENCY SETUP"));
+    fn test_quickstart_text_contains_identity_setup() {
+        assert!(QUICKSTART_TEXT.contains("IDENTITY SETUP"));
         assert!(QUICKSTART_TEXT.contains("Roles"));
-        assert!(QUICKSTART_TEXT.contains("Motivations"));
+        assert!(QUICKSTART_TEXT.contains("Objectives"));
     }
 
     #[test]
@@ -289,7 +289,7 @@ mod tests {
 
         // Check top-level keys
         assert!(output.get("getting_started").is_some());
-        assert!(output.get("agency").is_some());
+        assert!(output.get("identity").is_some());
         assert!(output.get("modes").is_some());
         assert!(output.get("commands").is_some());
         assert!(output.get("loops").is_some());
@@ -299,10 +299,10 @@ mod tests {
         let gs = output.get("getting_started").unwrap().as_array().unwrap();
         assert!(gs.len() >= 3);
 
-        // Check agency fields
-        let agency = output.get("agency").unwrap();
-        assert!(agency.get("quick_setup").is_some());
-        assert!(agency.get("concepts").is_some());
+        // Check identity fields
+        let identity = output.get("identity").unwrap();
+        assert!(identity.get("quick_setup").is_some());
+        assert!(identity.get("concepts").is_some());
 
         // Check modes
         let modes = output.get("modes").unwrap();
@@ -348,7 +348,7 @@ mod tests {
         let required_sections = [
             "WORKGRAPH AGENT QUICKSTART",
             "GETTING STARTED",
-            "AGENCY SETUP",
+            "IDENTITY SETUP",
             "COORDINATOR SERVICE REMINDER",
             "SERVICE MODE",
             "MANUAL MODE",

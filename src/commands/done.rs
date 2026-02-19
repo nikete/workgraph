@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::Path;
-use workgraph::agency::capture_task_output;
-use workgraph::graph::{LogEntry, Status, evaluate_loop_edges};
+use workgraph::identity::capture_task_output;
+use workgraph::graph::{LogEntry, Status, reward_loop_edges};
 use workgraph::parser::save_graph;
 use workgraph::query;
 
@@ -50,9 +50,9 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
         message: "Task marked as done".to_string(),
     });
 
-    // Evaluate loop edges: re-activate upstream tasks if conditions are met
+    // Reward loop edges: re-activate upstream tasks if conditions are met
     let id_owned = id.to_string();
-    let reactivated = evaluate_loop_edges(&mut graph, &id_owned);
+    let reactivated = reward_loop_edges(&mut graph, &id_owned);
 
     save_graph(&graph, &path).context("Failed to save graph")?;
     super::notify_graph_changed(dir);
@@ -88,8 +88,8 @@ pub fn run(dir: &Path, id: &str) -> Result<()> {
         }
     }
 
-    // Capture task output (git diff, artifacts, log) for evaluation.
-    // When auto_evaluate is enabled, the coordinator creates an evaluation task
+    // Capture task output (git diff, artifacts, log) for reward.
+    // When auto_reward is enabled, the coordinator creates an reward task
     // in the graph that becomes ready once this task is done; the captured output
     // feeds that evaluator.
     if let Some(task) = graph.get_task(id) {
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn test_done_evaluates_loop_edges_and_reactivates_target() {
+    fn test_done_rewards_loop_edges_and_reactivates_target() {
         let dir = tempdir().unwrap();
         let dir_path = dir.path();
 

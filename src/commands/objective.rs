@@ -1,20 +1,20 @@
 use anyhow::{Context, Result};
 use std::path::Path;
-use workgraph::agency::{self};
+use workgraph::identity::{self};
 
-/// Get the agency base directory (creates it if needed).
-fn agency_dir(workgraph_dir: &Path) -> Result<std::path::PathBuf> {
-    let dir = workgraph_dir.join("agency");
-    agency::init(&dir).context("Failed to initialise agency directory")?;
+/// Get the identity base directory (creates it if needed).
+fn identity_dir(workgraph_dir: &Path) -> Result<std::path::PathBuf> {
+    let dir = workgraph_dir.join("identity");
+    identity::init(&dir).context("Failed to initialise identity directory")?;
     Ok(dir)
 }
 
-/// Get the motivations subdirectory.
-fn motivations_dir(workgraph_dir: &Path) -> Result<std::path::PathBuf> {
-    Ok(agency_dir(workgraph_dir)?.join("motivations"))
+/// Get the objectives subdirectory.
+fn objectives_dir(workgraph_dir: &Path) -> Result<std::path::PathBuf> {
+    Ok(identity_dir(workgraph_dir)?.join("objectives"))
 }
 
-/// `wg motivation add <name> --accept ... --reject ... [--description ...]`
+/// `wg objective add <name> --accept ... --reject ... [--description ...]`
 pub fn run_add(
     workgraph_dir: &Path,
     name: &str,
@@ -22,9 +22,9 @@ pub fn run_add(
     reject: &[String],
     description: Option<&str>,
 ) -> Result<()> {
-    let dir = motivations_dir(workgraph_dir)?;
+    let dir = objectives_dir(workgraph_dir)?;
 
-    let motivation = agency::build_motivation(
+    let objective = identity::build_objective(
         name,
         description.unwrap_or(""),
         accept.to_vec(),
@@ -32,31 +32,31 @@ pub fn run_add(
     );
 
     // Check for duplicates (same content = same hash)
-    let mot_path = dir.join(format!("{}.yaml", motivation.id));
+    let mot_path = dir.join(format!("{}.yaml", objective.id));
     if mot_path.exists() {
         anyhow::bail!(
-            "Motivation with identical content already exists ({})",
-            agency::short_hash(&motivation.id)
+            "Objective with identical content already exists ({})",
+            identity::short_hash(&objective.id)
         );
     }
 
-    let path = agency::save_motivation(&motivation, &dir)?;
+    let path = identity::save_objective(&objective, &dir)?;
     println!(
-        "Created motivation: {} ({})",
+        "Created objective: {} ({})",
         name,
-        agency::short_hash(&motivation.id)
+        identity::short_hash(&objective.id)
     );
     println!("  File: {}", path.display());
     Ok(())
 }
 
-/// `wg motivation list [--json]`
+/// `wg objective list [--json]`
 pub fn run_list(workgraph_dir: &Path, json: bool) -> Result<()> {
-    let dir = motivations_dir(workgraph_dir)?;
-    let motivations = agency::load_all_motivations(&dir)?;
+    let dir = objectives_dir(workgraph_dir)?;
+    let objectives = identity::load_all_objectives(&dir)?;
 
     if json {
-        let output: Vec<serde_json::Value> = motivations
+        let output: Vec<serde_json::Value> = objectives
             .iter()
             .map(|m| {
                 serde_json::json!({
@@ -65,29 +65,29 @@ pub fn run_list(workgraph_dir: &Path, json: bool) -> Result<()> {
                     "description": m.description,
                     "acceptable_tradeoffs": m.acceptable_tradeoffs.len(),
                     "unacceptable_tradeoffs": m.unacceptable_tradeoffs.len(),
-                    "avg_score": m.performance.avg_score,
+                    "mean_reward": m.performance.mean_reward,
                     "task_count": m.performance.task_count,
                 })
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&output)?);
-    } else if motivations.is_empty() {
-        println!("No motivations defined. Use 'wg motivation add' to create one.");
+    } else if objectives.is_empty() {
+        println!("No objectives defined. Use 'wg objective add' to create one.");
     } else {
-        println!("Motivations:\n");
-        for m in &motivations {
-            let score_str = m
+        println!("Objectives:\n");
+        for m in &objectives {
+            let value_str = m
                 .performance
-                .avg_score
+                .mean_reward
                 .map(|s| format!("{:.2}", s))
                 .unwrap_or_else(|| "n/a".to_string());
             println!(
-                "  {}  {:20} accept:{} reject:{} score:{} tasks:{}",
-                agency::short_hash(&m.id),
+                "  {}  {:20} accept:{} reject:{} reward:{} tasks:{}",
+                identity::short_hash(&m.id),
                 m.name,
                 m.acceptable_tradeoffs.len(),
                 m.unacceptable_tradeoffs.len(),
-                score_str,
+                value_str,
                 m.performance.task_count,
             );
         }
@@ -96,50 +96,50 @@ pub fn run_list(workgraph_dir: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `wg motivation show <id> [--json]`
+/// `wg objective show <id> [--json]`
 pub fn run_show(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
-    let dir = motivations_dir(workgraph_dir)?;
-    let motivation = agency::find_motivation_by_prefix(&dir, id)
-        .with_context(|| format!("Failed to find motivation '{}'", id))?;
+    let dir = objectives_dir(workgraph_dir)?;
+    let objective = identity::find_objective_by_prefix(&dir, id)
+        .with_context(|| format!("Failed to find objective '{}'", id))?;
 
     if json {
-        let yaml_str = serde_yaml::to_string(&motivation)?;
+        let yaml_str = serde_yaml::to_string(&objective)?;
         // Convert YAML to JSON for --json output
         let value: serde_json::Value = serde_yaml::from_str(&yaml_str)?;
         println!("{}", serde_json::to_string_pretty(&value)?);
     } else {
         println!(
-            "Motivation: {} ({})",
-            motivation.name,
-            agency::short_hash(&motivation.id)
+            "Objective: {} ({})",
+            objective.name,
+            identity::short_hash(&objective.id)
         );
-        println!("ID: {}", motivation.id);
-        if !motivation.description.is_empty() {
-            println!("Description: {}", motivation.description);
+        println!("ID: {}", objective.id);
+        if !objective.description.is_empty() {
+            println!("Description: {}", objective.description);
         }
         println!();
 
-        if !motivation.acceptable_tradeoffs.is_empty() {
+        if !objective.acceptable_tradeoffs.is_empty() {
             println!("Acceptable tradeoffs:");
-            for t in &motivation.acceptable_tradeoffs {
+            for t in &objective.acceptable_tradeoffs {
                 println!("  + {}", t);
             }
         }
 
-        if !motivation.unacceptable_tradeoffs.is_empty() {
+        if !objective.unacceptable_tradeoffs.is_empty() {
             println!("Unacceptable tradeoffs:");
-            for t in &motivation.unacceptable_tradeoffs {
+            for t in &objective.unacceptable_tradeoffs {
                 println!("  - {}", t);
             }
         }
 
         println!();
         println!(
-            "Performance: {} tasks, avg score: {}",
-            motivation.performance.task_count,
-            motivation
+            "Performance: {} tasks, avg reward: {}",
+            objective.performance.task_count,
+            objective
                 .performance
-                .avg_score
+                .mean_reward
                 .map(|s| format!("{:.2}", s))
                 .unwrap_or_else(|| "n/a".to_string()),
         );
@@ -148,18 +148,18 @@ pub fn run_show(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
     Ok(())
 }
 
-/// `wg motivation lineage <id> [--json]`
+/// `wg objective lineage <id> [--json]`
 pub fn run_lineage(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
-    let dir = motivations_dir(workgraph_dir)?;
+    let dir = objectives_dir(workgraph_dir)?;
 
     // Resolve prefix to full ID first
-    let motivation = agency::find_motivation_by_prefix(&dir, id)
-        .with_context(|| format!("Failed to find motivation '{}'", id))?;
+    let objective = identity::find_objective_by_prefix(&dir, id)
+        .with_context(|| format!("Failed to find objective '{}'", id))?;
 
-    let ancestry = agency::motivation_ancestry(&motivation.id, &dir)?;
+    let ancestry = identity::objective_ancestry(&objective.id, &dir)?;
 
     if ancestry.is_empty() {
-        anyhow::bail!("Motivation '{}' not found", id);
+        anyhow::bail!("Objective '{}' not found", id);
     }
 
     if json {
@@ -182,8 +182,8 @@ pub fn run_lineage(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
 
     let target = &ancestry[0];
     println!(
-        "Lineage for motivation: {} ({})",
-        agency::short_hash(&target.id),
+        "Lineage for objective: {} ({})",
+        identity::short_hash(&target.id),
         target.name
     );
     println!();
@@ -202,7 +202,7 @@ pub fn run_lineage(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
             let short_parents: Vec<&str> = node
                 .parent_ids
                 .iter()
-                .map(|p| agency::short_hash(p))
+                .map(|p| identity::short_hash(p))
                 .collect();
             format!(" <- [{}]", short_parents.join(", "))
         };
@@ -210,7 +210,7 @@ pub fn run_lineage(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
         println!(
             "{}{} ({}) [{}] created by: {}{}",
             indent,
-            agency::short_hash(&node.id),
+            identity::short_hash(&node.id),
             node.name,
             gen_label,
             node.created_by,
@@ -220,22 +220,22 @@ pub fn run_lineage(workgraph_dir: &Path, id: &str, json: bool) -> Result<()> {
 
     if ancestry.len() == 1 && ancestry[0].parent_ids.is_empty() {
         println!();
-        println!("This motivation has no evolutionary history (manually created).");
+        println!("This objective has no evolutionary history (manually created).");
     }
 
     Ok(())
 }
 
-/// `wg motivation edit <id>` - opens in $EDITOR
+/// `wg objective edit <id>` - opens in $EDITOR
 ///
-/// After editing, the motivation is re-hashed. If the content changed, the file is
+/// After editing, the objective is re-hashed. If the content changed, the file is
 /// renamed to the new hash and the old file is removed.
 pub fn run_edit(workgraph_dir: &Path, id: &str) -> Result<()> {
-    let dir = motivations_dir(workgraph_dir)?;
-    let motivation = agency::find_motivation_by_prefix(&dir, id)
-        .with_context(|| format!("Failed to find motivation '{}'", id))?;
+    let dir = objectives_dir(workgraph_dir)?;
+    let objective = identity::find_objective_by_prefix(&dir, id)
+        .with_context(|| format!("Failed to find objective '{}'", id))?;
 
-    let mot_path = dir.join(format!("{}.yaml", motivation.id));
+    let mot_path = dir.join(format!("{}.yaml", objective.id));
 
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vi".to_string());
 
@@ -249,10 +249,10 @@ pub fn run_edit(workgraph_dir: &Path, id: &str) -> Result<()> {
     }
 
     // Validate and re-hash
-    let mut edited = agency::load_motivation(&mot_path)
-        .context("Edited file is not valid motivation YAML - changes may be malformed")?;
+    let mut edited = identity::load_objective(&mot_path)
+        .context("Edited file is not valid objective YAML - changes may be malformed")?;
 
-    let new_id = agency::content_hash_motivation(
+    let new_id = identity::content_hash_objective(
         &edited.acceptable_tradeoffs,
         &edited.unacceptable_tradeoffs,
         &edited.description,
@@ -261,33 +261,33 @@ pub fn run_edit(workgraph_dir: &Path, id: &str) -> Result<()> {
         // Content changed — rename to new hash
         let old_path = mot_path;
         edited.id = new_id;
-        agency::save_motivation(&edited, &dir)?;
+        identity::save_objective(&edited, &dir)?;
         std::fs::remove_file(&old_path).ok();
         println!(
-            "Motivation content changed, new ID: {}",
-            agency::short_hash(&edited.id)
+            "Objective content changed, new ID: {}",
+            identity::short_hash(&edited.id)
         );
     } else {
         // Mutable fields (name, etc.) may have changed; re-save in place
-        agency::save_motivation(&edited, &dir)?;
-        println!("Motivation '{}' updated", agency::short_hash(&edited.id));
+        identity::save_objective(&edited, &dir)?;
+        println!("Objective '{}' updated", identity::short_hash(&edited.id));
     }
 
     Ok(())
 }
 
-/// `wg motivation rm <id>`
+/// `wg objective rm <id>`
 pub fn run_rm(workgraph_dir: &Path, id: &str) -> Result<()> {
-    let dir = motivations_dir(workgraph_dir)?;
-    let motivation = agency::find_motivation_by_prefix(&dir, id)
-        .with_context(|| format!("Failed to find motivation '{}'", id))?;
+    let dir = objectives_dir(workgraph_dir)?;
+    let objective = identity::find_objective_by_prefix(&dir, id)
+        .with_context(|| format!("Failed to find objective '{}'", id))?;
 
-    let path = dir.join(format!("{}.yaml", motivation.id));
-    std::fs::remove_file(&path).context("Failed to remove motivation file")?;
+    let path = dir.join(format!("{}.yaml", objective.id));
+    std::fs::remove_file(&path).context("Failed to remove objective file")?;
     println!(
-        "Removed motivation: {} ({})",
-        motivation.name,
-        agency::short_hash(&motivation.id)
+        "Removed objective: {} ({})",
+        objective.name,
+        identity::short_hash(&objective.id)
     );
     Ok(())
 }
@@ -300,17 +300,17 @@ mod tests {
     fn setup() -> TempDir {
         let tmp = TempDir::new().unwrap();
         // Create the workgraph dir structure
-        std::fs::create_dir_all(tmp.path().join("agency").join("motivations")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("identity").join("objectives")).unwrap();
         tmp
     }
 
     #[test]
     fn test_content_hash_deterministic() {
-        let h1 = agency::content_hash_motivation(&["Slow".into()], &["Broken".into()], "desc");
-        let h2 = agency::content_hash_motivation(&["Slow".into()], &["Broken".into()], "desc");
+        let h1 = identity::content_hash_objective(&["Slow".into()], &["Broken".into()], "desc");
+        let h2 = identity::content_hash_objective(&["Slow".into()], &["Broken".into()], "desc");
         assert_eq!(h1, h2);
         // Different content produces different hash
-        let h3 = agency::content_hash_motivation(&["Fast".into()], &["Broken".into()], "desc");
+        let h3 = identity::content_hash_objective(&["Fast".into()], &["Broken".into()], "desc");
         assert_ne!(h1, h3);
     }
 
@@ -326,8 +326,8 @@ mod tests {
         )
         .unwrap();
 
-        let dir = motivations_dir(tmp.path()).unwrap();
-        let all = agency::load_all_motivations(&dir).unwrap();
+        let dir = objectives_dir(tmp.path()).unwrap();
+        let all = identity::load_all_objectives(&dir).unwrap();
         assert_eq!(all.len(), 1);
         // ID is now a content hash, not a slug
         assert_eq!(all[0].id.len(), 64); // SHA-256 hex = 64 chars
@@ -354,7 +354,7 @@ mod tests {
         assert!(
             err.contains("not found")
                 || err.contains("Failed to find")
-                || err.contains("No motivation matching"),
+                || err.contains("No objective matching"),
             "unexpected error: {}",
             err
         );
@@ -373,8 +373,8 @@ mod tests {
         .unwrap();
 
         // Look up by full hash
-        let dir = motivations_dir(tmp.path()).unwrap();
-        let all = agency::load_all_motivations(&dir).unwrap();
+        let dir = objectives_dir(tmp.path()).unwrap();
+        let all = identity::load_all_objectives(&dir).unwrap();
         let full_id = &all[0].id;
         let result = run_show(tmp.path(), full_id, false);
         assert!(result.is_ok());
@@ -388,15 +388,15 @@ mod tests {
     #[test]
     fn test_rm() {
         let tmp = setup();
-        run_add(tmp.path(), "Temp Motivation", &[], &[], None).unwrap();
+        run_add(tmp.path(), "Temp Objective", &[], &[], None).unwrap();
 
-        let dir = motivations_dir(tmp.path()).unwrap();
-        let all = agency::load_all_motivations(&dir).unwrap();
+        let dir = objectives_dir(tmp.path()).unwrap();
+        let all = identity::load_all_objectives(&dir).unwrap();
         assert_eq!(all.len(), 1);
         let full_id = all[0].id.clone();
 
         run_rm(tmp.path(), &full_id).unwrap();
-        assert_eq!(agency::load_all_motivations(&dir).unwrap().len(), 0);
+        assert_eq!(identity::load_all_objectives(&dir).unwrap().len(), 0);
     }
 
     #[test]
@@ -408,7 +408,7 @@ mod tests {
         assert!(
             err.contains("not found")
                 || err.contains("Failed to find")
-                || err.contains("No motivation matching"),
+                || err.contains("No objective matching"),
             "unexpected error: {}",
             err
         );
@@ -440,8 +440,8 @@ mod tests {
     fn test_show_json() {
         let tmp = setup();
         run_add(tmp.path(), "Test Mot", &[], &[], Some("desc")).unwrap();
-        let dir = motivations_dir(tmp.path()).unwrap();
-        let all = agency::load_all_motivations(&dir).unwrap();
+        let dir = objectives_dir(tmp.path()).unwrap();
+        let all = identity::load_all_objectives(&dir).unwrap();
         let result = run_show(tmp.path(), &all[0].id, true);
         assert!(result.is_ok());
     }

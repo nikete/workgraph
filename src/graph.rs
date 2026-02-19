@@ -142,7 +142,7 @@ impl Status {
 /// A task in the workgraph with dependencies, status, and execution metadata.
 ///
 /// Custom `Deserialize` handles migration from the old `identity` field
-/// (`{"role_id": "...", "motivation_id": "..."}`) to the new `agent` field
+/// (`{"role_id": "...", "objective_id": "..."}`) to the new `agent` field
 /// (content-hash string).
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 pub struct Task {
@@ -210,7 +210,7 @@ pub struct Task {
     /// Verification criteria - if set, task requires review before done
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verify: Option<String>,
-    /// Agent assigned to this task (content-hash of an Agent in the agency)
+    /// Agent assigned to this task (content-hash of an Agent in the identity)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<String>,
     /// Back-edges that can re-activate upstream tasks on completion
@@ -229,12 +229,12 @@ pub struct Task {
     pub paused: bool,
 }
 
-/// Legacy identity format: `{"role_id": "...", "motivation_id": "..."}`.
+/// Legacy identity format: `{"role_id": "...", "objective_id": "..."}`.
 /// Used for migrating old JSONL data that stored identity inline on tasks.
 #[derive(Deserialize)]
 struct LegacyIdentity {
     role_id: String,
-    motivation_id: String,
+    objective_id: String,
 }
 
 /// Helper struct for deserializing Task with migration from old `identity` field.
@@ -313,9 +313,9 @@ impl<'de> Deserialize<'de> for Task {
         // Migrate: if old `identity` field present and no `agent`, compute hash
         let agent = match (helper.agent, helper.identity) {
             (Some(a), _) => Some(a),
-            (None, Some(legacy)) => Some(crate::agency::content_hash_agent(
+            (None, Some(legacy)) => Some(crate::identity::content_hash_agent(
                 &legacy.role_id,
-                &legacy.motivation_id,
+                &legacy.objective_id,
             )),
             (None, None) => None,
         };
@@ -537,11 +537,11 @@ impl WorkGraph {
     }
 }
 
-/// Evaluate a loop guard condition against the current graph state.
-fn evaluate_guard(guard: &Option<LoopGuard>, graph: &WorkGraph) -> bool {
+/// Reward a loop guard condition against the current graph state.
+fn reward_guard(guard: &Option<LoopGuard>, graph: &WorkGraph) -> bool {
     match guard {
         None | Some(LoopGuard::Always) => true,
-        // IterationLessThan is checked in evaluate_loop_edges() where the
+        // IterationLessThan is checked in reward_loop_edges() where the
         // target task's loop_iteration is available.
         Some(LoopGuard::IterationLessThan(_)) => true,
         Some(LoopGuard::TaskStatus { task, status }) => graph
@@ -551,7 +551,7 @@ fn evaluate_guard(guard: &Option<LoopGuard>, graph: &WorkGraph) -> bool {
     }
 }
 
-/// Evaluate loop edges after a task transitions to Done.
+/// Reward loop edges after a task transitions to Done.
 ///
 /// For each `LoopEdge` on the completed task:
 /// 1. Check guard condition against current graph state.
@@ -563,7 +563,7 @@ fn evaluate_guard(guard: &Option<LoopGuard>, graph: &WorkGraph) -> bool {
 ///    blockers are no longer all Done (since the target was just re-opened).
 ///
 /// Returns the list of task IDs that were re-activated.
-pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String> {
+pub fn reward_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String> {
     // Collect loop edges from the source task (clone to avoid borrow issues)
     let loop_edges: Vec<LoopEdge> = match graph.get_task(source_id) {
         Some(task) => task.loops_to.clone(),
@@ -574,7 +574,7 @@ pub fn evaluate_loop_edges(graph: &mut WorkGraph, source_id: &str) -> Vec<String
 
     for edge in &loop_edges {
         // 1. Check guard condition
-        if !evaluate_guard(&edge.guard, graph) {
+        if !reward_guard(&edge.guard, graph) {
             continue;
         }
 
@@ -1049,13 +1049,13 @@ mod tests {
 
     #[test]
     fn test_deserialize_legacy_identity_migrates_to_agent() {
-        // Old format had identity: {role_id, motivation_id} inline on the task
-        let json = r#"{"id":"t1","kind":"task","title":"Test","status":"open","identity":{"role_id":"role-abc","motivation_id":"mot-xyz"}}"#;
+        // Old format had identity: {role_id, objective_id} inline on the task
+        let json = r#"{"id":"t1","kind":"task","title":"Test","status":"open","identity":{"role_id":"role-abc","objective_id":"mot-xyz"}}"#;
         let node: Node = serde_json::from_str(json).unwrap();
         match node {
             Node::Task(t) => {
                 // Should be migrated to agent hash
-                let expected = crate::agency::content_hash_agent("role-abc", "mot-xyz");
+                let expected = crate::identity::content_hash_agent("role-abc", "mot-xyz");
                 assert_eq!(t.agent, Some(expected));
             }
             _ => panic!("Expected Task"),
@@ -1065,7 +1065,7 @@ mod tests {
     #[test]
     fn test_deserialize_agent_field_takes_precedence_over_legacy_identity() {
         // If both agent and identity are present, agent wins
-        let json = r#"{"id":"t1","kind":"task","title":"Test","status":"open","agent":"explicit-hash","identity":{"role_id":"role-abc","motivation_id":"mot-xyz"}}"#;
+        let json = r#"{"id":"t1","kind":"task","title":"Test","status":"open","agent":"explicit-hash","identity":{"role_id":"role-abc","objective_id":"mot-xyz"}}"#;
         let node: Node = serde_json::from_str(json).unwrap();
         match node {
             Node::Task(t) => {
@@ -1466,7 +1466,7 @@ mod tests {
         graph.add_node(Node::Task(mid));
         graph.add_node(Node::Task(src));
 
-        let reactivated = evaluate_loop_edges(&mut graph, "src");
+        let reactivated = reward_loop_edges(&mut graph, "src");
 
         // All three should be re-opened
         assert!(reactivated.contains(&"tgt".to_string()));
@@ -1489,7 +1489,7 @@ mod tests {
     }
 
     #[test]
-    fn test_evaluate_loop_edges_multi_target_no_duplicate_source() {
+    fn test_reward_loop_edges_multi_target_no_duplicate_source() {
         // Source task has two loop edges to different targets.
         // When both fire, the source should appear exactly once in reactivated.
         let mut graph = WorkGraph::new();
@@ -1519,7 +1519,7 @@ mod tests {
         graph.add_node(Node::Task(tgt_b));
         graph.add_node(Node::Task(src));
 
-        let reactivated = evaluate_loop_edges(&mut graph, "src");
+        let reactivated = reward_loop_edges(&mut graph, "src");
 
         // Source should appear exactly once, not twice
         let source_count = reactivated.iter().filter(|id| *id == "src").count();

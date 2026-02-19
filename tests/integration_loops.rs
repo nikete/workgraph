@@ -1,10 +1,10 @@
 //! Integration tests for loop edge behavior.
 //!
-//! These tests exercise the actual graph/done/loop machinery in `evaluate_loop_edges`,
+//! These tests exercise the actual graph/done/loop machinery in `reward_loop_edges`,
 //! `find_intermediate_tasks`, `ready_tasks`, and `is_time_ready` — no mocks.
 
 use chrono::{Duration, Utc};
-use workgraph::graph::{LoopEdge, LoopGuard, Node, Status, Task, WorkGraph, evaluate_loop_edges};
+use workgraph::graph::{LoopEdge, LoopGuard, Node, Status, Task, WorkGraph, reward_loop_edges};
 use workgraph::query::{is_time_ready, ready_tasks};
 
 /// Helper: create a minimal open task.
@@ -45,7 +45,7 @@ fn test_basic_loop_a_b_c_loops_to_a() {
     graph.get_task_mut("c").unwrap().status = Status::Done;
 
     // Fire loop edges from C
-    let reactivated = evaluate_loop_edges(&mut graph, "c");
+    let reactivated = reward_loop_edges(&mut graph, "c");
 
     // A should be re-opened with loop_iteration incremented
     let a = graph.get_task("a").unwrap();
@@ -89,7 +89,7 @@ fn test_self_loop() {
     // Complete the task
     graph.get_task_mut("self").unwrap().status = Status::Done;
 
-    let reactivated = evaluate_loop_edges(&mut graph, "self");
+    let reactivated = reward_loop_edges(&mut graph, "self");
 
     let t = graph.get_task("self").unwrap();
     assert_eq!(t.status, Status::Open, "Self-loop task should be re-opened");
@@ -116,7 +116,7 @@ fn test_self_loop_with_delay() {
     // Complete the task
     graph.get_task_mut("delayed").unwrap().status = Status::Done;
 
-    let reactivated = evaluate_loop_edges(&mut graph, "delayed");
+    let reactivated = reward_loop_edges(&mut graph, "delayed");
     assert!(reactivated.contains(&"delayed".to_string()));
 
     let t = graph.get_task("delayed").unwrap();
@@ -181,7 +181,7 @@ fn test_guard_condition_true_fires() {
 
     // Complete worker
     graph.get_task_mut("worker").unwrap().status = Status::Done;
-    let reactivated = evaluate_loop_edges(&mut graph, "worker");
+    let reactivated = reward_loop_edges(&mut graph, "worker");
 
     // Guard is true (gate is Done) → loop should fire
     let w = graph.get_task("worker").unwrap();
@@ -217,7 +217,7 @@ fn test_guard_condition_false_does_not_fire() {
 
     // Complete worker
     graph.get_task_mut("worker").unwrap().status = Status::Done;
-    let reactivated = evaluate_loop_edges(&mut graph, "worker");
+    let reactivated = reward_loop_edges(&mut graph, "worker");
 
     // Guard is false (gate is Open, not Done) → loop should NOT fire
     let w = graph.get_task("worker").unwrap();
@@ -249,7 +249,7 @@ fn test_max_iterations() {
     // Loop 3 times: iteration goes 0→1, 1→2, 2→3
     for expected_iter in 1..=3 {
         graph.get_task_mut("bounded").unwrap().status = Status::Done;
-        let reactivated = evaluate_loop_edges(&mut graph, "bounded");
+        let reactivated = reward_loop_edges(&mut graph, "bounded");
 
         if expected_iter <= 3 {
             let t = graph.get_task("bounded").unwrap();
@@ -269,7 +269,7 @@ fn test_max_iterations() {
     // After 3 iterations, loop_iteration == 3 == max_iterations.
     // Complete again: loop should NOT fire since iteration >= max
     graph.get_task_mut("bounded").unwrap().status = Status::Done;
-    let reactivated = evaluate_loop_edges(&mut graph, "bounded");
+    let reactivated = reward_loop_edges(&mut graph, "bounded");
 
     let t = graph.get_task("bounded").unwrap();
     assert_eq!(
@@ -304,7 +304,7 @@ fn test_unbounded_loop_keeps_looping() {
     // Run 20 iterations — well beyond any small fixed count
     for i in 1..=20 {
         graph.get_task_mut("unbounded").unwrap().status = Status::Done;
-        let reactivated = evaluate_loop_edges(&mut graph, "unbounded");
+        let reactivated = reward_loop_edges(&mut graph, "unbounded");
 
         let t = graph.get_task("unbounded").unwrap();
         assert_eq!(t.status, Status::Open, "Should re-open at iteration {}", i);
@@ -344,7 +344,7 @@ fn test_multi_step_propagation() {
         graph.get_task_mut(id).unwrap().status = Status::Done;
     }
 
-    let reactivated = evaluate_loop_edges(&mut graph, "d");
+    let reactivated = reward_loop_edges(&mut graph, "d");
 
     // A should be re-opened
     assert_eq!(graph.get_task("a").unwrap().status, Status::Open);
@@ -403,7 +403,7 @@ fn test_loop_with_artifacts() {
         t.status = Status::Done;
     }
 
-    let reactivated = evaluate_loop_edges(&mut graph, "artsy");
+    let reactivated = reward_loop_edges(&mut graph, "artsy");
     assert!(reactivated.contains(&"artsy".to_string()));
 
     // After re-activation, artifacts from iteration 0 should still be present
@@ -439,7 +439,7 @@ fn test_loop_iteration_counter_increments() {
 
     for expected in 1..=7 {
         graph.get_task_mut("counter").unwrap().status = Status::Done;
-        evaluate_loop_edges(&mut graph, "counter");
+        reward_loop_edges(&mut graph, "counter");
 
         let t = graph.get_task("counter").unwrap();
         assert_eq!(
@@ -484,7 +484,7 @@ fn test_concurrent_loops_no_interference() {
 
     // Complete alpha, fire its loop
     graph.get_task_mut("alpha").unwrap().status = Status::Done;
-    let reactivated_alpha = evaluate_loop_edges(&mut graph, "alpha");
+    let reactivated_alpha = reward_loop_edges(&mut graph, "alpha");
 
     assert!(reactivated_alpha.contains(&"alpha".to_string()));
     assert_eq!(graph.get_task("alpha").unwrap().loop_iteration, 1);
@@ -498,7 +498,7 @@ fn test_concurrent_loops_no_interference() {
     // Now complete beta and gamma in loop 2
     graph.get_task_mut("beta").unwrap().status = Status::Done;
     graph.get_task_mut("gamma").unwrap().status = Status::Done;
-    let reactivated_gamma = evaluate_loop_edges(&mut graph, "gamma");
+    let reactivated_gamma = reward_loop_edges(&mut graph, "gamma");
 
     // beta should be re-opened by gamma's loop
     assert!(reactivated_gamma.contains(&"beta".to_string()));
@@ -511,7 +511,7 @@ fn test_concurrent_loops_no_interference() {
 
     // Complete alpha again — its iteration should advance to 2
     graph.get_task_mut("alpha").unwrap().status = Status::Done;
-    evaluate_loop_edges(&mut graph, "alpha");
+    reward_loop_edges(&mut graph, "alpha");
     assert_eq!(graph.get_task("alpha").unwrap().loop_iteration, 2);
 
     // beta still at iteration 1 — independent
@@ -536,19 +536,19 @@ fn test_iteration_less_than_guard() {
 
     // Iteration 0→1: guard says iteration < 2, current=0 so fires
     graph.get_task_mut("guarded").unwrap().status = Status::Done;
-    let r = evaluate_loop_edges(&mut graph, "guarded");
+    let r = reward_loop_edges(&mut graph, "guarded");
     assert!(!r.is_empty());
     assert_eq!(graph.get_task("guarded").unwrap().loop_iteration, 1);
 
     // Iteration 1→2: guard says iteration < 2, current=1 so fires
     graph.get_task_mut("guarded").unwrap().status = Status::Done;
-    let r = evaluate_loop_edges(&mut graph, "guarded");
+    let r = reward_loop_edges(&mut graph, "guarded");
     assert!(!r.is_empty());
     assert_eq!(graph.get_task("guarded").unwrap().loop_iteration, 2);
 
     // Iteration 2: guard says iteration < 2, current=2 so does NOT fire
     graph.get_task_mut("guarded").unwrap().status = Status::Done;
-    let r = evaluate_loop_edges(&mut graph, "guarded");
+    let r = reward_loop_edges(&mut graph, "guarded");
     assert!(
         r.is_empty(),
         "IterationLessThan(2) should stop at iteration 2"
@@ -574,7 +574,7 @@ fn test_always_guard_fires() {
     graph.add_node(Node::Task(t));
 
     graph.get_task_mut("always").unwrap().status = Status::Done;
-    let r = evaluate_loop_edges(&mut graph, "always");
+    let r = reward_loop_edges(&mut graph, "always");
     assert!(r.contains(&"always".to_string()));
     assert_eq!(graph.get_task("always").unwrap().loop_iteration, 1);
 }
@@ -598,7 +598,7 @@ fn test_loop_to_nonexistent_target_does_not_reopen_source() {
     // Complete the source task
     graph.get_task_mut("src").unwrap().status = Status::Done;
 
-    let reactivated = evaluate_loop_edges(&mut graph, "src");
+    let reactivated = reward_loop_edges(&mut graph, "src");
 
     // Target doesn't exist, so nothing should be reactivated
     assert!(
@@ -639,7 +639,7 @@ fn test_loop_source_not_reopened_when_at_max_iterations() {
     graph.add_node(Node::Task(src));
 
     graph.get_task_mut("src").unwrap().status = Status::Done;
-    let reactivated = evaluate_loop_edges(&mut graph, "src");
+    let reactivated = reward_loop_edges(&mut graph, "src");
 
     assert!(
         reactivated.is_empty(),

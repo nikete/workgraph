@@ -94,7 +94,7 @@ pub struct DistillSource { pub agent_id: String, pub model: Option<String>, pub 
 pub struct InteractionPatterns { pub corrections: Vec<Correction>, pub sticking_points: Vec<StickingPoint>, pub human_preferences: Vec<String> }
 pub struct Correction { pub context: String, pub correction: String, pub lesson: String }
 pub struct StickingPoint { pub description: String, pub resolution: String, pub iterations_to_resolve: u32 }
-pub struct QualitySignals { pub evaluation_scores: Vec<f64>, pub convergence: bool, pub remaining_issues: Vec<String> }
+pub struct QualitySignals { pub reward_scores: Vec<f64>, pub convergence: bool, pub remaining_issues: Vec<String> }
 ```
 
 ### RunMeta (src/runs.rs:11-21)
@@ -144,7 +144,7 @@ The `OrchestratorAdapter` trait was mentioned in the task description as a featu
 - `get_task_status(task_id) -> Status`
 - `get_task_artifacts(task_id) -> Vec<Artifact>`
 - `replay_task(task_id, model, canon) -> RunHandle`
-- `get_evaluation(task_id) -> Option<Evaluation>`
+- `get_reward(task_id) -> Option<Reward>`
 
 This maps to what our `TemplateVars` + `ExecutorConfig` + coordinator already provide, just not behind a formal trait interface.
 
@@ -205,7 +205,7 @@ CAPTURE → DISTILL → REPLAY
 **How distill works:**
 1. `wg distill <task-id>` loads task definition, finds agents via registry
 2. Reads agent output logs as trace content
-3. Loads evaluation scores from `agency/evaluations/`
+3. Loads reward scores from `identity/rewards/`
 4. Loads previous canon if exists (for refinement)
 5. `build_distill_prompt()` constructs structured prompt with all context
 6. **LLM call NOT YET WIRED UP** — prints "LLM integration not yet implemented"
@@ -213,7 +213,7 @@ CAPTURE → DISTILL → REPLAY
 
 **Canon injection:** Designed for `{{task_canon}}` template variable in executor prompts, following existing `{{task_identity}}` pattern. `render_canon_for_prompt()` does priority-ordered section truncation within token budget.
 
-**Relation to `wg evolve`:** Both are LLM-powered synthesis steps. Evolve mutates role/motivation definitions based on evaluations. Distill produces per-task knowledge artifacts from conversation traces. They operate at different levels: evolve refines *who does the work*, distill refines *what the work should produce*.
+**Relation to `wg evolve`:** Both are LLM-powered synthesis steps. Evolve mutates role/objective definitions based on rewards. Distill produces per-task knowledge artifacts from conversation traces. They operate at different levels: evolve refines *who does the work*, distill refines *what the work should produce*.
 
 ### Stage 3: Replay (runs.rs, replay.rs, runs_cmd.rs)
 
@@ -267,7 +267,7 @@ Both use `#[serde(default)]` throughout, so existing configs work without modifi
 
 The fork is genuinely additive. The 4 modified files are:
 
-1. **src/config.rs** (+91 lines) — Two new structs with defaults. No changes to existing `Config`, `CoordinatorConfig`, or `AgencyConfig` structs. New fields added to root `Config` with `#[serde(default)]`.
+1. **src/config.rs** (+91 lines) — Two new structs with defaults. No changes to existing `Config`, `CoordinatorConfig`, or `IdentityConfig` structs. New fields added to root `Config` with `#[serde(default)]`.
 
 2. **src/lib.rs** (+3 lines) — Three `pub mod` declarations. No changes to existing exports.
 
@@ -289,20 +289,20 @@ Canon files use YAML via `serde_yaml`. The rest of workgraph uses JSON/JSONL. Th
 |----------------|-------------------|-------------------------------|
 | `TraceEvent` enum | `OperationEntry` in `provenance.rs` | Different granularity. OperationEntry records graph mutations. TraceEvent records conversation turns. **Complementary, not overlapping.** We'd add trace.rs alongside provenance.rs. |
 | `TraceMeta` | Agent output in `.workgraph/output/{task_id}/` | Our `capture_task_output()` saves git diff + artifacts + log. TraceMeta adds structured conversation statistics. **We'd add TraceMeta to capture_task_output().** |
-| `Canon` struct | `Role` + `Motivation` (agency.rs) | Different level. Canon captures per-task knowledge. Role/Motivation capture per-agent identity. **We'd add canon.rs as a new module — no overlap with agency.** |
+| `Canon` struct | `Role` + `Objective` (identity.rs) | Different level. Canon captures per-task knowledge. Role/Objective capture per-agent identity. **We'd add canon.rs as a new module — no overlap with identity.** |
 | `Canon.spec` | Task `description` + `verify` fields | Canon.spec is a refined version informed by execution experience. **We'd inject it via `{{task_canon}}` in executor templates.** |
 | `Canon.interaction_patterns` | Nothing equivalent | Novel concept. Corrections, sticking points, preferences have no wg equivalent. **New module needed.** |
-| `Canon.quality_signals` | `Evaluation.score` + `Evaluation.dimensions` | evaluation_scores in quality_signals are just aggregated eval scores. **Simple mapping from existing evaluations.** |
-| `DistillSource` | `EvaluationRef` in agency.rs | Similar provenance tracking (agent_id, model, iteration). **Could unify.** |
+| `Canon.quality_signals` | `Reward.score` + `Reward.dimensions` | reward_scores in quality_signals are just aggregated eval scores. **Simple mapping from existing rewards.** |
+| `DistillSource` | `RewardRef` in identity.rs | Similar provenance tracking (agent_id, model, iteration). **Could unify.** |
 | `RunMeta` | Nothing equivalent | We have no run/snapshot management. **New module needed (runs.rs).** |
 | `snapshot()` / `restore_run()` | Nothing equivalent | We have provenance log but no graph snapshots. **New functions needed.** |
 | `reset_tasks_for_replay()` | `retry` command (retry.rs) | retry resets one task. reset_tasks_for_replay does selective batch reset with transitive dependents. **Extension of retry logic.** |
 | `collect_transitive_dependents()` | Nothing in graph.rs | Our graph module has no reverse dependency traversal. **Add to graph.rs as utility.** |
-| `load_eval_scores()` | `load_all_evaluations_or_warn()` in agency.rs | load_eval_scores reads the same eval JSON files but returns HashMap<task_id, max_score>. **Factor into shared utility.** |
+| `load_eval_scores()` | `load_all_rewards_or_warn()` in identity.rs | load_eval_scores reads the same eval JSON files but returns HashMap<task_id, max_score>. **Factor into shared utility.** |
 | `parse_stream_json()` | Nothing equivalent | We store raw output.log with no parsing. **New parser needed.** |
-| `render_canon_for_prompt()` | `render_identity_prompt()` in agency.rs | Same pattern: render structured data into prompt text with truncation. **Add `{{task_canon}}` to TemplateVars.** |
-| `build_distill_prompt()` | `render_evaluator_prompt()` in agency.rs | Same pattern: build structured prompt for LLM call. **New prompt builder alongside evaluator.** |
-| `DistillConfig` / `ReplayConfig` | `CoordinatorConfig` / `AgencyConfig` | Same config pattern. **Add to Config struct.** |
+| `render_canon_for_prompt()` | `render_identity_prompt()` in identity.rs | Same pattern: render structured data into prompt text with truncation. **Add `{{task_canon}}` to TemplateVars.** |
+| `build_distill_prompt()` | `render_evaluator_prompt()` in identity.rs | Same pattern: build structured prompt for LLM call. **New prompt builder alongside evaluator.** |
+| `DistillConfig` / `ReplayConfig` | `CoordinatorConfig` / `IdentityConfig` | Same config pattern. **Add to Config struct.** |
 | `OrchestratorAdapter` trait (VX) | `TemplateVars` + `ExecutorConfig` | Our executor system is function-based. **An adapter trait would formalize this interface.** |
 
 ---
@@ -333,7 +333,7 @@ The snapshot is created at line 36 (before the `if plan_only` check at line 95).
 
 **Locations:** `src/runs.rs:277-306` and `src/commands/replay.rs:253-282`
 
-Identical implementations that read evaluation JSON files and extract the highest score per task. Should be factored into a shared utility in agency.rs alongside `load_all_evaluations_or_warn`.
+Identical implementations that read reward JSON files and extract the highest score per task. Should be factored into a shared utility in identity.rs alongside `load_all_rewards_or_warn`.
 
 **Severity:** Low — code duplication, not a runtime bug.
 
@@ -417,7 +417,7 @@ The implementation closely follows the design. Most deviations are incomplete fe
 
 4. **Replay mechanism (snapshot + reset + re-execute)** — Adopt but wire into provenance log. Every snapshot, reset, and restore should be recorded as an OperationEntry. This gives us unified audit trail: "what happened" (provenance) + "what was said" (traces) + "what was reset" (replay ops).
 
-5. **Run management (wg runs list/show/restore)** — Adopt but add `wg runs diff <a> <b>` for comparing evaluation scores across runs.
+5. **Run management (wg runs list/show/restore)** — Adopt but add `wg runs diff <a> <b>` for comparing reward scores across runs.
 
 6. **Auto trace extraction** — Fix the gap in nikete's implementation. Wire trace extraction into the spawn wrapper (run.sh) or coordinator completion handler so traces are always captured. Without this, the pipeline is manual and unreliable.
 
@@ -439,7 +439,7 @@ The implementation closely follows the design. Most deviations are incomplete fe
 
 ### Must Investigate (Blocked)
 
-13. **VX design document and OrchestratorAdapter trait** — Cannot evaluate without the document. Request from nikete. The evaluator described it as "a distinct conceptual contribution separate from the replay system" — it may define the interface that makes workgraph pluggable into external scoring/exchange systems.
+13. **VX design document and OrchestratorAdapter trait** — Cannot reward without the document. Request from nikete. The evaluator described it as "a distinct conceptual contribution separate from the replay system" — it may define the interface that makes workgraph pluggable into external scoring/exchange systems.
 
 ---
 
@@ -457,7 +457,7 @@ The implementation closely follows the design. Most deviations are incomplete fe
 ### Full integration (capture + distill + replay)
 - All of the above, plus:
 - Port `canon.rs` → `src/canon.rs`
-- Wire distill LLM call (follow the evaluator pattern from agency.rs)
+- Wire distill LLM call (follow the evaluator pattern from identity.rs)
 - Implement `{{task_canon}}` injection in `TemplateVars::from_task()`
 - Add auto-distill to coordinator tick
 - ~2,500 lines of new code + ~400 lines of integration

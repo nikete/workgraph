@@ -31,8 +31,8 @@
 | `wg archive` | Moves done tasks from graph.jsonl to archive.jsonl | No |
 | `wg artifact` | Adds/removes artifact paths on a task | No |
 | `wg reschedule` | Modifies scheduling fields | No |
-| `wg evolve` | Creates/modifies/retires roles and motivations; creates tasks | No (to tasks) |
-| `wg evaluate` | Records evaluation JSON, updates agent performance | No (to tasks) |
+| `wg evolve` | Creates/modifies/retires roles and objectives; creates tasks | No (to tasks) |
+| `wg reward` | Records reward JSON, updates agent performance | No (to tasks) |
 | `wg assign` | Sets task.agent content hash | No |
 
 ### 1.2 Task Timestamps
@@ -93,16 +93,16 @@ Records: daemon start/stop, coordinator tick summaries, agent spawn events, dead
 
 **Not structured** — plain text, no JSON, not machine-parseable without regex.
 
-### 1.6 Evaluation Records (`.workgraph/agency/evaluations/*.json`)
+### 1.6 Reward Records (`.workgraph/identity/rewards/*.json`)
 
-Per-task evaluation files containing:
+Per-task reward files containing:
 ```json
 {
   "id": "eval-{task-id}-{timestamp}",
   "task_id": "...",
   "agent_id": "{content-hash}",
   "role_id": "{content-hash}",
-  "motivation_id": "{content-hash}",
+  "objective_id": "{content-hash}",
   "score": 0.97,
   "dimensions": {
     "correctness": 0.98,
@@ -150,13 +150,13 @@ No record of which CLI commands were run, by whom, or with what arguments. Examp
 
 - `wg add "Build widget" --blocked-by design --skill rust` — the fact that this command was run at a specific time with these arguments is not recorded anywhere except the resulting task in graph.jsonl
 - `wg edit my-task --add-tag urgent` — no trace that this edit happened, only the current state shows the tag exists
-- `wg evolve --strategy mutation` — the invocation itself isn't logged; only the resulting role/motivation changes are persisted
+- `wg evolve --strategy mutation` — the invocation itself isn't logged; only the resulting role/objective changes are persisted
 
 ### 2.3 Full Prompts for Non-Agent Commands
 
-- `wg evolve` sends a large structured prompt to an LLM with performance data, evaluation history, and strategy instructions. The prompt is not preserved.
-- `wg evaluate` sends a prompt with task output, role/motivation context, and evaluation criteria. The prompt is not preserved (only the resulting evaluation JSON is saved).
-- `wg assign` (auto-assignment via agency) involves an LLM analyzing agent performance data. The prompt and reasoning are not preserved.
+- `wg evolve` sends a large structured prompt to an LLM with performance data, reward history, and strategy instructions. The prompt is not preserved.
+- `wg reward` sends a prompt with task output, role/objective context, and reward criteria. The prompt is not preserved (only the resulting reward JSON is saved).
+- `wg assign` (auto-assignment via identity) involves an LLM analyzing agent performance data. The prompt and reasoning are not preserved.
 
 ### 2.4 Intermediate Artifacts and Conversation Context
 
@@ -197,9 +197,9 @@ To replay a workflow, you need:
 1. **Initial graph state**: The task graph as it existed before work began (or the sequence of `wg add` commands that created it)
 2. **Task dispatch order**: Which tasks were dispatched in what sequence, and to which agents
 3. **Full prompts**: The exact prompt each agent received (task description + context from dependencies + identity)
-4. **Agent identity context**: Role, motivation, skills, desired outcome — all the parameters that shape agent behavior
+4. **Agent identity context**: Role, objective, skills, desired outcome — all the parameters that shape agent behavior
 5. **External inputs**: Any files or context the agent read from the filesystem that wasn't in the prompt
-6. **Evaluation criteria**: The exact evaluation prompt used to score each task
+6. **Reward criteria**: The exact reward prompt used to score each task
 7. **Graph mutations between tasks**: Any edits, dependency changes, or new tasks added during execution
 
 ### 3.2 What's Currently Capturable
@@ -208,19 +208,19 @@ To replay a workflow, you need:
 |-------------|--------------|-----|
 | Initial graph state | Not captured (graph.jsonl is mutable) | Need snapshot at session start |
 | Task dispatch order | Partially in daemon.log (unstructured) | Need structured dispatch log |
-| Full prompts | `prompt.txt` in agent dirs (recent only) | Good for agent tasks; missing for evolve/evaluate |
-| Agent identity context | Derivable from agent hash → role + motivation | OK if entities aren't retired/modified |
+| Full prompts | `prompt.txt` in agent dirs (recent only) | Good for agent tasks; missing for evolve/reward |
+| Agent identity context | Derivable from agent hash → role + objective | OK if entities aren't retired/modified |
 | External inputs | Not captured at all | Major gap |
-| Evaluation criteria | Not captured (prompt is ephemeral) | Need to save eval prompts |
+| Reward criteria | Not captured (prompt is ephemeral) | Need to save eval prompts |
 | Graph mutations | Not captured | Need mutation log |
 
 ### 3.3 Specific Replay Blockers
 
 1. **No graph snapshot**: The graph is continuously mutated. To replay, you'd need to reconstruct the initial state from the archive + current graph + reverse-engineering mutations. This is fragile.
 
-2. **Evolve prompts lost**: `wg evolve` constructs a complex prompt from evaluation data and sends it to an LLM. The prompt determines what role/motivation changes are proposed. Without the prompt, you can't replay the evolution step.
+2. **Evolve prompts lost**: `wg evolve` constructs a complex prompt from reward data and sends it to an LLM. The prompt determines what role/objective changes are proposed. Without the prompt, you can't replay the evolution step.
 
-3. **Evaluate prompts lost**: `wg evaluate` constructs a prompt from task output + role context. Without the prompt, you can't compare how different models evaluate the same work.
+3. **Reward prompts lost**: `wg reward` constructs a prompt from task output + role context. Without the prompt, you can't compare how different models reward the same work.
 
 4. **Config at point-in-time**: The coordinator config (which model, which executor, max agents) may have changed during the session. No history of config changes means you can't reproduce the exact execution environment.
 
@@ -256,7 +256,7 @@ Introduce a single append-only event log (`.workgraph/events.jsonl`) that record
 Store all LLM prompts in a content-addressed store (`.workgraph/prompts/{sha256}.txt`):
 - Agent task prompts (already saved as `prompt.txt` — just also hash and index them)
 - Evolve prompts
-- Evaluate prompts
+- Reward prompts
 - Assign prompts (for auto-assignment)
 
 Reference prompts by hash in the event log. This enables exact replay — feed the same prompt to a different model.
@@ -265,7 +265,7 @@ Reference prompts by hash in the event log. This enables exact replay — feed t
 
 Periodically (or on explicit request), snapshot the entire graph state:
 - Before `wg service start` (capture initial state)
-- Before/after `wg evolve` (capture agency state transitions)
+- Before/after `wg evolve` (capture identity state transitions)
 - On `wg snapshot` command (manual checkpointing)
 
 Store as `.workgraph/snapshots/{timestamp}.jsonl`.
@@ -286,7 +286,7 @@ This unifies with the event log architecture and makes daemon activity machine-p
 | Priority | Change | Effort | Replay Value |
 |----------|--------|--------|-------------|
 | P0 | Append-only event log for graph mutations | Medium | Critical — enables state reconstruction |
-| P0 | Save evolve/evaluate prompts to content-addressed store | Low | Critical — enables LLM replay |
+| P0 | Save evolve/reward prompts to content-addressed store | Low | Critical — enables LLM replay |
 | P1 | Structured daemon log | Medium | High — enables dispatch order replay |
 | P1 | Graph snapshots before service start | Low | High — known-good starting point |
 | P2 | CLI invocation log (command + args + timestamp) | Low | Medium — human audit trail |
@@ -313,10 +313,10 @@ This unifies with the event log architecture and makes daemon activity machine-p
 | Dependency changes | No | — | No |
 | Agent prompts | Yes (recent) | agents/agent-N/prompt.txt | Yes for agent tasks |
 | Evolve prompts | No | — | No |
-| Evaluate prompts | No | — | No |
+| Reward prompts | No | — | No |
 | Agent output | Yes | agents/agent-N/output.log | Partial (flat text) |
 | Task output capture | Yes | output/{task-id}/ | Partial (patch often fails) |
-| Evaluation scores | Yes | agency/evaluations/*.json | Yes |
+| Reward scores | Yes | identity/rewards/*.json | Yes |
 | Daemon activity | Partial | service/daemon.log | Partial (unstructured) |
 | Config changes | No | — | No |
 | Graph snapshots | No | — | No |

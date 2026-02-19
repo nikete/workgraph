@@ -2,9 +2,9 @@
 
 Workgraph is a task coordination system for humans and AI agents. It models work as a directed graph: tasks are nodes, dependency edges connect them, and a scheduler moves through the structure by finding what is ready and dispatching agents to do it. Everything---the graph, the agent identities, the configuration---lives in plain files under version control. There is no database. There is no mandatory server. The simplest possible deployment is a directory and a command-line tool.
 
-But simplicity of storage belies richness of structure. The graph is not a flat list. Dependencies create ordering, parallelism emerges from independence, and loop edges introduce intentional cycles where work revisits earlier stages. Layered on top of this graph is an _agency_---a system of composable identities that gives each agent a declared purpose and a set of constraints. Together, the graph and the agency form a coordination system where the work is precisely defined, the workers are explicitly characterized, and improvement is built into the process.
+But simplicity of storage belies richness of structure. The graph is not a flat list. Dependencies create ordering, parallelism emerges from independence, and loop edges introduce intentional cycles where work revisits earlier stages. Layered on top of this graph is an _identity_---a system of composable identities that gives each agent a declared purpose and a set of constraints. Together, the graph and the identity form a coordination system where the work is precisely defined, the workers are explicitly characterized, and improvement is built into the process.
 
-This section establishes the big picture. The details follow in later sections: the task graph in @sec-task-graph, the agency model in @sec-agency, coordination and execution in @sec-coordination, and evolution in @sec-evolution.
+This section establishes the big picture. The details follow in later sections: the task graph in @sec-task-graph, the identity model in @sec-identity, coordination and execution in @sec-coordination, and evolution in @sec-evolution.
 
 == The Graph Is the Work
 
@@ -18,17 +18,17 @@ The graph is also not required to be acyclic. #emph[Loop edges]---conditional ba
 
 The entire graph lives in a single JSONL file---one JSON object per line, human-readable, friendly to version control, protected by file locking for concurrent writes. This is the canonical state. Every command reads from it; every mutation writes to it.
 
-== The Agency Is Who Does It
+== The Identity Is Who Does It
 
-Without the agency system, every AI agent dispatched by workgraph is a blank slate---a generic assistant that receives a task description and does its best. This works, but it leaves performance on the table. A generic agent has no declared priorities, no persistent personality, no way to improve across tasks. The agency system addresses this by giving agents _composable identities_.
+Without the identity system, every AI agent dispatched by workgraph is a blank slate---a generic assistant that receives a task description and does its best. This works, but it leaves performance on the table. A generic agent has no declared priorities, no persistent personality, no way to improve across tasks. The identity system addresses this by giving agents _composable identities_.
 
-An identity has two components. A #emph[role] defines _what_ the agent does: its description, its skills, its desired outcome. A #emph[motivation] defines _why_ the agent acts the way it does: its priorities, its acceptable trade-offs, and its hard constraints. The same role paired with different motivations produces different agents. A Programmer role with a Careful motivation---one that prioritizes reliability and rejects untested code---will behave differently than the same Programmer role with a Fast motivation that tolerates rough edges in exchange for speed. The combinatorial identity space is the key insight: a handful of roles and motivations yield a diverse population of agents.
+An identity has two components. A #emph[role] defines _what_ the agent does: its description, its skills, its desired outcome. A #emph[objective] defines _why_ the agent acts the way it does: its priorities, its acceptable trade-offs, and its hard constraints. The same role paired with different objectives produces different agents. A Programmer role with a Careful objective---one that prioritizes reliability and rejects untested code---will behave differently than the same Programmer role with a Fast objective that tolerates rough edges in exchange for speed. The combinatorial identity space is the key insight: a handful of roles and objectives yield a diverse population of agents.
 
-Each role, each motivation, and each agent is identified by a #emph[content-hash ID]---a SHA-256 hash of its identity-defining fields, displayed as an eight-character prefix. Content-hashing gives three properties that matter: identity is deterministic (same content always produces the same ID), deduplicating (you cannot create two identical entities), and immutable (changing an identity-defining field produces a _new_ entity; the old one remains). This makes identity a mathematical fact, not an administrative convention. You can verify that two agents share the same role by comparing hashes.
+Each role, each objective, and each agent is identified by a #emph[content-hash ID]---a SHA-256 hash of its identity-defining fields, displayed as an eight-character prefix. Content-hashing gives three properties that matter: identity is deterministic (same content always produces the same ID), deduplicating (you cannot create two identical entities), and immutable (changing an identity-defining field produces a _new_ entity; the old one remains). This makes identity a mathematical fact, not an administrative convention. You can verify that two agents share the same role by comparing hashes.
 
-When an agent is dispatched to a task, its role and motivation are resolved---skills fetched from files, URLs, or inline definitions---and injected into the prompt. The agent doesn't just receive a task description; it receives an identity. This is what separates a workgraph agent from a one-off LLM call.
+When an agent is dispatched to a task, its role and objective are resolved---skills fetched from files, URLs, or inline definitions---and injected into the prompt. The agent doesn't just receive a task description; it receives an identity. This is what separates a workgraph agent from a one-off LLM call.
 
-Human agents participate in the same model. The only difference is the #emph[executor]: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or motivations---they bring their own judgment. But both human and AI agents are tracked, evaluated, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
+Human agents participate in the same model. The only difference is the #emph[executor]: AI agents use `claude` (or another LLM backend); human agents use `matrix`, `email`, `shell`, or another human-facing channel. Human agents don't need roles or objectives---they bring their own judgment. But both human and AI agents are tracked, rewardd, and coordinated uniformly. The system does not distinguish between them in its bookkeeping; only the dispatch mechanism differs.
 
 == The Core Loop
 
@@ -53,45 +53,45 @@ Workgraph operates through a cycle that applies at every scale, from a single ta
 
 *Dispatch agents.* A #emph[coordinator]---the scheduling brain inside an optional service daemon---finds #emph[ready] tasks: those that are open, not paused, past any time constraints, and whose every dependency has reached a terminal status. For each ready task, it resolves the executor, builds context from completed dependencies, renders the prompt with the agent's identity, and spawns a detached process. The coordinator #emph[claims] the task before spawning to prevent double-dispatch.
 
-*Execute.* The spawned agent does its work. It may log progress, record artifacts, create subtasks, or mark the task done or failed. It operates with full autonomy within the boundaries set by its role and motivation.
+*Execute.* The spawned agent does its work. It may log progress, record artifacts, create subtasks, or mark the task done or failed. It operates with full autonomy within the boundaries set by its role and objective.
 
-*Complete and learn.* When a task reaches a terminal status, its dependents may become ready, continuing the flow. If the agency system is active, a completed task can also trigger #emph[evaluation]---a scored assessment across four dimensions (correctness, completeness, efficiency, style adherence) whose results propagate to the agent, its role, and its motivation.
+*Complete and learn.* When a task reaches a terminal status, its dependents may become ready, continuing the flow. If the identity system is active, a completed task can also trigger #emph[reward]---a scored assessment across four dimensions (correctness, completeness, efficiency, style adherence) whose results propagate to the agent, its role, and its objective.
 
 This is the basic heartbeat. Most projects run on this loop alone.
 
-== The Agency Loop
+== The Identity Loop
 
-The agency system extends the core loop with a second, slower cycle of improvement:
+The identity system extends the core loop with a second, slower cycle of improvement:
 
 #figure(
   align(center)[
     ```
     ┌──────────┐     ┌──────────┐     ┌──────────┐     ┌──────────┐
-    │  Assign  │────▶│ Execute  │────▶│ Evaluate │────▶│  Evolve  │
-    │ identity │     │   task   │     │ results  │     │  agency  │
+    │  Assign  │────▶│ Execute  │────▶│ Reward │────▶│  Evolve  │
+    │ identity │     │   task   │     │ results  │     │  identity  │
     └──────────┘     └──────────┘     └──────────┘     └──────────┘
           ▲                                                   │
           └───────────────────────────────────────────────────┘
                       improved identities feed back
     ```
   ],
-  caption: [The agency improvement cycle.],
-) <fig-agency-loop>
+  caption: [The identity improvement cycle.],
+) <fig-identity-loop>
 
-*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent evaluates the available agents and picks the best fit. #emph[Assignment] sets identity; it is distinct from #emph[claiming], which sets execution state.
+*Assign identity.* Before a task is dispatched, an agent identity is bound to it---either manually or through an auto-assign system where a dedicated assigner agent rewards the available agents and picks the best fit. #emph[Assignment] sets identity; it is distinct from #emph[claiming], which sets execution state.
 
 *Execute task.* The agent works with its assigned identity injected into the prompt.
 
-*Evaluate results.* After the task completes, an evaluator agent scores the work. Evaluation produces a weighted score that propagates to three levels: the agent, its role (with the motivation as context), and its motivation (with the role as context). This three-level propagation creates the data needed for cross-cutting analysis---how does a role perform with different motivations, and vice versa?
+*Reward results.* After the task completes, an evaluator agent scores the work. Reward produces a weighted score that propagates to three levels: the agent, its role (with the objective as context), and its objective (with the role as context). This three-level propagation creates the data needed for cross-cutting analysis---how does a role perform with different objectives, and vice versa?
 
-*Evolve the agency.* When enough evaluations accumulate, an evolver agent analyzes performance data and proposes structured changes: mutate a role to strengthen a weak dimension, cross two high-performing roles into a hybrid, retire a consistently poor motivation, create an entirely new role for unmet needs. Modified entities receive new content-hash IDs with #emph[lineage] metadata linking them to their parents, creating an auditable evolutionary history. Evolution is a manual trigger (`wg evolve`), not an automated process, because the human decides when there is enough data to act on and reviews every proposed change.
+*Evolve the identity.* When enough rewards accumulate, an evolver agent analyzes performance data and proposes structured changes: mutate a role to strengthen a weak dimension, cross two high-performing roles into a hybrid, retire a consistently poor objective, create an entirely new role for unmet needs. Modified entities receive new content-hash IDs with #emph[lineage] metadata linking them to their parents, creating an auditable evolutionary history. Evolution is a manual trigger (`wg evolve`), not an automated process, because the human decides when there is enough data to act on and reviews every proposed change.
 
-Each step in this cycle can be manual or automated. A project might start with manual assignment and no evaluation, graduate to auto-assign once agent identities stabilize, enable auto-evaluate to build a performance record, and eventually run evolution to refine the agency. The system meets you where you are.
+Each step in this cycle can be manual or automated. A project might start with manual assignment and no reward, graduate to auto-assign once agent identities stabilize, enable auto-reward to build a performance record, and eventually run evolution to refine the identity. The system meets you where you are.
 
 == How They Relate
 
-The task graph and the agency are complementary systems with a clean separation. The graph defines _what_ needs to happen and _in what order_. The agency defines _who_ does it and _how they approach it_. Neither depends on the other for basic operation: you can run workgraph without the agency (every agent is generic), and you can define agency entities without a graph (though they have nothing to do). The power is in the combination.
+The task graph and the identity are complementary systems with a clean separation. The graph defines _what_ needs to happen and _in what order_. The identity defines _who_ does it and _how they approach it_. Neither depends on the other for basic operation: you can run workgraph without the identity (every agent is generic), and you can define identity entities without a graph (though they have nothing to do). The power is in the combination.
 
-The coordinator sits at the intersection. It reads the graph to find ready work, reads the agency to resolve agent identities, dispatches the work, and---when evaluation is enabled---closes the feedback loop by scoring results and feeding data back into the agency. The graph is the skeleton; the agency is the musculature; the coordinator is the nervous system.
+The coordinator sits at the intersection. It reads the graph to find ready work, reads the identity to resolve agent identities, dispatches the work, and---when reward is enabled---closes the feedback loop by scoring results and feeding data back into the identity. The graph is the skeleton; the identity is the musculature; the coordinator is the nervous system.
 
-Everything is files. The graph is JSONL. Agency entities---roles, motivations, agents---are YAML. Configuration is TOML. Evaluations are YAML. There is no database, no external dependency, no required network connection. The optional service daemon automates dispatch but is not required for operation. You can run the entire system from the command line, one task at a time, or you can start the daemon and let it manage a fleet of parallel agents. The architecture scales from a solo developer tracking personal tasks to a coordinated multi-agent project with dozens of concurrent workers, all from the same set of files in a `.workgraph` directory.
+Everything is files. The graph is JSONL. Identity entities---roles, objectives, agents---are YAML. Configuration is TOML. Rewards are YAML. There is no database, no external dependency, no required network connection. The optional service daemon automates dispatch but is not required for operation. You can run the entire system from the command line, one task at a time, or you can start the daemon and let it manage a fleet of parallel agents. The architecture scales from a solo developer tracking personal tasks to a coordinated multi-agent project with dozens of concurrent workers, all from the same set of files in a `.workgraph` directory.

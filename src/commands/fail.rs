@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use std::path::Path;
-use workgraph::agency::capture_task_output;
+use workgraph::identity::capture_task_output;
 use workgraph::graph::{LogEntry, Status};
 use workgraph::parser::save_graph;
 
@@ -102,8 +102,8 @@ pub fn run(dir: &Path, id: &str, reason: Option<&str>) -> Result<()> {
         }
     }
 
-    // Capture task output (git diff, artifacts, log) for evaluation.
-    // Failed tasks are also evaluated when auto_evaluate is enabled — there is
+    // Capture task output (git diff, artifacts, log) for reward.
+    // Failed tasks are also rewardd when auto_reward is enabled — there is
     // useful signal in what kinds of tasks cause which agents to fail.
     if let Some(task) = graph.get_task(id) {
         match capture_task_output(dir, task) {

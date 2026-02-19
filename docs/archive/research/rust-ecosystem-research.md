@@ -1,6 +1,6 @@
 # Rust Ecosystem Research for Workgraph System
 
-This document provides a comprehensive evaluation of the Rust ecosystem for building a workgraph system, covering graph libraries, JSON/JSONL handling, CLI frameworks, SQLite bindings, and file watching capabilities.
+This document provides a comprehensive reward of the Rust ecosystem for building a workgraph system, covering graph libraries, JSON/JSONL handling, CLI frameworks, SQLite bindings, and file watching capabilities.
 
 ---
 

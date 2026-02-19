@@ -58,15 +58,15 @@ pub fn run(dir: &Path) -> Result<()> {
     let gitignore_path = dir.join(".gitignore");
     fs::write(&gitignore_path, GITIGNORE_CONTENT).context("Failed to create .gitignore")?;
 
-    // Seed agency with starter roles and motivations
-    let agency_dir = dir.join("agency");
-    let (roles, motivations) =
-        workgraph::agency::seed_starters(&agency_dir).context("Failed to seed agency starters")?;
+    // Seed identity with starter roles and objectives
+    let identity_dir = dir.join("identity");
+    let (roles, objectives) =
+        workgraph::identity::seed_starters(&identity_dir).context("Failed to seed identity starters")?;
 
     println!("Initialized workgraph at {}", dir.display());
     println!(
-        "Seeded agency with {} roles and {} motivations.",
-        roles, motivations
+        "Seeded identity with {} roles and {} objectives.",
+        roles, objectives
     );
     Ok(())
 }
@@ -161,27 +161,27 @@ mod tests {
     }
 
     #[test]
-    fn test_seeds_agency() {
+    fn test_seeds_identity() {
         let tmp = TempDir::new().unwrap();
         let wg_dir = tmp.path().join(".workgraph");
 
         run(&wg_dir).unwrap();
 
-        let agency_dir = wg_dir.join("agency");
-        assert!(agency_dir.exists());
-        let roles_dir = agency_dir.join("roles");
-        let motivations_dir = agency_dir.join("motivations");
-        assert!(roles_dir.exists(), "agency/roles should be created");
+        let identity_dir = wg_dir.join("identity");
+        assert!(identity_dir.exists());
+        let roles_dir = identity_dir.join("roles");
+        let objectives_dir = identity_dir.join("objectives");
+        assert!(roles_dir.exists(), "identity/roles should be created");
         assert!(
-            motivations_dir.exists(),
-            "agency/motivations should be created"
+            objectives_dir.exists(),
+            "identity/objectives should be created"
         );
 
-        // At least one role and one motivation should be seeded
+        // At least one role and one objective should be seeded
         let role_count = fs::read_dir(&roles_dir).unwrap().count();
-        let motivation_count = fs::read_dir(&motivations_dir).unwrap().count();
+        let objective_count = fs::read_dir(&objectives_dir).unwrap().count();
         assert!(role_count > 0, "should seed at least one role");
-        assert!(motivation_count > 0, "should seed at least one motivation");
+        assert!(objective_count > 0, "should seed at least one objective");
     }
 
     #[test]

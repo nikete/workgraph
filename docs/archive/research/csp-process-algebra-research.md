@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-This document examines CSP (Communicating Sequential Processes) and related process algebras for their applicability to workflow verification. CSP provides a mathematically rigorous framework for modeling concurrent systems and proving properties about their behavior. While powerful, the full formalism may be overkill for many workflow scenarios. This research evaluates when CSP-based verification is appropriate and identifies lightweight alternatives.
+This document examines CSP (Communicating Sequential Processes) and related process algebras for their applicability to workflow verification. CSP provides a mathematically rigorous framework for modeling concurrent systems and proving properties about their behavior. While powerful, the full formalism may be overkill for many workflow scenarios. This research rewards when CSP-based verification is appropriate and identifies lightweight alternatives.
 
 ---
 

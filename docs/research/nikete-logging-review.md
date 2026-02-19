@@ -19,7 +19,7 @@
 | `src/canon.rs` | 627 | Canon (distilled knowledge) module: `Canon` struct with spec/tests/interaction_patterns/quality_signals, versioned YAML persistence, prompt rendering, distill prompt builder, output parser. 14 tests |
 | `src/runs.rs` | 699 | Run management module: snapshots, run ID generation, recursive directory copy, task reset logic (selective, with keep-done threshold), graph restore. 16 tests |
 | `src/commands/trace_cmd.rs` | 213 | CLI for `wg trace-extract <agent-id>` and `wg trace <task-id>` with filtering options (--full, --turns-only, --user-only, --json) |
-| `src/commands/distill.rs` | 232 | CLI for `wg distill <task-id>` and `wg distill --all`. Builds distill prompt from traces + evaluations + previous canon. LLM call not yet wired up (--dry-run works) |
+| `src/commands/distill.rs` | 232 | CLI for `wg distill <task-id>` and `wg distill --all`. Builds distill prompt from traces + rewards + previous canon. LLM call not yet wired up (--dry-run works) |
 | `src/commands/canon_cmd.rs` | 202 | CLI for `wg canon <task-id>` (view) and `wg canon --list` |
 | `src/commands/replay.rs` | 392 | CLI for `wg replay --model <model>` with --failed-only, --below-score, --tasks, --keep-done, --plan-only. 4 tests |
 | `src/commands/runs_cmd.rs` | 196 | CLI for `wg runs list`, `wg runs show <id>`, `wg runs restore <id>`. 5 tests |
@@ -72,11 +72,11 @@ nikete's fork adds a **three-stage pipeline** for workflow replay:
 
 ### 2.2 Distill: LLM-Powered Knowledge Extraction
 
-**Approach:** Build a structured prompt containing the task definition, all traces, artifacts, and evaluations. Send to an LLM that produces a **canon** — a YAML artifact with:
+**Approach:** Build a structured prompt containing the task definition, all traces, artifacts, and rewards. Send to an LLM that produces a **canon** — a YAML artifact with:
 - `spec` — refined specification synthesized from conversations
 - `tests` — expected test outcomes / acceptance criteria
 - `interaction_patterns` — corrections, sticking points, human preferences
-- `quality_signals` — evaluation scores, convergence status, remaining issues
+- `quality_signals` — reward scores, convergence status, remaining issues
 
 **Storage:** `.workgraph/canon/<task-id>.yaml` with optional version history (`<task-id>.v1.yaml`, `.v2.yaml`, etc.)
 
@@ -95,7 +95,7 @@ nikete's fork adds a **three-stage pipeline** for workflow replay:
 
 **Selective replay options:**
 - `--failed-only` — only reset Failed/Abandoned tasks
-- `--below-score 0.8` — only reset tasks with evaluation score below threshold
+- `--below-score 0.8` — only reset tasks with reward score below threshold
 - `--tasks task-1,task-3` — reset specific tasks + their transitive dependents
 - `--keep-done` — preserve high-scoring Done tasks (uses configurable threshold)
 - `--plan-only` — dry run showing what would be reset
@@ -138,7 +138,7 @@ Our provenance system (designed in the `design-provenance-system` task, partiall
 
 **Our provenance system does better:**
 - **Completeness**: Records ALL graph mutations, not just agent executions. Manual `wg edit`, `wg add`, dependency changes, config changes — all captured.
-- **Non-LLM operations**: Captures evolve prompts, evaluate prompts, assign decisions — operations nikete's system doesn't touch.
+- **Non-LLM operations**: Captures evolve prompts, reward prompts, assign decisions — operations nikete's system doesn't touch.
 - **Deterministic reconstruction**: Given the operation log, you can rebuild exact graph state at any timestamp. No LLM interpretation needed.
 - **Log rotation with compression**: Built-in zstd rotation keeps storage manageable for long-running projects.
 - **No LLM cost**: Pure append-only logging has zero LLM cost. nikete's distillation requires LLM calls.
@@ -155,7 +155,7 @@ Our provenance system (designed in the `design-provenance-system` task, partiall
 **Both systems capture:**
 - Agent output (our system as operations, nikete's as structured traces)
 - Task status transitions
-- Evaluation scores (referenced by both)
+- Reward scores (referenced by both)
 
 **Neither system captures (yet):**
 - Real-time human interaction during agent execution (both are post-hoc)
@@ -164,7 +164,7 @@ Our provenance system (designed in the `design-provenance-system` task, partiall
 
 **Gap in nikete's system (that ours addresses):**
 - Graph mutations between agent executions (manual edits, dependency changes, config changes)
-- Prompt archival for non-agent LLM calls (evolve, evaluate, assign)
+- Prompt archival for non-agent LLM calls (evolve, reward, assign)
 - CLI invocation history
 
 **Gap in our system (that nikete's addresses):**
@@ -272,7 +272,7 @@ From `src/runs.rs:140-200`:
 The selective reset logic is well-structured:
 1. Determine which tasks to consider (specific IDs or all)
 2. Build reverse dependency index for transitive dependent computation
-3. Check keep-done threshold against evaluation scores
+3. Check keep-done threshold against reward scores
 4. Reset selected tasks: `status → Open`, clear `assigned/started_at/completed_at/artifacts/loop_iteration`, preserve `log` and `blocked_by`
 
 This function correctly handles the subtlety of resetting transitive dependents — if you re-run task A, you must also re-run tasks B and C that consumed A's output.
@@ -311,7 +311,7 @@ nikete's fork doesn't interact with our `provenance.rs` operations log at all. T
 
 ### 7.3 Duplicated `load_eval_scores()` Function
 
-The `load_eval_scores()` function appears in both `src/runs.rs:203-230` and `src/commands/replay.rs:140-170` — identical implementations that read evaluation JSON files and extract the highest score per task. This should be factored into a shared utility (possibly in `agency.rs` alongside `load_all_evaluations_or_warn`).
+The `load_eval_scores()` function appears in both `src/runs.rs:203-230` and `src/commands/replay.rs:140-170` — identical implementations that read reward JSON files and extract the highest score per task. This should be factored into a shared utility (possibly in `identity.rs` alongside `load_all_rewards_or_warn`).
 
 ### 7.4 `collect_transitive_dependents` Also Duplicated
 

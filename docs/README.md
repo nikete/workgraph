@@ -59,7 +59,7 @@ A task is **blocked** (derived state) when any of its `blocked_by` dependencies 
 Agents represent humans or AIs who perform work. An agent is a unified identity that combines:
 
 - **name**: Display name
-- **role + motivation**: What the agent does and why (required for AI, optional for human)
+- **role + objective**: What the agent does and why (required for AI, optional for human)
 - **capabilities**: Skills for task matching
 - **trust_level**: verified, provisional, or unknown
 - **capacity**: Maximum concurrent task capacity
@@ -231,5 +231,5 @@ wg ready --json | jq -r '.[].id'
 
 - [Command Reference](./COMMANDS.md) - Complete command documentation
 - [Agent Guide](./AGENT-GUIDE.md) - Autonomous agent operation guide
-- [Agency System](./AGENCY.md) - Agency system documentation
+- [Identity System](./IDENTITY.md) - Identity system documentation
 - [Agent Service](./AGENT-SERVICE.md) - Service architecture
