@@ -7,6 +7,7 @@
 //! `~/.config/workgraph/matrix.toml` to avoid accidentally committing secrets.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -380,9 +381,139 @@ impl MatrixConfig {
     }
 }
 
+/// Indicates where a configuration value came from
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ConfigSource {
+    Global,
+    Local,
+    Default,
+}
+
+impl std::fmt::Display for ConfigSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigSource::Global => write!(f, "global"),
+            ConfigSource::Local => write!(f, "local"),
+            ConfigSource::Default => write!(f, "default"),
+        }
+    }
+}
+
+/// Deep-merge two TOML values. For (Table, Table) pairs, recursively merge
+/// with `local` keys overriding `global`. For all other cases, `local` wins.
+pub fn merge_toml(global: toml::Value, local: toml::Value) -> toml::Value {
+    match (global, local) {
+        (toml::Value::Table(mut g), toml::Value::Table(l)) => {
+            for (key, local_val) in l {
+                let merged = if let Some(global_val) = g.remove(&key) {
+                    merge_toml(global_val, local_val)
+                } else {
+                    local_val
+                };
+                g.insert(key, merged);
+            }
+            toml::Value::Table(g)
+        }
+        (_global, local) => local,
+    }
+}
+
+/// Walk a TOML Value table and record source per leaf key (dot-separated path).
+fn record_sources(
+    val: &toml::Value,
+    prefix: &str,
+    source: &ConfigSource,
+    map: &mut BTreeMap<String, ConfigSource>,
+) {
+    if let toml::Value::Table(table) = val {
+        for (key, v) in table {
+            let full_key = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{}.{}", prefix, key)
+            };
+            match v {
+                toml::Value::Table(_) => record_sources(v, &full_key, source, map),
+                _ => {
+                    map.insert(full_key, source.clone());
+                }
+            }
+        }
+    }
+}
+
 impl Config {
-    /// Load configuration from .workgraph/config.toml
-    /// Returns default config if file doesn't exist
+    /// Return the global workgraph directory (~/.workgraph/)
+    pub fn global_dir() -> anyhow::Result<PathBuf> {
+        let home = dirs::home_dir()
+            .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?;
+        Ok(home.join(".workgraph"))
+    }
+
+    /// Return the global config file path (~/.workgraph/config.toml)
+    pub fn global_config_path() -> anyhow::Result<PathBuf> {
+        Ok(Self::global_dir()?.join("config.toml"))
+    }
+
+    /// Load global configuration from ~/.workgraph/config.toml.
+    /// Returns None if the file doesn't exist, Err on parse failure.
+    pub fn load_global() -> anyhow::Result<Option<Self>> {
+        let global_path = Self::global_config_path()?;
+        if !global_path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&global_path).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to read global config at {}: {}",
+                global_path.display(),
+                e
+            )
+        })?;
+        let config: Config = toml::from_str(&content).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to parse global config at {}: {}",
+                global_path.display(),
+                e
+            )
+        })?;
+        Ok(Some(config))
+    }
+
+    /// Load raw TOML value from a config file path.
+    /// Returns empty table if file doesn't exist.
+    fn load_toml_value(path: &Path) -> anyhow::Result<toml::Value> {
+        if !path.exists() {
+            return Ok(toml::Value::Table(toml::map::Map::new()));
+        }
+        let content = fs::read_to_string(path).map_err(|e| {
+            anyhow::anyhow!("Failed to read config at {}: {}", path.display(), e)
+        })?;
+        let val: toml::Value = content.parse().map_err(|e| {
+            anyhow::anyhow!("Failed to parse config at {}: {}", path.display(), e)
+        })?;
+        Ok(val)
+    }
+
+    /// Load merged configuration: global config deep-merged with local config.
+    /// Local keys override global keys. Missing files are treated as empty.
+    pub fn load_merged(workgraph_dir: &Path) -> anyhow::Result<Self> {
+        let global_path = Self::global_config_path()?;
+        let local_path = workgraph_dir.join("config.toml");
+
+        let global_val = Self::load_toml_value(&global_path)?;
+        let local_val = Self::load_toml_value(&local_path)?;
+
+        let merged = merge_toml(global_val, local_val);
+        let config: Config = merged.try_into().map_err(|e| {
+            anyhow::anyhow!("Failed to deserialize merged config: {}", e)
+        })?;
+
+        Ok(config)
+    }
+
+    /// Load configuration from .workgraph/config.toml (local only).
+    /// Returns default config if file doesn't exist.
     pub fn load(workgraph_dir: &Path) -> anyhow::Result<Self> {
         let config_path = workgraph_dir.join("config.toml");
 
@@ -400,13 +531,13 @@ impl Config {
         Ok(config)
     }
 
-    /// Load configuration, falling back to defaults with a warning on errors.
+    /// Load configuration with global+local merge, falling back to defaults on error.
     ///
     /// Unlike `.load().unwrap_or_default()`, this emits a stderr warning
-    /// when the config file exists but is corrupt, so the user knows
+    /// when a config file exists but is corrupt, so the user knows
     /// their configuration is being ignored.
     pub fn load_or_default(workgraph_dir: &Path) -> Self {
-        match Self::load(workgraph_dir) {
+        match Self::load_merged(workgraph_dir) {
             Ok(config) => config,
             Err(e) => {
                 eprintln!("Warning: {}, using defaults", e);
@@ -428,6 +559,33 @@ impl Config {
         Ok(())
     }
 
+    /// Save configuration to the global path (~/.workgraph/config.toml).
+    /// Creates the ~/.workgraph/ directory if needed.
+    pub fn save_global(&self) -> anyhow::Result<()> {
+        let global_dir = Self::global_dir()?;
+        fs::create_dir_all(&global_dir).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to create global config directory {}: {}",
+                global_dir.display(),
+                e
+            )
+        })?;
+
+        let global_path = global_dir.join("config.toml");
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize config: {}", e))?;
+
+        fs::write(&global_path, content).map_err(|e| {
+            anyhow::anyhow!(
+                "Failed to write global config at {}: {}",
+                global_path.display(),
+                e
+            )
+        })?;
+
+        Ok(())
+    }
+
     /// Initialize default config file if it doesn't exist
     pub fn init(workgraph_dir: &Path) -> anyhow::Result<bool> {
         let config_path = workgraph_dir.join("config.toml");
@@ -439,6 +597,53 @@ impl Config {
         let config = Self::default();
         config.save(workgraph_dir)?;
         Ok(true) // Created new
+    }
+
+    /// Initialize default global config file if it doesn't exist
+    pub fn init_global() -> anyhow::Result<bool> {
+        let global_path = Self::global_config_path()?;
+
+        if global_path.exists() {
+            return Ok(false);
+        }
+
+        let config = Self::default();
+        config.save_global()?;
+        Ok(true)
+    }
+
+    /// Load merged config and record where each leaf key came from.
+    pub fn load_with_sources(
+        workgraph_dir: &Path,
+    ) -> anyhow::Result<(Self, BTreeMap<String, ConfigSource>)> {
+        let global_path = Self::global_config_path()?;
+        let local_path = workgraph_dir.join("config.toml");
+
+        let global_val = Self::load_toml_value(&global_path)?;
+        let local_val = Self::load_toml_value(&local_path)?;
+
+        // Record sources: global first, then local overwrites
+        let mut sources = BTreeMap::new();
+        record_sources(&global_val, "", &ConfigSource::Global, &mut sources);
+        record_sources(&local_val, "", &ConfigSource::Local, &mut sources);
+
+        // Merge and deserialize
+        let merged = merge_toml(global_val, local_val);
+        let config: Config = merged.try_into().map_err(|e| {
+            anyhow::anyhow!("Failed to deserialize merged config: {}", e)
+        })?;
+
+        // Fill in defaults for keys not present in either file
+        let default_config = Config::default();
+        let default_val: toml::Value = toml::Value::try_from(&default_config)
+            .unwrap_or(toml::Value::Table(toml::map::Map::new()));
+        let mut default_sources = BTreeMap::new();
+        record_sources(&default_val, "", &ConfigSource::Default, &mut default_sources);
+        for (key, src) in default_sources {
+            sources.entry(key).or_insert(src);
+        }
+
+        Ok((config, sources))
     }
 
     /// Build the executor command from template
@@ -647,5 +852,187 @@ default_room = "!notifications:example.com"
             Some("!notifications:example.com".to_string())
         );
         assert!(config.is_complete());
+    }
+
+    // ---- Global config / merge tests ----
+
+    #[test]
+    fn test_merge_toml_basic() {
+        let global: toml::Value = toml::from_str(
+            r#"
+[agent]
+model = "sonnet"
+executor = "claude"
+"#,
+        )
+        .unwrap();
+        let local: toml::Value = toml::from_str(
+            r#"
+[coordinator]
+max_agents = 8
+"#,
+        )
+        .unwrap();
+        let merged = merge_toml(global, local);
+        let table = merged.as_table().unwrap();
+        // Global agent section preserved
+        let agent = table["agent"].as_table().unwrap();
+        assert_eq!(agent["model"].as_str().unwrap(), "sonnet");
+        // Local coordinator section present
+        let coord = table["coordinator"].as_table().unwrap();
+        assert_eq!(coord["max_agents"].as_integer().unwrap(), 8);
+    }
+
+    #[test]
+    fn test_merge_toml_local_overrides_global() {
+        let global: toml::Value = toml::from_str(
+            r#"
+[agent]
+model = "sonnet"
+executor = "claude"
+interval = 10
+"#,
+        )
+        .unwrap();
+        let local: toml::Value = toml::from_str(
+            r#"
+[agent]
+model = "haiku"
+"#,
+        )
+        .unwrap();
+        let merged = merge_toml(global, local);
+        let agent = merged.as_table().unwrap()["agent"].as_table().unwrap();
+        // Local overrides model
+        assert_eq!(agent["model"].as_str().unwrap(), "haiku");
+        // Global's executor preserved
+        assert_eq!(agent["executor"].as_str().unwrap(), "claude");
+        // Global's interval preserved
+        assert_eq!(agent["interval"].as_integer().unwrap(), 10);
+    }
+
+    #[test]
+    fn test_merge_toml_nested_sections() {
+        let global: toml::Value = toml::from_str(
+            r#"
+[agent]
+model = "sonnet"
+
+[coordinator]
+max_agents = 4
+executor = "claude"
+"#,
+        )
+        .unwrap();
+        let local: toml::Value = toml::from_str(
+            r#"
+[agent]
+model = "haiku"
+
+[coordinator]
+executor = "amplifier"
+"#,
+        )
+        .unwrap();
+        let merged = merge_toml(global, local);
+        let t = merged.as_table().unwrap();
+        assert_eq!(
+            t["agent"].as_table().unwrap()["model"].as_str().unwrap(),
+            "haiku"
+        );
+        assert_eq!(
+            t["coordinator"].as_table().unwrap()["max_agents"]
+                .as_integer()
+                .unwrap(),
+            4
+        );
+        assert_eq!(
+            t["coordinator"].as_table().unwrap()["executor"]
+                .as_str()
+                .unwrap(),
+            "amplifier"
+        );
+    }
+
+    #[test]
+    fn test_merge_toml_empty_local() {
+        let global: toml::Value = toml::from_str(
+            r#"
+[agent]
+model = "sonnet"
+"#,
+        )
+        .unwrap();
+        let local = toml::Value::Table(toml::map::Map::new());
+        let merged = merge_toml(global, local);
+        assert_eq!(
+            merged.as_table().unwrap()["agent"]
+                .as_table()
+                .unwrap()["model"]
+                .as_str()
+                .unwrap(),
+            "sonnet"
+        );
+    }
+
+    #[test]
+    fn test_merge_toml_empty_global() {
+        let global = toml::Value::Table(toml::map::Map::new());
+        let local: toml::Value = toml::from_str(
+            r#"
+[agent]
+model = "haiku"
+"#,
+        )
+        .unwrap();
+        let merged = merge_toml(global, local);
+        assert_eq!(
+            merged.as_table().unwrap()["agent"]
+                .as_table()
+                .unwrap()["model"]
+                .as_str()
+                .unwrap(),
+            "haiku"
+        );
+    }
+
+    #[test]
+    fn test_load_merged_no_global_file() {
+        // When no global config exists, load_merged should still work
+        // (loads only local). We test with a temp dir as local.
+        let temp_dir = TempDir::new().unwrap();
+        let local_toml = r#"
+[agent]
+model = "haiku"
+"#;
+        fs::write(temp_dir.path().join("config.toml"), local_toml).unwrap();
+
+        // This test depends on whether ~/.workgraph/config.toml exists on the
+        // machine, but the merge should work either way.
+        let config = Config::load_merged(temp_dir.path()).unwrap();
+        assert_eq!(config.agent.model, "haiku");
+    }
+
+    #[test]
+    fn test_load_merged_no_local_file() {
+        // When no local config exists, merged should be global + defaults
+        let temp_dir = TempDir::new().unwrap();
+        // No config.toml in temp_dir
+        let config = Config::load_merged(temp_dir.path()).unwrap();
+        // Should at least have defaults
+        assert_eq!(config.agent.executor, "claude");
+    }
+
+    #[test]
+    fn test_global_config_path() {
+        let path = Config::global_config_path().unwrap();
+        assert!(path.ends_with(".workgraph/config.toml"));
+    }
+
+    #[test]
+    fn test_config_source_display() {
+        assert_eq!(ConfigSource::Global.to_string(), "global");
+        assert_eq!(ConfigSource::Local.to_string(), "local");
+        assert_eq!(ConfigSource::Default.to_string(), "default");
     }
 }

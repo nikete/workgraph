@@ -721,6 +721,18 @@ enum Commands {
         #[arg(long)]
         init: bool,
 
+        /// Target global config (~/.workgraph/config.toml) instead of local
+        #[arg(long, conflicts_with = "local")]
+        global: bool,
+
+        /// Explicitly target local config (default for writes)
+        #[arg(long, conflicts_with = "global")]
+        local: bool,
+
+        /// Show merged config with source annotations (global/local/default)
+        #[arg(long)]
+        list: bool,
+
         /// Set executor (claude, amplifier, shell, or custom config name)
         #[arg(long)]
         executor: Option<String>,
@@ -2203,6 +2215,9 @@ fn main() -> Result<()> {
         Commands::Config {
             show,
             init,
+            global,
+            local,
+            list,
             executor,
             model,
             set_interval,
@@ -2230,6 +2245,15 @@ fn main() -> Result<()> {
             triage_timeout,
             triage_max_log_bytes,
         } => {
+            // Derive scope from --global/--local flags
+            let scope = if global {
+                Some(commands::config_cmd::ConfigScope::Global)
+            } else if local {
+                Some(commands::config_cmd::ConfigScope::Local)
+            } else {
+                None
+            };
+
             // Handle Matrix configuration
             if matrix
                 || homeserver.is_some()
@@ -2255,8 +2279,10 @@ fn main() -> Result<()> {
                 } else {
                     commands::config_cmd::show_matrix(cli.json)
                 }
+            } else if list {
+                commands::config_cmd::list(&workgraph_dir, cli.json)
             } else if init {
-                commands::config_cmd::init(&workgraph_dir)
+                commands::config_cmd::init(&workgraph_dir, scope)
             } else if show
                 || (executor.is_none()
                     && model.is_none()
@@ -2279,10 +2305,14 @@ fn main() -> Result<()> {
                     && triage_timeout.is_none()
                     && triage_max_log_bytes.is_none())
             {
-                commands::config_cmd::show(&workgraph_dir, cli.json)
+                commands::config_cmd::show(&workgraph_dir, scope, cli.json)
             } else {
+                // Default scope for writes = Local (like git)
+                let write_scope =
+                    scope.unwrap_or(commands::config_cmd::ConfigScope::Local);
                 commands::config_cmd::update(
                     &workgraph_dir,
+                    write_scope,
                     executor.as_deref(),
                     model.as_deref(),
                     set_interval,

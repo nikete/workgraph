@@ -2,11 +2,22 @@
 
 use anyhow::Result;
 use std::path::Path;
-use workgraph::config::{Config, MatrixConfig};
+use workgraph::config::{Config, ConfigSource, MatrixConfig};
+
+/// Scope for config operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigScope {
+    Local,
+    Global,
+}
 
 /// Show current configuration
-pub fn show(dir: &Path, json: bool) -> Result<()> {
-    let config = Config::load(dir)?;
+pub fn show(dir: &Path, scope: Option<ConfigScope>, json: bool) -> Result<()> {
+    let config = match scope {
+        Some(ConfigScope::Global) => Config::load_global()?.unwrap_or_default(),
+        Some(ConfigScope::Local) => Config::load(dir)?,
+        None => Config::load_merged(dir)?,
+    };
 
     if json {
         println!("{}", serde_json::to_string_pretty(&config)?);
@@ -80,11 +91,21 @@ pub fn show(dir: &Path, json: bool) -> Result<()> {
 }
 
 /// Initialize default config file
-pub fn init(dir: &Path) -> Result<()> {
-    if Config::init(dir)? {
-        println!("Created default configuration at .workgraph/config.toml");
+pub fn init(dir: &Path, scope: Option<ConfigScope>) -> Result<()> {
+    if scope == Some(ConfigScope::Global) {
+        if Config::init_global()? {
+            let path = Config::global_config_path()?;
+            println!("Created default global configuration at {}", path.display());
+        } else {
+            let path = Config::global_config_path()?;
+            println!("Global configuration already exists at {}", path.display());
+        }
     } else {
-        println!("Configuration already exists at .workgraph/config.toml");
+        if Config::init(dir)? {
+            println!("Created default configuration at .workgraph/config.toml");
+        } else {
+            println!("Configuration already exists at .workgraph/config.toml");
+        }
     }
     Ok(())
 }
@@ -93,6 +114,7 @@ pub fn init(dir: &Path) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 pub fn update(
     dir: &Path,
+    scope: ConfigScope,
     executor: Option<&str>,
     model: Option<&str>,
     interval: Option<u64>,
@@ -114,7 +136,10 @@ pub fn update(
     triage_timeout: Option<u64>,
     triage_max_log_bytes: Option<usize>,
 ) -> Result<()> {
-    let mut config = Config::load(dir)?;
+    let mut config = match scope {
+        ConfigScope::Global => Config::load_global()?.unwrap_or_default(),
+        ConfigScope::Local => Config::load(dir)?,
+    };
     let mut changed = false;
 
     // Agent settings
@@ -241,13 +266,117 @@ pub fn update(
     }
 
     if changed {
-        config.save(dir)?;
-        println!("Configuration saved.");
+        match scope {
+            ConfigScope::Global => {
+                config.save_global()?;
+                let path = Config::global_config_path()?;
+                println!("Global configuration saved to {}", path.display());
+            }
+            ConfigScope::Local => {
+                config.save(dir)?;
+                println!("Configuration saved.");
+            }
+        }
     } else {
         println!("No changes specified. Use --show to view current config.");
     }
 
     Ok(())
+}
+
+/// List merged configuration with source annotations
+pub fn list(dir: &Path, json: bool) -> Result<()> {
+    let (config, sources) = Config::load_with_sources(dir)?;
+
+    if json {
+        let merged_val = toml::Value::try_from(&config)?;
+        let mut entries = Vec::new();
+        collect_leaf_entries(&merged_val, "", &sources, &mut entries);
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        let merged_val = toml::Value::try_from(&config)?;
+        let mut entries = Vec::new();
+        collect_leaf_entries(&merged_val, "", &sources, &mut entries);
+
+        println!("Workgraph Configuration (merged)");
+        println!("=================================");
+        println!();
+        for entry in &entries {
+            let source = entry["source"].as_str().unwrap_or("default");
+            let key = entry["key"].as_str().unwrap_or("");
+            let value = &entry["value"];
+            println!("  {:40} = {:20} [{}]", key, format_toml_value(value), source);
+        }
+    }
+
+    Ok(())
+}
+
+/// Format a serde_json::Value for display
+fn format_toml_value(val: &serde_json::Value) -> String {
+    match val {
+        serde_json::Value::String(s) => format!("\"{}\"", s),
+        serde_json::Value::Bool(b) => b.to_string(),
+        serde_json::Value::Number(n) => n.to_string(),
+        serde_json::Value::Null => "null".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Recursively collect leaf entries from a TOML value for list output
+fn collect_leaf_entries(
+    val: &toml::Value,
+    prefix: &str,
+    sources: &std::collections::BTreeMap<String, ConfigSource>,
+    entries: &mut Vec<serde_json::Value>,
+) {
+    if let toml::Value::Table(table) = val {
+        for (key, v) in table {
+            let full_key = if prefix.is_empty() {
+                key.clone()
+            } else {
+                format!("{}.{}", prefix, key)
+            };
+            match v {
+                toml::Value::Table(_) => {
+                    collect_leaf_entries(v, &full_key, sources, entries);
+                }
+                _ => {
+                    let source = sources
+                        .get(&full_key)
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| "default".to_string());
+                    let json_val = toml_value_to_json(v);
+                    entries.push(serde_json::json!({
+                        "key": full_key,
+                        "value": json_val,
+                        "source": source,
+                    }));
+                }
+            }
+        }
+    }
+}
+
+/// Convert a toml::Value to serde_json::Value for serialization
+fn toml_value_to_json(val: &toml::Value) -> serde_json::Value {
+    match val {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::json!(i),
+        toml::Value::Float(f) => serde_json::json!(f),
+        toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        toml::Value::Array(a) => {
+            serde_json::Value::Array(a.iter().map(toml_value_to_json).collect())
+        }
+        toml::Value::Table(t) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in t {
+                map.insert(k.clone(), toml_value_to_json(v));
+            }
+            serde_json::Value::Object(map)
+        }
+        toml::Value::Datetime(d) => serde_json::Value::String(d.to_string()),
+    }
 }
 
 /// Show Matrix configuration
@@ -410,21 +539,22 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
 
         // Init should create config
-        let result = init(temp_dir.path());
+        let result = init(temp_dir.path(), None);
         assert!(result.is_ok());
 
-        // Show should work
-        let result = show(temp_dir.path(), false);
+        // Show should work (local scope)
+        let result = show(temp_dir.path(), Some(ConfigScope::Local), false);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_update() {
         let temp_dir = TempDir::new().unwrap();
-        init(temp_dir.path()).unwrap();
+        init(temp_dir.path(), None).unwrap();
 
         let result = update(
             temp_dir.path(),
+            ConfigScope::Local,
             Some("opencode"),
             Some("gpt-4"),
             Some(30),
@@ -457,10 +587,11 @@ mod tests {
     #[test]
     fn test_update_coordinator() {
         let temp_dir = TempDir::new().unwrap();
-        init(temp_dir.path()).unwrap();
+        init(temp_dir.path(), None).unwrap();
 
         let result = update(
             temp_dir.path(),
+            ConfigScope::Local,
             None,
             None,
             None,
@@ -493,10 +624,11 @@ mod tests {
     #[test]
     fn test_update_poll_interval() {
         let temp_dir = TempDir::new().unwrap();
-        init(temp_dir.path()).unwrap();
+        init(temp_dir.path(), None).unwrap();
 
         let result = update(
             temp_dir.path(),
+            ConfigScope::Local,
             None,
             None,
             None,
@@ -527,10 +659,11 @@ mod tests {
     #[test]
     fn test_update_agency() {
         let temp_dir = TempDir::new().unwrap();
-        init(temp_dir.path()).unwrap();
+        init(temp_dir.path(), None).unwrap();
 
         let result = update(
             temp_dir.path(),
+            ConfigScope::Local,
             None,
             None,
             None,
@@ -596,5 +729,34 @@ mod tests {
             mask_token("🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯🎯"),
             "🎯🎯🎯🎯...🎯🎯🎯🎯"
         );
+    }
+
+    #[test]
+    fn test_show_merged() {
+        let temp_dir = TempDir::new().unwrap();
+        init(temp_dir.path(), None).unwrap();
+
+        // Show with no scope = merged
+        let result = show(temp_dir.path(), None, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_list() {
+        let temp_dir = TempDir::new().unwrap();
+        init(temp_dir.path(), None).unwrap();
+
+        // List should work and show source annotations
+        let result = list(temp_dir.path(), false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_list_json() {
+        let temp_dir = TempDir::new().unwrap();
+        init(temp_dir.path(), None).unwrap();
+
+        let result = list(temp_dir.path(), true);
+        assert!(result.is_ok());
     }
 }
