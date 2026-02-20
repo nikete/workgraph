@@ -41,7 +41,7 @@ pub struct RewardRef {
 }
 
 /// Aggregated performance data for a role or objective.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RewardHistory {
     pub task_count: u32,
     pub mean_reward: Option<f64>,
@@ -898,6 +898,181 @@ pub fn find_agent_by_prefix(agents_dir: &Path, prefix: &str) -> Result<Agent, Id
                 ids.join(", ")
             )))
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Agency Store trait
+// ---------------------------------------------------------------------------
+
+/// An agency store that can load and save entities.
+///
+/// Abstracts over different storage backends (local filesystem, git, HTTP).
+/// The initial implementation is `LocalStore` which reads/writes YAML/JSON files.
+pub trait IdentityStore {
+    /// The root path of this store (e.g. `.workgraph/agency/` or a bare `agency/` dir).
+    fn store_path(&self) -> &Path;
+
+    fn load_roles(&self) -> Result<Vec<Role>, IdentityError>;
+    fn load_objectives(&self) -> Result<Vec<Objective>, IdentityError>;
+    fn load_agents(&self) -> Result<Vec<Agent>, IdentityError>;
+    fn load_rewards(&self) -> Result<Vec<Reward>, IdentityError>;
+
+    fn save_role(&self, role: &Role) -> Result<PathBuf, IdentityError>;
+    fn save_objective(&self, objective: &Objective) -> Result<PathBuf, IdentityError>;
+    fn save_agent(&self, agent: &Agent) -> Result<PathBuf, IdentityError>;
+    fn save_reward(&self, eval: &Reward) -> Result<PathBuf, IdentityError>;
+
+    fn exists_role(&self, id: &str) -> bool;
+    fn exists_objective(&self, id: &str) -> bool;
+    fn exists_agent(&self, id: &str) -> bool;
+}
+
+/// A local filesystem-backed agency store.
+///
+/// Wraps an agency directory path and delegates to the existing free functions.
+#[derive(Debug, Clone)]
+pub struct LocalStore {
+    /// Root of the agency store (the directory containing roles/, objectives/, agents/, evaluations/).
+    path: PathBuf,
+}
+
+impl LocalStore {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    pub fn roles_dir(&self) -> PathBuf {
+        self.path.join("roles")
+    }
+
+    pub fn objectives_dir(&self) -> PathBuf {
+        self.path.join("objectives")
+    }
+
+    pub fn agents_dir(&self) -> PathBuf {
+        self.path.join("agents")
+    }
+
+    pub fn rewards_dir(&self) -> PathBuf {
+        self.path.join("rewards")
+    }
+
+    /// Returns true if this looks like a valid agency store
+    /// (has at least a roles/ subdirectory).
+    pub fn is_valid(&self) -> bool {
+        self.roles_dir().is_dir()
+    }
+
+    /// Count YAML files in a subdirectory.
+    fn count_yaml(dir: &Path) -> usize {
+        if !dir.is_dir() {
+            return 0;
+        }
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            == Some("yaml")
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Count JSON files in a subdirectory.
+    fn count_json(dir: &Path) -> usize {
+        if !dir.is_dir() {
+            return 0;
+        }
+        fs::read_dir(dir)
+            .map(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| {
+                        e.path()
+                            .extension()
+                            .and_then(|ext| ext.to_str())
+                            == Some("json")
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Quick entity counts without fully parsing files.
+    pub fn entity_counts(&self) -> StoreCounts {
+        StoreCounts {
+            roles: Self::count_yaml(&self.roles_dir()),
+            objectives: Self::count_yaml(&self.objectives_dir()),
+            agents: Self::count_yaml(&self.agents_dir()),
+            evaluations: Self::count_json(&self.rewards_dir()),
+        }
+    }
+}
+
+/// Summary counts of entities in a store.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StoreCounts {
+    pub roles: usize,
+    pub objectives: usize,
+    pub agents: usize,
+    pub evaluations: usize,
+}
+
+impl IdentityStore for LocalStore {
+    fn store_path(&self) -> &Path {
+        &self.path
+    }
+
+    fn load_roles(&self) -> Result<Vec<Role>, IdentityError> {
+        load_all_roles(&self.roles_dir())
+    }
+
+    fn load_objectives(&self) -> Result<Vec<Objective>, IdentityError> {
+        load_all_objectives(&self.objectives_dir())
+    }
+
+    fn load_agents(&self) -> Result<Vec<Agent>, IdentityError> {
+        load_all_agents(&self.agents_dir())
+    }
+
+    fn load_rewards(&self) -> Result<Vec<Reward>, IdentityError> {
+        load_all_rewards(&self.rewards_dir())
+    }
+
+    fn save_role(&self, role: &Role) -> Result<PathBuf, IdentityError> {
+        save_role(role, &self.roles_dir())
+    }
+
+    fn save_objective(&self, objective: &Objective) -> Result<PathBuf, IdentityError> {
+        save_objective(objective, &self.objectives_dir())
+    }
+
+    fn save_agent(&self, agent: &Agent) -> Result<PathBuf, IdentityError> {
+        save_agent(agent, &self.agents_dir())
+    }
+
+    fn save_reward(&self, eval: &Reward) -> Result<PathBuf, IdentityError> {
+        save_reward(eval, &self.rewards_dir())
+    }
+
+    fn exists_role(&self, id: &str) -> bool {
+        self.roles_dir().join(format!("{}.yaml", id)).exists()
+    }
+
+    fn exists_objective(&self, id: &str) -> bool {
+        self.objectives_dir()
+            .join(format!("{}.yaml", id))
+            .exists()
+    }
+
+    fn exists_agent(&self, id: &str) -> bool {
+        self.agents_dir().join(format!("{}.yaml", id)).exists()
     }
 }
 

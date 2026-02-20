@@ -34,7 +34,7 @@ use workgraph::identity;
 use workgraph::config::Config;
 use workgraph::graph::{LogEntry, Node, Status, Task, reward_loop_edges};
 use workgraph::parser::{load_graph, save_graph};
-use workgraph::query::ready_tasks;
+use workgraph::query::ready_tasks_with_peers;
 use workgraph::service::registry::{AgentEntry, AgentRegistry, AgentStatus};
 
 use super::{graph_path, is_process_alive, spawn};
@@ -378,8 +378,9 @@ fn cleanup_and_count_alive(
 fn check_ready_or_return(
     graph: &workgraph::graph::WorkGraph,
     alive_count: usize,
+    dir: &Path,
 ) -> Option<TickResult> {
-    let ready = ready_tasks(graph);
+    let ready = ready_tasks_with_peers(graph, dir);
     if ready.is_empty() {
         let terminal = graph.tasks().filter(|t| t.status.is_terminal()).count();
         let total = graph.tasks().count();
@@ -409,12 +410,12 @@ fn check_ready_or_return(
 /// `wg assign <task-id> <agent-hash>` followed by `wg done assign-{task-id}`.
 ///
 /// Returns `true` if the graph was modified.
-fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Config) -> bool {
+fn build_auto_assign_tasks(graph: &mut workgraph::graph::WorkGraph, config: &Config, dir: &Path) -> bool {
     let mut modified = false;
 
     // Collect task data to avoid holding references while mutating graph
     let ready_task_data: Vec<_> = {
-        let ready = ready_tasks(graph);
+        let ready = ready_tasks_with_peers(graph, dir);
         ready
             .iter()
             .map(|t| {
@@ -751,6 +752,147 @@ fn build_auto_reward_tasks(
     modified
 }
 
+/// Spawn an evaluation task directly without the full agent spawn machinery.
+///
+/// Instead of coordinator → run.sh → bash → `wg evaluate` → claude, this
+/// forks a single process: `wg evaluate <source-task> --model <model>` that
+/// marks the eval task done/failed on exit.  This eliminates:
+///   - Executor config resolution & template processing
+///   - run.sh wrapper script
+///   - prompt.txt / metadata.json generation
+///
+/// The forked process is still tracked in the agent registry for dead-agent
+/// detection.
+fn spawn_eval_inline(
+    dir: &Path,
+    eval_task_id: &str,
+    evaluator_model: Option<&str>,
+) -> Result<(String, u32)> {
+    use std::process::{Command, Stdio};
+
+    let graph_path = graph_path(dir);
+    let mut graph = load_graph(&graph_path).context("Failed to load graph for eval spawn")?;
+
+    let task = graph.get_task_mut_or_err(eval_task_id)?;
+    if task.status != Status::Open {
+        anyhow::bail!("Eval task '{}' is not open (status: {:?})", eval_task_id, task.status);
+    }
+
+    // Extract source task ID from the exec command ("wg evaluate <source-id>")
+    let source_task_id = task
+        .exec
+        .as_deref()
+        .and_then(|e| e.strip_prefix("wg evaluate "))
+        .unwrap_or_else(|| {
+            eval_task_id
+                .strip_prefix("evaluate-")
+                .unwrap_or(eval_task_id)
+        })
+        .to_string();
+
+    // Set up minimal agent tracking
+    let mut agent_registry = AgentRegistry::load(dir)?;
+    let agent_id = format!("agent-{}", agent_registry.next_agent_id);
+
+    // Create minimal output directory for log capture
+    let output_dir = dir.join("agents").join(&agent_id);
+    fs::create_dir_all(&output_dir)
+        .with_context(|| format!("Failed to create eval output dir: {:?}", output_dir))?;
+    let output_file = output_dir.join("output.log");
+    let output_file_str = output_file.to_string_lossy().to_string();
+
+    // Build the eval command with explicit model
+    let mut eval_cmd = format!("wg evaluate '{}'", source_task_id.replace('\'', "'\\''"));
+    if let Some(model) = evaluator_model {
+        eval_cmd.push_str(&format!(" --model '{}'", model.replace('\'', "'\\''")));
+    }
+
+    let escaped_eval_id = eval_task_id.replace('\'', "'\\''");
+    let escaped_output = output_file_str.replace('\'', "'\\''");
+
+    // Single script: run eval, then mark done/failed based on exit code
+    let script = format!(
+        r#"unset CLAUDECODE CLAUDE_CODE_ENTRYPOINT
+{eval_cmd} >> '{escaped_output}' 2>&1
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ]; then
+    wg done '{escaped_eval_id}' 2>> '{escaped_output}'
+else
+    wg fail '{escaped_eval_id}' --reason "wg evaluate exited with code $EXIT_CODE" 2>> '{escaped_output}'
+fi
+exit $EXIT_CODE"#,
+    );
+
+    // Claim the task before spawning
+    task.status = Status::InProgress;
+    task.started_at = Some(Utc::now().to_rfc3339());
+    task.assigned = Some(agent_id.clone());
+    task.log.push(LogEntry {
+        timestamp: Utc::now().to_rfc3339(),
+        actor: Some(agent_id.clone()),
+        message: format!(
+            "Spawned eval inline{}",
+            evaluator_model
+                .map(|m| format!(" --model {}", m))
+                .unwrap_or_default()
+        ),
+    });
+    save_graph(&graph, &graph_path).context("Failed to save graph after claiming eval task")?;
+
+    // Fork the process
+    let mut cmd = Command::new("bash");
+    cmd.arg("-c").arg(&script);
+    cmd.stdin(Stdio::null());
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+
+    // Detach into own session so it survives daemon restart
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+
+    let child = match cmd.spawn() {
+        Ok(child) => child,
+        Err(e) => {
+            // Rollback the claim
+            if let Ok(mut rollback_graph) = load_graph(&graph_path)
+                && let Some(t) = rollback_graph.get_task_mut(eval_task_id) {
+                    t.status = Status::Open;
+                    t.started_at = None;
+                    t.assigned = None;
+                    t.log.push(LogEntry {
+                        timestamp: Utc::now().to_rfc3339(),
+                        actor: Some(agent_id.clone()),
+                        message: format!("Eval spawn failed, reverting claim: {}", e),
+                    });
+                    let _ = save_graph(&rollback_graph, &graph_path);
+                }
+            return Err(anyhow::anyhow!("Failed to spawn eval process: {}", e));
+        }
+    };
+
+    let pid = child.id();
+
+    // Register in agent registry for dead-agent detection
+    agent_registry.register_agent_with_model(
+        pid,
+        eval_task_id,
+        "eval",
+        &output_file_str,
+        evaluator_model,
+    );
+    agent_registry.save(dir).context("Failed to save agent registry after eval spawn")?;
+
+    Ok((agent_id, pid))
+}
+
 /// Spawn agents on ready tasks, up to `slots_available`. Returns the number of
 /// agents successfully spawned.
 fn spawn_agents_for_ready_tasks(
@@ -760,7 +902,7 @@ fn spawn_agents_for_ready_tasks(
     model: Option<&str>,
     slots_available: usize,
 ) -> usize {
-    let final_ready = ready_tasks(graph);
+    let final_ready = ready_tasks_with_peers(graph, dir);
     let agents_dir = dir.join("identity").join("agents");
     let mut spawned = 0;
 
@@ -771,8 +913,29 @@ fn spawn_agents_for_ready_tasks(
             continue;
         }
 
-        // Resolve executor: tasks with exec commands use shell executor directly
-        // (avoids nested Claude when reward tasks run `wg reward`),
+        // Reward tasks run inline: fork `wg reward` directly instead of
+        // going through the full spawn machinery (run.sh, executor config, etc.)
+        if task.tags.iter().any(|t| t == "reward") && task.exec.is_some() {
+            let eval_model = task.model.as_deref();
+            eprintln!(
+                "[coordinator] Spawning reward inline for: {} - {}{}",
+                task.id,
+                task.title,
+                eval_model.map(|m| format!(" (model: {})", m)).unwrap_or_default(),
+            );
+            match spawn_eval_inline(dir, &task.id, eval_model) {
+                Ok((agent_id, pid)) => {
+                    eprintln!("[coordinator] Spawned reward {} (PID {})", agent_id, pid);
+                    spawned += 1;
+                }
+                Err(e) => {
+                    eprintln!("[coordinator] Failed to spawn reward for {}: {}", task.id, e);
+                }
+            }
+            continue;
+        }
+
+        // Resolve executor: tasks with exec commands use shell executor directly,
         // otherwise: agent.executor > config.coordinator.executor
         let effective_executor = if task.exec.is_some() {
             "shell".to_string()
@@ -832,7 +995,7 @@ pub fn coordinator_tick(
     // create new ready tasks (e.g. reward-* tasks) that weren't there before.
     let mut graph_modified = false;
     if config.identity.auto_assign {
-        graph_modified |= build_auto_assign_tasks(&mut graph, &config);
+        graph_modified |= build_auto_assign_tasks(&mut graph, &config, dir);
     }
 
     // Phase 4: Auto-reward tasks
@@ -849,12 +1012,12 @@ pub fn coordinator_tick(
     }
 
     // Phase 5: Check for ready tasks (after identity phases may have created new ones)
-    if let Some(early_result) = check_ready_or_return(&graph, alive_count) {
+    if let Some(early_result) = check_ready_or_return(&graph, alive_count, dir) {
         return Ok(early_result);
     }
 
     // Phase 6: Spawn agents on ready tasks
-    let final_ready = ready_tasks(&graph);
+    let final_ready = ready_tasks_with_peers(&graph, dir);
     let ready_count = final_ready.len();
     drop(final_ready);
     let spawned = spawn_agents_for_ready_tasks(dir, &graph, executor, model, slots_available);
@@ -1492,6 +1655,33 @@ pub enum IpcRequest {
         poll_interval: Option<u64>,
         #[serde(default)]
         model: Option<String>,
+    },
+    /// Create a task in this workgraph (cross-repo dispatch)
+    AddTask {
+        title: String,
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        blocked_by: Vec<String>,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        skills: Vec<String>,
+        #[serde(default)]
+        deliverables: Vec<String>,
+        #[serde(default)]
+        model: Option<String>,
+        #[serde(default)]
+        verify: Option<String>,
+        /// Who requested this (for provenance)
+        #[serde(default)]
+        origin: Option<String>,
+    },
+    /// Query a task's status (cross-repo query)
+    QueryTask {
+        task_id: String,
     },
 }
 
@@ -2255,6 +2445,45 @@ fn handle_request(
                 logger,
             )
         }
+        IpcRequest::AddTask {
+            title,
+            id,
+            description,
+            blocked_by,
+            tags,
+            skills,
+            deliverables,
+            model,
+            verify,
+            origin,
+        } => {
+            logger.info(&format!(
+                "IPC AddTask: title='{}', origin={:?}",
+                title,
+                origin
+            ));
+            let resp = handle_add_task(
+                dir,
+                &title,
+                id.as_deref(),
+                description.as_deref(),
+                &blocked_by,
+                &tags,
+                &skills,
+                &deliverables,
+                model.as_deref(),
+                verify.as_deref(),
+                origin.as_deref(),
+            );
+            if resp.ok {
+                *wake_coordinator = true;
+            }
+            resp
+        }
+        IpcRequest::QueryTask { task_id } => {
+            logger.info(&format!("IPC QueryTask: task_id={}", task_id));
+            handle_query_task(dir, &task_id)
+        }
     }
 }
 
@@ -2469,6 +2698,169 @@ fn handle_reconfigure(
             "model": daemon_cfg.model,
         }
     }))
+}
+
+/// Handle AddTask IPC request — create a task in this workgraph from a remote peer.
+#[allow(clippy::too_many_arguments)]
+fn handle_add_task(
+    dir: &Path,
+    title: &str,
+    id: Option<&str>,
+    description: Option<&str>,
+    blocked_by: &[String],
+    tags: &[String],
+    skills: &[String],
+    deliverables: &[String],
+    model: Option<&str>,
+    verify: Option<&str>,
+    origin: Option<&str>,
+) -> IpcResponse {
+    use workgraph::graph::{Node, Status, Task};
+    use workgraph::parser::{load_graph, save_graph};
+
+    let graph_path = super::graph_path(dir);
+    let mut graph = match load_graph(&graph_path) {
+        Ok(g) => g,
+        Err(e) => return IpcResponse::error(&format!("Failed to load graph: {}", e)),
+    };
+
+    // Generate or validate task ID
+    let task_id = match id {
+        Some(id) => {
+            if graph.get_node(id).is_some() {
+                return IpcResponse::error(&format!("Task with ID '{}' already exists", id));
+            }
+            id.to_string()
+        }
+        None => {
+            // Reuse the same slug generation logic as add.rs
+            let slug: String = title
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect::<String>()
+                .split('-')
+                .filter(|s| !s.is_empty())
+                .take(3)
+                .collect::<Vec<_>>()
+                .join("-");
+            let base_id = if slug.is_empty() {
+                "task".to_string()
+            } else {
+                slug
+            };
+            if graph.get_node(&base_id).is_none() {
+                base_id
+            } else {
+                let mut found = None;
+                for i in 2..1000 {
+                    let candidate = format!("{}-{}", base_id, i);
+                    if graph.get_node(&candidate).is_none() {
+                        found = Some(candidate);
+                        break;
+                    }
+                }
+                found.unwrap_or_else(|| {
+                    format!(
+                        "task-{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0)
+                    )
+                })
+            }
+        }
+    };
+
+    let task = Task {
+        id: task_id.clone(),
+        title: title.to_string(),
+        description: description.map(String::from),
+        status: Status::Open,
+        assigned: None,
+        estimate: None,
+        blocks: vec![],
+        blocked_by: blocked_by.to_vec(),
+        requires: vec![],
+        tags: tags.to_vec(),
+        skills: skills.to_vec(),
+        inputs: vec![],
+        deliverables: deliverables.to_vec(),
+        artifacts: vec![],
+        exec: None,
+        not_before: None,
+        created_at: Some(chrono::Utc::now().to_rfc3339()),
+        started_at: None,
+        completed_at: None,
+        log: vec![],
+        retry_count: 0,
+        max_retries: None,
+        failure_reason: None,
+        model: model.map(String::from),
+        verify: verify.map(String::from),
+        agent: None,
+        loops_to: vec![],
+        loop_iteration: 0,
+        ready_after: None,
+        paused: false,
+    };
+
+    graph.add_node(Node::Task(task));
+
+    // Maintain bidirectional blocked_by/blocks consistency
+    for dep in blocked_by {
+        if let Some(blocker) = graph.get_task_mut(dep)
+            && !blocker.blocks.contains(&task_id)
+        {
+            blocker.blocks.push(task_id.clone());
+        }
+    }
+
+    if let Err(e) = save_graph(&graph, &graph_path) {
+        return IpcResponse::error(&format!("Failed to save graph: {}", e));
+    }
+
+    // Record provenance
+    let origin_str = origin.unwrap_or("unknown");
+    let config = workgraph::config::Config::load_or_default(dir);
+    let _ = workgraph::provenance::record(
+        dir,
+        "add_task",
+        Some(&task_id),
+        None,
+        serde_json::json!({ "title": title, "origin": origin_str, "remote": true }),
+        config.log.rotation_threshold,
+    );
+
+    IpcResponse::success(serde_json::json!({
+        "task_id": task_id,
+        "title": title,
+    }))
+}
+
+/// Handle QueryTask IPC request — return a task's status for cross-repo dependency checking.
+fn handle_query_task(dir: &Path, task_id: &str) -> IpcResponse {
+    use workgraph::parser::load_graph;
+
+    let graph_path = super::graph_path(dir);
+    let graph = match load_graph(&graph_path) {
+        Ok(g) => g,
+        Err(e) => return IpcResponse::error(&format!("Failed to load graph: {}", e)),
+    };
+
+    match graph.get_task(task_id) {
+        Some(task) => IpcResponse::success(serde_json::json!({
+            "task_id": task.id,
+            "title": task.title,
+            "status": format!("{:?}", task.status),
+            "assigned": task.assigned,
+            "started_at": task.started_at,
+            "completed_at": task.completed_at,
+            "failure_reason": task.failure_reason,
+        })),
+        None => IpcResponse::error(&format!("Task '{}' not found", task_id)),
+    }
 }
 
 /// Stop the service daemon
@@ -3893,5 +4285,59 @@ poll_interval = 120
             status_line
         );
         assert!(status_line.contains("0 alive"));
+    }
+
+    #[test]
+    fn test_eval_inline_extracts_source_task_from_exec() {
+        // spawn_eval_inline extracts the source task ID from exec command
+        // This tests the extraction logic used in the function
+        let exec = Some("wg evaluate my-source-task".to_string());
+        let source_id = exec
+            .as_deref()
+            .and_then(|e| e.strip_prefix("wg evaluate "))
+            .unwrap_or("fallback");
+        assert_eq!(source_id, "my-source-task");
+    }
+
+    #[test]
+    fn test_eval_inline_extracts_source_task_from_id_fallback() {
+        // When exec is missing the prefix, fall back to stripping evaluate- from task ID
+        let exec: Option<String> = None;
+        let eval_task_id = "evaluate-some-task";
+        let source_id = exec
+            .as_deref()
+            .and_then(|e| e.strip_prefix("wg evaluate "))
+            .unwrap_or_else(|| {
+                eval_task_id
+                    .strip_prefix("evaluate-")
+                    .unwrap_or(eval_task_id)
+            });
+        assert_eq!(source_id, "some-task");
+    }
+
+    #[test]
+    fn test_eval_routing_condition() {
+        // The routing condition for inline reward: has "reward" tag AND exec is set
+        let mut task = Task::default();
+        task.id = "reward-t1".to_string();
+        task.tags = vec!["reward".to_string(), "identity".to_string()];
+        task.exec = Some("wg reward t1".to_string());
+
+        let is_inline_eval = task.tags.iter().any(|t| t == "reward") && task.exec.is_some();
+        assert!(is_inline_eval);
+
+        // Non-reward exec task should NOT match
+        let mut shell_task = Task::default();
+        shell_task.exec = Some("bash run.sh".to_string());
+        let is_inline_eval2 =
+            shell_task.tags.iter().any(|t| t == "reward") && shell_task.exec.is_some();
+        assert!(!is_inline_eval2);
+
+        // Reward tag but no exec should NOT match
+        let mut no_exec = Task::default();
+        no_exec.tags = vec!["reward".to_string()];
+        let is_inline_eval3 =
+            no_exec.tags.iter().any(|t| t == "reward") && no_exec.exec.is_some();
+        assert!(!is_inline_eval3);
     }
 }

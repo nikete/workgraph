@@ -2,6 +2,7 @@ pub mod gepa;
 pub mod identity;
 pub mod check;
 pub mod config;
+pub mod federation;
 pub mod graph;
 #[cfg(feature = "matrix")]
 pub mod matrix;
@@ -13,6 +14,7 @@ pub mod provenance;
 pub mod query;
 pub mod runs;
 pub mod service;
+pub mod trace_function;
 pub mod usage;
 
 pub use config::MatrixConfig;
