@@ -105,6 +105,7 @@ pub fn run(
     strategy: Option<&str>,
     budget: Option<u32>,
     model: Option<&str>,
+    backend: Option<&str>,
     json: bool,
 ) -> Result<()> {
     let identity_dir = dir.join("identity");
@@ -118,18 +119,31 @@ pub fn run(
         bail!("Identity not initialized. Run `wg identity init` first.");
     }
 
-    // Pre-flight: check that claude CLI is available
-    if Command::new("claude")
-        .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .env_remove("CLAUDECODE")
-        .arg("--version")
-        .output()
-        .is_err()
-    {
-        bail!(
-            "The 'claude' CLI is required for evolve but was not found in PATH.\n\
-             Install it from https://docs.anthropic.com/en/docs/claude-code and ensure it is on your PATH."
-        );
+    // Pre-flight: check that the selected backend is available
+    if backend == Some("gepa") {
+        let check = Command::new("python3")
+            .arg("-c")
+            .arg("import gepa")
+            .output();
+        if check.is_err() || !check.unwrap().status.success() {
+            bail!(
+                "The 'gepa' Python package is required for --backend gepa but was not found.\n\
+                 Install it with: pip install gepa wg-gepa"
+            );
+        }
+    } else {
+        if Command::new("claude")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .env_remove("CLAUDECODE")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            bail!(
+                "The 'claude' CLI is required for evolve but was not found in PATH.\n\
+                 Install it from https://docs.anthropic.com/en/docs/claude-code and ensure it is on your PATH."
+            );
+        }
     }
 
     // Parse strategy
@@ -234,38 +248,50 @@ pub fn run(
         return Ok(());
     }
 
-    // Spawn the evolver agent
-    println!(
-        "Running evolution cycle (strategy: {}, model: {})...",
-        strategy.label(),
-        model
-    );
-
-    let output = Command::new("claude")
-        .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .env_remove("CLAUDECODE")
-        .arg("--model")
-        .arg(&model)
-        .arg("--print")
-        .arg("--dangerously-skip-permissions")
-        .arg(&prompt)
-        .output()
-        .context("Failed to run claude CLI — is it installed and in PATH?")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "Evolver agent failed (exit code {:?}):\n{}",
-            output.status.code(),
-            stderr
+    // Spawn the evolver agent (or GEPA backend)
+    let (evolver_output, raw_output) = if backend == Some("gepa") {
+        println!(
+            "Running GEPA evolution cycle (strategy: {}, budget: {})...",
+            strategy.label(),
+            budget.map(|b| b.to_string()).unwrap_or_else(|| "default".into())
         );
-    }
+        let eo = call_gepa_backend(
+            &roles, &objectives, &rewards, strategy, budget,
+            &config, &identity_dir, &skill_docs, &model,
+        )?;
+        let raw = serde_json::to_string_pretty(&eo).unwrap_or_default();
+        (eo, raw)
+    } else {
+        println!(
+            "Running evolution cycle (strategy: {}, model: {})...",
+            strategy.label(),
+            model
+        );
 
-    let raw_output = String::from_utf8_lossy(&output.stdout);
+        let output = Command::new("claude")
+            .env_remove("CLAUDE_CODE_ENTRYPOINT")
+            .env_remove("CLAUDECODE")
+            .arg("--model")
+            .arg(&model)
+            .arg("--print")
+            .arg("--dangerously-skip-permissions")
+            .arg(&prompt)
+            .output()
+            .context("Failed to run claude CLI — is it installed and in PATH?")?;
 
-    // Parse the structured output
-    let evolver_output =
-        parse_evolver_output(&raw_output).context("Failed to parse evolver output")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "Evolver agent failed (exit code {:?}):\n{}",
+                output.status.code(),
+                stderr
+            );
+        }
+
+        let raw = String::from_utf8_lossy(&output.stdout).to_string();
+        let eo = parse_evolver_output(&raw).context("Failed to parse evolver output")?;
+        (eo, raw)
+    };
 
     let actual_run_id = evolver_output.run_id.as_deref().unwrap_or(&run_id);
 
@@ -431,7 +457,7 @@ pub fn run(
         "operations_deferred": deferred,
         "results": results,
         "summary": evolver_output.summary,
-        "raw_output": raw_output.as_ref(),
+        "raw_output": &raw_output,
     });
 
     let runs_dir = identity_dir.join("evolution_runs");
@@ -879,6 +905,145 @@ fn build_evolver_prompt(
     out.push_str("**Important:** Each new/modified entity gets lineage tracking automatically. Just provide the IDs.\n");
 
     out
+}
+
+// ---------------------------------------------------------------------------
+// GEPA backend
+// ---------------------------------------------------------------------------
+
+/// Serialize roles into JSON-ready maps including per-role reward details.
+fn role_to_json(role: &Role, rewards: &[Reward]) -> serde_json::Value {
+    let role_rewards: Vec<serde_json::Value> = rewards
+        .iter()
+        .filter(|r| r.role_id == role.id)
+        .map(|r| {
+            serde_json::json!({
+                "task_id": r.task_id,
+                "value": r.value,
+                "dimensions": r.dimensions,
+                "notes": r.notes,
+            })
+        })
+        .collect();
+
+    let skill_names: Vec<String> = role
+        .skills
+        .iter()
+        .map(|s| format!("{:?}", s))
+        .collect();
+
+    serde_json::json!({
+        "id": role.id,
+        "name": role.name,
+        "description": role.description,
+        "skills": skill_names,
+        "desired_outcome": role.desired_outcome,
+        "mean_reward": role.performance.mean_reward,
+        "generation": role.lineage.generation,
+        "parent_ids": role.lineage.parent_ids,
+        "reward_details": role_rewards,
+    })
+}
+
+fn objective_to_json(obj: &Objective) -> serde_json::Value {
+    serde_json::json!({
+        "id": obj.id,
+        "name": obj.name,
+        "description": obj.description,
+        "acceptable_tradeoffs": obj.acceptable_tradeoffs,
+        "unacceptable_tradeoffs": obj.unacceptable_tradeoffs,
+        "mean_reward": obj.performance.mean_reward,
+        "generation": obj.lineage.generation,
+    })
+}
+
+/// Build retention heuristics text for the GEPA backend.
+fn retention_heuristics_text() -> &'static str {
+    "Roles with mean_reward >= 0.7 and task_count >= 3 are considered proven. \
+     Roles below 0.4 mean_reward with 5+ tasks are retirement candidates. \
+     New roles (gen 0, <3 tasks) should be given more runway before retiring. \
+     Prefer modifying underperformers over retiring them when possible."
+}
+
+#[allow(clippy::too_many_arguments)]
+fn call_gepa_backend(
+    roles: &[Role],
+    objectives: &[Objective],
+    rewards: &[Reward],
+    strategy: Strategy,
+    budget: Option<u32>,
+    _config: &Config,
+    _identity_dir: &Path,
+    skill_docs: &[(String, String)],
+    model: &str,
+) -> Result<EvolverOutput> {
+    use std::io::Write;
+
+    let roles_json: Vec<serde_json::Value> = roles
+        .iter()
+        .map(|r| role_to_json(r, rewards))
+        .collect();
+
+    let objectives_json: Vec<serde_json::Value> = objectives
+        .iter()
+        .map(objective_to_json)
+        .collect();
+
+    let skill_contents: Vec<String> = skill_docs
+        .iter()
+        .map(|(_, content)| content.clone())
+        .collect();
+
+    let input = serde_json::json!({
+        "roles": roles_json,
+        "objectives": objectives_json,
+        "strategy": strategy.label(),
+        "budget": budget.unwrap_or(20),
+        "retention_heuristics": retention_heuristics_text(),
+        "evolver_skills": skill_contents,
+        "model": model,
+    });
+
+    let input_bytes = serde_json::to_vec(&input)
+        .context("Failed to serialize GEPA input")?;
+
+    let mut child = Command::new("python3")
+        .arg("-m")
+        .arg("wg_gepa.evolve")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context("Failed to spawn python3 -m wg_gepa.evolve — is wg-gepa installed?")?;
+
+    // Write JSON to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(&input_bytes)
+            .context("Failed to write to GEPA process stdin")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .context("Failed to wait for GEPA process")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "GEPA backend failed (exit code {:?}):\n{}",
+            output.status.code(),
+            stderr
+        );
+    }
+
+    let raw_output = String::from_utf8_lossy(&output.stdout);
+
+    // Log any stderr (GEPA iteration progress, etc.)
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.is_empty() {
+        eprintln!("{}", stderr);
+    }
+
+    parse_evolver_output(&raw_output).context("Failed to parse GEPA output")
 }
 
 // ---------------------------------------------------------------------------
@@ -3168,5 +3333,234 @@ Let me know if you'd like me to adjust anything."#;
         let input = "some text } then { more text";
         let result = extract_json(input);
         assert!(result.is_none());
+    }
+
+    // =======================================================================
+    // GEPA backend: JSON serialization
+    // =======================================================================
+
+    #[test]
+    fn test_role_to_json_basic() {
+        let role = Role {
+            id: "r-abc123".into(),
+            name: "Test Role".into(),
+            description: "A role for testing".into(),
+            skills: vec![SkillRef::Name("coding".into()), SkillRef::Inline("write tests".into())],
+            desired_outcome: "Well-tested code".into(),
+            performance: RewardHistory {
+                task_count: 3,
+                mean_reward: Some(0.72),
+                rewards: vec![],
+            },
+            lineage: Lineage {
+                parent_ids: vec!["parent-1".into()],
+                generation: 2,
+                ..Lineage::default()
+            },
+        };
+
+        let rewards = vec![
+            Reward {
+                id: "eval-1".into(),
+                task_id: "t-1".into(),
+                agent_id: "".into(),
+                role_id: "r-abc123".into(),
+                objective_id: "m-1".into(),
+                value: 0.8,
+                dimensions: [("correctness".to_string(), 0.9)].into_iter().collect(),
+                notes: "Good work".into(),
+                evaluator: "claude:test".into(),
+                timestamp: "2025-01-01T00:00:00Z".into(),
+                model: None,
+                source: "llm".into(),
+            },
+            Reward {
+                id: "eval-2".into(),
+                task_id: "t-2".into(),
+                agent_id: "".into(),
+                role_id: "other-role".into(),
+                objective_id: "m-1".into(),
+                value: 0.5,
+                dimensions: HashMap::new(),
+                notes: "".into(),
+                evaluator: "claude:test".into(),
+                timestamp: "2025-01-02T00:00:00Z".into(),
+                model: None,
+                source: "llm".into(),
+            },
+        ];
+
+        let json = role_to_json(&role, &rewards);
+
+        assert_eq!(json["id"], "r-abc123");
+        assert_eq!(json["name"], "Test Role");
+        assert_eq!(json["description"], "A role for testing");
+        assert_eq!(json["desired_outcome"], "Well-tested code");
+        assert_eq!(json["mean_reward"], 0.72);
+        assert_eq!(json["generation"], 2);
+        assert_eq!(json["parent_ids"][0], "parent-1");
+
+        // reward_details should only include rewards for this role
+        let details = json["reward_details"].as_array().unwrap();
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0]["task_id"], "t-1");
+        assert_eq!(details[0]["value"], 0.8);
+    }
+
+    #[test]
+    fn test_role_to_json_no_rewards() {
+        let role = Role {
+            id: "r-empty".into(),
+            name: "Empty Role".into(),
+            description: "No rewards yet".into(),
+            skills: vec![],
+            desired_outcome: "Something".into(),
+            performance: RewardHistory {
+                task_count: 0,
+                mean_reward: None,
+                rewards: vec![],
+            },
+            lineage: Lineage::default(),
+        };
+
+        let json = role_to_json(&role, &[]);
+        assert!(json["mean_reward"].is_null());
+        assert!(json["reward_details"].as_array().unwrap().is_empty());
+        assert!(json["skills"].as_array().unwrap().is_empty());
+        assert!(json["parent_ids"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_objective_to_json_basic() {
+        let obj = Objective {
+            id: "m-xyz".into(),
+            name: "Quality First".into(),
+            description: "Prioritize correctness".into(),
+            acceptable_tradeoffs: vec!["Slower pace".into()],
+            unacceptable_tradeoffs: vec!["Bugs".into(), "Untested code".into()],
+            performance: RewardHistory {
+                task_count: 5,
+                mean_reward: Some(0.68),
+                rewards: vec![],
+            },
+            lineage: Lineage {
+                generation: 1,
+                ..Lineage::default()
+            },
+        };
+
+        let json = objective_to_json(&obj);
+        assert_eq!(json["id"], "m-xyz");
+        assert_eq!(json["name"], "Quality First");
+        assert_eq!(json["description"], "Prioritize correctness");
+        assert_eq!(json["mean_reward"], 0.68);
+        assert_eq!(json["generation"], 1);
+        assert_eq!(json["acceptable_tradeoffs"].as_array().unwrap().len(), 1);
+        assert_eq!(json["unacceptable_tradeoffs"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_gepa_input_json_structure() {
+        // Verify the JSON structure that call_gepa_backend sends to the Python process
+        let roles = vec![Role {
+            id: "r1".into(),
+            name: "Dev".into(),
+            description: "Developer".into(),
+            skills: vec![SkillRef::Name("rust".into())],
+            desired_outcome: "Code".into(),
+            performance: RewardHistory {
+                task_count: 1,
+                mean_reward: Some(0.7),
+                rewards: vec![],
+            },
+            lineage: Lineage::default(),
+        }];
+        let objectives = vec![Objective {
+            id: "m1".into(),
+            name: "Quality".into(),
+            description: "Quality code".into(),
+            acceptable_tradeoffs: vec![],
+            unacceptable_tradeoffs: vec![],
+            performance: RewardHistory {
+                task_count: 1,
+                mean_reward: Some(0.8),
+                rewards: vec![],
+            },
+            lineage: Lineage::default(),
+        }];
+        let rewards: Vec<Reward> = vec![];
+        let skill_docs = vec![("role-mutation.md".to_string(), "# Mutation\nMutate roles.".to_string())];
+
+        // Build the same JSON that call_gepa_backend would produce
+        let roles_json: Vec<serde_json::Value> = roles.iter().map(|r| role_to_json(r, &rewards)).collect();
+        let objectives_json: Vec<serde_json::Value> = objectives.iter().map(objective_to_json).collect();
+        let skill_contents: Vec<String> = skill_docs.iter().map(|(_, c)| c.clone()).collect();
+
+        let input = serde_json::json!({
+            "roles": roles_json,
+            "objectives": objectives_json,
+            "strategy": "mutation",
+            "budget": 10,
+            "retention_heuristics": retention_heuristics_text(),
+            "evolver_skills": skill_contents,
+        });
+
+        // Validate top-level structure
+        assert!(input["roles"].is_array());
+        assert!(input["objectives"].is_array());
+        assert_eq!(input["strategy"], "mutation");
+        assert_eq!(input["budget"], 10);
+        assert!(input["retention_heuristics"].as_str().unwrap().contains("0.7"));
+        assert_eq!(input["evolver_skills"].as_array().unwrap().len(), 1);
+
+        // Validate role sub-structure
+        let r = &input["roles"][0];
+        assert_eq!(r["id"], "r1");
+        assert_eq!(r["name"], "Dev");
+        assert!(r["reward_details"].is_array());
+
+        // Validate objective sub-structure
+        let o = &input["objectives"][0];
+        assert_eq!(o["id"], "m1");
+        assert_eq!(o["name"], "Quality");
+        assert!(o["acceptable_tradeoffs"].is_array());
+        assert!(o["unacceptable_tradeoffs"].is_array());
+    }
+
+    #[test]
+    fn test_parse_gepa_style_output() {
+        // GEPA backend outputs clean JSON (no markdown fences or LLM noise)
+        let gepa_output = r#"{
+            "operations": [
+                {
+                    "op": "modify_role",
+                    "target_id": "r-old",
+                    "new_id": "abc123def456",
+                    "name": "Improved Dev",
+                    "description": "GEPA-optimized developer role focused on testing",
+                    "skills": ["rust", "testing"],
+                    "desired_outcome": "Well-tested code with high coverage",
+                    "rationale": "GEPA mutation (10 iterations, best score: 0.850)"
+                }
+            ],
+            "summary": "GEPA mutation produced 1 operations (budget: 10)"
+        }"#;
+
+        let output = parse_evolver_output(gepa_output).unwrap();
+        assert!(output.run_id.is_none()); // GEPA output doesn't include run_id
+        assert_eq!(output.operations.len(), 1);
+        assert_eq!(output.operations[0].op, "modify_role");
+        assert_eq!(output.operations[0].target_id, Some("r-old".to_string()));
+        assert!(output.operations[0].rationale.as_ref().unwrap().contains("GEPA"));
+        assert!(output.summary.as_ref().unwrap().contains("GEPA"));
+    }
+
+    #[test]
+    fn test_retention_heuristics_text_non_empty() {
+        let text = retention_heuristics_text();
+        assert!(!text.is_empty());
+        assert!(text.contains("0.7"));
+        assert!(text.contains("0.4"));
+        assert!(text.contains("retirement"));
     }
 }

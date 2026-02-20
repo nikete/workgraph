@@ -36,6 +36,10 @@ pub fn run(
     task_id: &str,
     evaluator_model: Option<&str>,
     dry_run: bool,
+    value: Option<f64>,
+    source: Option<&str>,
+    dimensions: Option<&str>,
+    notes: Option<&str>,
     json: bool,
 ) -> Result<()> {
     let path = super::graph_path(dir);
@@ -177,6 +181,102 @@ pub fn run(
         println!("Evaluator model: {}", model);
         println!("\n--- Evaluator Prompt ---\n");
         println!("{}", prompt);
+        return Ok(());
+    }
+
+    // Step 5b: If --value is provided, skip the LLM evaluator and record directly
+    if let Some(val) = value {
+        let dims: std::collections::HashMap<String, f64> = if let Some(d) = dimensions {
+            serde_json::from_str(d)
+                .with_context(|| format!("Failed to parse --dimensions JSON: {}", d))?
+        } else {
+            std::collections::HashMap::new()
+        };
+
+        let agent_id = resolved_agent
+            .as_ref()
+            .map(|a| a.id.clone())
+            .unwrap_or_default();
+        let role_id = agent_role_id;
+        let objective_id = agent_objective_id;
+
+        let task_model = extract_spawn_model(&task.log).or_else(|| task.model.clone());
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let eval_id = format!("eval-{}-{}", task_id, timestamp.replace(':', "-"));
+
+        let reward = Reward {
+            id: eval_id,
+            task_id: task_id.to_string(),
+            agent_id,
+            role_id: role_id.clone(),
+            objective_id: objective_id.clone(),
+            value: val,
+            dimensions: dims,
+            notes: notes.unwrap_or("").to_string(),
+            evaluator: "manual".to_string(),
+            timestamp,
+            model: task_model,
+            source: source.unwrap_or("manual").to_string(),
+        };
+
+        let identity_dir = dir.join("identity");
+        if role_id != "unknown" && objective_id != "unknown" {
+            let eval_path =
+                record_reward(&reward, &identity_dir).context("Failed to record reward")?;
+            if json {
+                let out = serde_json::json!({
+                    "task_id": task_id,
+                    "reward_id": reward.id,
+                    "value": reward.value,
+                    "dimensions": reward.dimensions,
+                    "notes": reward.notes,
+                    "evaluator": reward.evaluator,
+                    "source": reward.source,
+                    "model": reward.model,
+                    "path": eval_path.display().to_string(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("\n=== Reward Complete (manual) ===");
+                println!("Task:       {} ({})", task.title, task_id);
+                println!("Reward:     {:.2}", reward.value);
+                if !reward.dimensions.is_empty() {
+                    for (k, v) in &reward.dimensions {
+                        println!("  {}:  {:.2}", k, v);
+                    }
+                }
+                println!("Source:     {}", reward.source);
+                println!("Saved to:   {}", eval_path.display());
+            }
+        } else {
+            identity::init(&identity_dir)?;
+            let eval_path = identity::save_reward(&reward, &identity_dir.join("rewards"))
+                .context("Failed to save reward")?;
+            if json {
+                let out = serde_json::json!({
+                    "task_id": task_id,
+                    "reward_id": reward.id,
+                    "value": reward.value,
+                    "dimensions": reward.dimensions,
+                    "notes": reward.notes,
+                    "evaluator": reward.evaluator,
+                    "source": reward.source,
+                    "model": reward.model,
+                    "path": eval_path.display().to_string(),
+                    "warning": "No identity assigned — performance records not updated",
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("\n=== Reward Complete (manual) ===");
+                println!("Task:       {} ({})", task.title, task_id);
+                println!("Reward:     {:.2}", reward.value);
+                println!("Source:     {}", reward.source);
+                println!("Saved to:   {}", eval_path.display());
+                println!(
+                    "Warning: no identity assigned — role/objective performance records not updated"
+                );
+            }
+        }
         return Ok(());
     }
 

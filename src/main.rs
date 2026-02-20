@@ -690,6 +690,22 @@ enum Commands {
         /// Show what would be rewarded without spawning the evaluator agent
         #[arg(long)]
         dry_run: bool,
+
+        /// Inject a pre-computed reward value (skip LLM evaluator)
+        #[arg(long)]
+        value: Option<f64>,
+
+        /// Reward source tag (default: "llm" for evaluator, "manual" for --value)
+        #[arg(long)]
+        source: Option<String>,
+
+        /// Per-dimension scores as JSON, e.g. '{"correctness":0.9,"efficiency":0.7}'
+        #[arg(long)]
+        dimensions: Option<String>,
+
+        /// Notes for the reward
+        #[arg(long)]
+        notes: Option<String>,
     },
 
     /// Trigger an evolution cycle on identity roles and objectives
@@ -709,6 +725,10 @@ enum Commands {
         /// Model to use for the evolver agent
         #[arg(long)]
         model: Option<String>,
+
+        /// Backend to use: claude (default) or gepa
+        #[arg(long)]
+        backend: Option<String>,
     },
 
     /// View or modify project configuration
@@ -2180,11 +2200,19 @@ fn main() -> Result<()> {
             task,
             evaluator_model,
             dry_run,
+            value,
+            source,
+            dimensions,
+            notes,
         } => commands::reward::run(
             &workgraph_dir,
             &task,
             evaluator_model.as_deref(),
             dry_run,
+            value,
+            source.as_deref(),
+            dimensions.as_deref(),
+            notes.as_deref(),
             cli.json,
         ),
         Commands::Evolve {
@@ -2192,12 +2220,14 @@ fn main() -> Result<()> {
             strategy,
             budget,
             model,
+            backend,
         } => commands::evolve::run(
             &workgraph_dir,
             dry_run,
             strategy.as_deref(),
             budget,
             model.as_deref(),
+            backend.as_deref(),
             cli.json,
         ),
         Commands::Config {
