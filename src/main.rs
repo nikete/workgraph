@@ -1031,6 +1031,135 @@ enum AgencyCommands {
         #[arg(long)]
         by_model: bool,
     },
+
+    /// Scan filesystem for agency stores
+    Scan {
+        /// Root directory to scan
+        root: String,
+
+        /// Maximum recursion depth
+        #[arg(long, default_value = "10")]
+        max_depth: usize,
+    },
+
+    /// Pull entities from another agency store into local
+    Pull {
+        /// Source store (path, named remote, or directory)
+        source: String,
+
+        /// Only pull specific entity IDs (prefix match)
+        #[arg(long = "entity", value_delimiter = ',')]
+        entity_ids: Vec<String>,
+
+        /// Only pull entities of this type (role, motivation, agent)
+        #[arg(long = "type")]
+        entity_type: Option<String>,
+
+        /// Show what would be pulled without writing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip merging performance data (copy definitions only)
+        #[arg(long)]
+        no_performance: bool,
+
+        /// Skip copying evaluation JSON files
+        #[arg(long)]
+        no_evaluations: bool,
+
+        /// Overwrite local metadata instead of merging
+        #[arg(long)]
+        force: bool,
+
+        /// Pull into ~/.workgraph/agency/ instead of local project
+        #[arg(long)]
+        global: bool,
+    },
+
+    /// Merge entities from multiple agency stores
+    Merge {
+        /// Source stores (paths, named remotes, or directories)
+        sources: Vec<String>,
+
+        /// Merge into a specific target path instead of local project
+        #[arg(long)]
+        into: Option<String>,
+
+        /// Show what would be merged without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Manage named references to other agency stores
+    Remote {
+        #[command(subcommand)]
+        command: RemoteCommands,
+    },
+
+    /// Push local entities to another agency store
+    Push {
+        /// Target store (path, named remote, or directory)
+        target: String,
+
+        /// Only push specific entity IDs
+        #[arg(long = "entity", value_delimiter = ',')]
+        entity_ids: Vec<String>,
+
+        /// Only push entities of this type (role, motivation, agent)
+        #[arg(long = "type")]
+        entity_type: Option<String>,
+
+        /// Show what would be pushed without writing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip merging performance data (copy definitions only)
+        #[arg(long)]
+        no_performance: bool,
+
+        /// Skip copying evaluation JSON files
+        #[arg(long)]
+        no_evaluations: bool,
+
+        /// Overwrite target metadata instead of merging
+        #[arg(long)]
+        force: bool,
+
+        /// Push from ~/.workgraph/agency/ instead of local project
+        #[arg(long)]
+        global: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum RemoteCommands {
+    /// Add a named remote agency store
+    Add {
+        /// Remote name
+        name: String,
+
+        /// Path to the agency store
+        path: String,
+
+        /// Description of this remote
+        #[arg(long, short = 'd')]
+        description: Option<String>,
+    },
+
+    /// Remove a named remote
+    Remove {
+        /// Remote name to remove
+        name: String,
+    },
+
+    /// List all configured remotes
+    List,
+
+    /// Show details of a remote including entity counts
+    Show {
+        /// Remote name
+        name: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2025,6 +2154,88 @@ fn main() -> Result<()> {
                 min_evals,
                 by_model,
             } => commands::agency_stats::run(&workgraph_dir, cli.json, min_evals, by_model),
+            AgencyCommands::Scan { root, max_depth } => {
+                let root_path = std::path::PathBuf::from(&root);
+                commands::agency_scan::run(&root_path, cli.json, max_depth)
+            }
+            AgencyCommands::Pull {
+                source,
+                entity_ids,
+                entity_type,
+                dry_run,
+                no_performance,
+                no_evaluations,
+                force,
+                global,
+            } => {
+                let opts = commands::agency_pull::PullOptions {
+                    source,
+                    dry_run,
+                    no_performance,
+                    no_evaluations,
+                    force,
+                    global,
+                    entity_ids,
+                    entity_type,
+                    json: cli.json,
+                };
+                commands::agency_pull::run(&workgraph_dir, &opts)
+            }
+            AgencyCommands::Merge {
+                sources,
+                into,
+                dry_run,
+            } => {
+                let opts = commands::agency_merge::MergeOptions {
+                    sources,
+                    into,
+                    dry_run,
+                    json: cli.json,
+                };
+                commands::agency_merge::run(&workgraph_dir, &opts)
+            }
+            AgencyCommands::Remote { command } => match command {
+                RemoteCommands::Add {
+                    name,
+                    path,
+                    description,
+                } => commands::agency_remote::run_add(
+                    &workgraph_dir,
+                    &name,
+                    &path,
+                    description.as_deref(),
+                ),
+                RemoteCommands::Remove { name } => {
+                    commands::agency_remote::run_remove(&workgraph_dir, &name)
+                }
+                RemoteCommands::List => commands::agency_remote::run_list(&workgraph_dir, cli.json),
+                RemoteCommands::Show { name } => {
+                    commands::agency_remote::run_show(&workgraph_dir, &name, cli.json)
+                }
+            },
+            AgencyCommands::Push {
+                target,
+                entity_ids,
+                entity_type,
+                dry_run,
+                no_performance,
+                no_evaluations,
+                force,
+                global,
+            } => commands::agency_push::run(
+                &workgraph_dir,
+                &commands::agency_push::PushOptions {
+                    target: &target,
+                    dry_run,
+                    no_performance,
+                    no_evaluations,
+                    force,
+                    global,
+                    entity_ids: &entity_ids,
+                    entity_type: entity_type.as_deref(),
+                    json: cli.json,
+                },
+            ),
         },
         Commands::Role { command } => match command {
             RoleCommands::Add {
